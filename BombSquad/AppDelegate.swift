@@ -11,9 +11,9 @@ extension Notification.Name {
     /// management window. The target section is set on `ManagementNavigator.shared`
     /// before posting.
     static let showManagement = Notification.Name("BombSquad.showManagement")
-    /// Posted from the panel to start a screenshot capture. userInfo
-    /// ["interactive": true] forces the range-selection UI; otherwise the
-    /// front window of the summon-time target app is captured automatically.
+    /// Posted from the panel to start a screenshot capture: the selection
+    /// overlay opens with the full screen pre-selected (Enter confirms,
+    /// dragging picks a region instead).
     static let captureScreenshot = Notification.Name("BombSquad.captureScreenshot")
     /// Posted by the view model when a vision session ends and the panel
     /// should return to the narrow single-column layout.
@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var transcriber: any Transcriber { GatewayTranscriber.make() ?? GroqTranscriber() }
     private let screenshotCapture = ScreenshotCaptureService()
     private let screenshotCaptureCue = ScreenshotCaptureCuePresenter()
+    private let screenshotSelection = ScreenshotSelectionOverlay()
     /// Guards against duplicate begin/end callbacks so the cues fire exactly once.
     private var isDictating = false
     private var isCapturingScreenshot = false
@@ -144,6 +145,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// vision capture; vision mode closes; non-empty draft mode reviews.
     /// Invoked from the key-event monitor, which delivers on the main thread.
     private func advance() {
+        // Double-tap while the capture overlay is up abandons the vision
+        // session entirely: back to the pre-panel standby state. The pending
+        // capture task sees the panel is gone and stays quiet.
+        let isSelecting = MainActor.assumeIsolated { screenshotSelection.isPresenting }
+        if isSelecting {
+            MainActor.assumeIsolated { screenshotSelection.cancel() }
+            closePanel()
+            return
+        }
         if panel == nil {
             summon()
             return
@@ -292,8 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleCaptureScreenshot(_ notification: Notification) {
-        let interactive = notification.userInfo?["interactive"] as? Bool ?? false
-        startScreenshotCapture(interactive: interactive)
+        startScreenshotCapture()
     }
 
     /// Vision's two-pane session ended (e.g. an action draft was carried into
@@ -387,12 +396,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         currentViewModel = nil
     }
 
-    /// Default (M4): capture the full screen under the cursor automatically,
-    /// so summoning on an empty draft goes straight from "call" to
-    /// "understand" — the model sees what the user sees. `interactive: true`
-    /// (the panel's range button) or a failed automatic shot falls back to
-    /// the system range-selection UI.
-    private func startScreenshotCapture(interactive: Bool = false) {
+    /// M4 (owner spec): summoning on an empty draft opens the selection
+    /// overlay with the whole screen pre-selected — Enter keeps it, a drag
+    /// narrows it to a region, Esc returns to the panel, and a right-Shift
+    /// double-tap (handled in `advance()`) abandons the session.
+    private func startScreenshotCapture() {
         guard !isCapturingScreenshot else { return }
         guard let panel, let viewModel = currentViewModel else { return }
 
@@ -423,12 +431,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Task {
             do {
-                let attachment = try await captureAttachment(interactive: interactive, displayID: displayID)
+                let attachment = try await captureAttachment(on: screen, displayID: displayID)
                 await MainActor.run {
                     viewModel.addScreenshotAttachment(attachment)
                 }
             } catch ScreenshotCaptureError.cancelled {
-                // Cancellation is an expected outcome of the system capture UI.
+                // Expected: Esc from the selection overlay, an abandoned
+                // session, or the system capture UI's cancel.
             } catch {
                 await MainActor.run {
                     viewModel.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -452,21 +461,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Automatic full-screen capture first; the interactive range selection
-    /// is the explicit choice or the fallback when the automatic shot fails.
+    /// Run the selection overlay, then capture what it chose. When
+    /// ScreenCaptureKit fails (permission edge cases), fall back to the
+    /// system range-selection UI rather than dead-ending the flow.
     private func captureAttachment(
-        interactive: Bool,
+        on screen: NSScreen?,
         displayID: CGDirectDisplayID?
     ) async throws -> ScreenshotAttachment {
-        if !interactive {
-            do {
+        guard let screen else { throw ScreenshotCaptureError.noCaptureTarget }
+        let outcome = await screenshotSelection.present(on: screen)
+        // Let the compositor drop the overlay before the shot is taken.
+        try? await Task.sleep(nanoseconds: 150_000_000)
+
+        do {
+            switch outcome {
+            case .cancelled:
+                throw ScreenshotCaptureError.cancelled
+            case .fullScreen:
                 return try await screenshotCapture.captureFullScreen(displayID: displayID)
-            } catch {
-                // Fall through to range selection rather than dead-ending the flow.
+            case .region(let rect):
+                return try await screenshotCapture.captureRegion(rect, displayID: displayID)
             }
+        } catch ScreenshotCaptureError.cancelled {
+            throw ScreenshotCaptureError.cancelled
+        } catch {
+            await screenshotCaptureCue.showBriefly()
+            return try await screenshotCapture.captureInteractive()
         }
-        await screenshotCaptureCue.showBriefly()
-        return try await screenshotCapture.captureInteractive()
     }
 
     /// Center the panel on whichever screen the cursor is on, so it never spills

@@ -26,12 +26,41 @@ enum ScreenshotCaptureError: LocalizedError {
 }
 
 struct ScreenshotCaptureService {
-    /// Capture the whole screen the user is looking at, without any user
-    /// interaction — the "just summon it" path of the North Star flow: the
-    /// model sees exactly what the user sees. The panel is ordered out by the
-    /// caller before this runs. Throws `noCaptureTarget` when no display can
-    /// be resolved (the caller falls back to interactive selection).
+    /// Capture the whole screen the user is looking at — the "just summon it"
+    /// path of the North Star flow: the model sees exactly what the user sees.
+    /// The panel and selection overlay are ordered out by the caller before
+    /// this runs. Throws `noCaptureTarget` when no display can be resolved
+    /// (the caller falls back to interactive selection).
     func captureFullScreen(displayID: CGDirectDisplayID?) async throws -> ScreenshotAttachment {
+        let (image, _) = try await captureDisplayImage(displayID: displayID)
+        return try Self.writeAttachment(image)
+    }
+
+    /// Capture a region of the display, given in screen-local points with a
+    /// bottom-left origin (as reported by the selection overlay).
+    func captureRegion(_ rect: CGRect, displayID: CGDirectDisplayID?) async throws -> ScreenshotAttachment {
+        let (image, displaySize) = try await captureDisplayImage(displayID: displayID)
+        // The shot may be downscaled (5K budget), so derive the point→pixel
+        // ratio from the image itself, and flip to CGImage's top-left origin.
+        let scaleX = CGFloat(image.width) / displaySize.width
+        let scaleY = CGFloat(image.height) / displaySize.height
+        let pixelRect = CGRect(
+            x: rect.minX * scaleX,
+            y: (displaySize.height - rect.maxY) * scaleY,
+            width: rect.width * scaleX,
+            height: rect.height * scaleY
+        ).integral
+        guard pixelRect.width >= 1, pixelRect.height >= 1,
+              let cropped = image.cropping(to: pixelRect)
+        else {
+            throw ScreenshotCaptureError.noCaptureTarget
+        }
+        return try Self.writeAttachment(cropped)
+    }
+
+    private func captureDisplayImage(
+        displayID: CGDirectDisplayID?
+    ) async throws -> (image: CGImage, displaySize: CGSize) {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
         )
@@ -59,8 +88,11 @@ struct ScreenshotCaptureService {
         let image = try await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: configuration
         )
+        return (image, CGSize(width: display.width, height: display.height))
+    }
 
-        let outputURL = try Self.makeDesktopOutputURL()
+    private static func writeAttachment(_ image: CGImage) throws -> ScreenshotAttachment {
+        let outputURL = try makeDesktopOutputURL()
         let representation = NSBitmapImageRep(cgImage: image)
         guard let png = representation.representation(using: .png, properties: [:]) else {
             throw ScreenshotCaptureError.outputMissing

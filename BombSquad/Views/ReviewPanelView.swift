@@ -317,17 +317,7 @@ struct VisionPanelView: View {
                 Label("撮り直す", systemImage: "camera.viewfinder")
             }
             .disabled(viewModel.isCapturingScreenshot)
-            .help("画面全体を自動で撮り直します")
-
-            Button {
-                NotificationCenter.default.post(
-                    name: .captureScreenshot, object: nil, userInfo: ["interactive": true]
-                )
-            } label: {
-                Label("範囲を選ぶ", systemImage: "rectangle.dashed")
-            }
-            .disabled(viewModel.isCapturingScreenshot)
-            .help("読み取る範囲をドラッグで選択します")
+            .help("全画面が選択された状態で撮り直します。Enter で確定、ドラッグで範囲選択")
 
             Button {
                 Task { await viewModel.runVisionInterpretation() }
