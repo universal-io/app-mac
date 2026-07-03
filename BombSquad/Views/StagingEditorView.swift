@@ -9,7 +9,10 @@ struct StagingEditorView: View {
     /// Drives the help popover anchored to the (?) button.
     @State private var showHelp = false
 
-    private var isFocused: Bool { focusedField == .draft }
+    /// The blue focus ring appears only once there are two candidates
+    /// (original vs revision) and it answers "which side will Enter send?".
+    /// A lone draft editor with a ring is visual noise (owner call, 2026-07-03).
+    private var isFocused: Bool { focusedField == .draft && viewModel.canFocusRevision }
 
     /// Hotkeys shown in the help popover. Kept terse: keys only.
     private let shortcuts: [(String, String)] = [
@@ -24,88 +27,89 @@ struct StagingEditorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Single slim header row: mode, context chip, char count.
-            HStack(spacing: 8) {
-                Label(isTransform ? "受信メッセージ" : "原文",
-                      systemImage: isTransform ? "tray.and.arrow.down" : "doc.plaintext")
-                    .font(.headline)
-                if let context = viewModel.situationalContext, !viewModel.isContextExcluded {
+            // Chrome kept to a minimum (owner call, 2026-07-03): no pane title,
+            // no character count — the L1 context chip is the only header
+            // content, and the whole row disappears with it.
+            if let context = viewModel.situationalContext, !viewModel.isContextExcluded {
+                HStack(spacing: 8) {
                     SituationalContextChip(context: context) {
                         viewModel.excludeContext()
                     }
+                    Spacer()
                 }
-                Spacer()
-                Text("\(viewModel.draft.count) 文字")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
             }
 
-            // Transform mode is entered implicitly (text was selected at summon
-            // time), so say it out loud — otherwise "send = copy only" reads as
-            // a bug when the user meant to compose.
             if isTransform {
-                Label("受信モード: 読みやすく整理します。結果はコピーのみで、相手には送信されません。",
-                      systemImage: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                // The received message is read-only reference material: an
+                // editable field here invites confusion about what gets sent.
+                ScrollView {
+                    Text(viewModel.draft)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(13)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(EditorFocusBackground(isFocused: false))
+            } else {
+                // Enter sends the original text as-is (after the IME confirms any
+                // in-progress conversion); Shift+Enter inserts a newline.
+                SendableTextEditor(
+                    text: $viewModel.draft,
+                    focusedField: $focusedField,
+                    field: .draft,
+                    onSend: { viewModel.deployDraft() },
+                    onEscape: { NotificationCenter.default.post(name: .closePanel, object: nil) }
+                )
+                    .padding(8)
+                    .background(EditorFocusBackground(isFocused: isFocused))
             }
-
-            // Enter sends the original text as-is (after the IME confirms any
-            // in-progress conversion); Shift+Enter inserts a newline.
-            SendableTextEditor(
-                text: $viewModel.draft,
-                focusedField: $focusedField,
-                field: .draft,
-                onSend: { viewModel.deployDraft() },
-                onEscape: { NotificationCenter.default.post(name: .closePanel, object: nil) }
-            )
-                .padding(8)
-                .background(EditorFocusBackground(isFocused: isFocused))
 
             if viewModel.needsScreenCapturePermission {
                 ScreenCapturePermissionBanner()
             }
 
             HStack(spacing: 8) {
-                Button {
-                    showHelp.toggle()
-                } label: {
-                    Image(systemName: "questionmark.circle")
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("使い方を表示します")
-                .accessibilityLabel("使い方")
-                .popover(isPresented: $showHelp, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("使い方").font(.headline)
-                        ForEach(shortcuts, id: \.0) { key, action in
-                            HStack(spacing: 8) {
-                                Text(key)
-                                    .font(.caption.monospaced())
-                                    .frame(width: 96, alignment: .leading)
-                                Text(action).font(.caption)
+                // The hotkey cheat sheet describes compose interactions
+                // (send/review/dictate), none of which exist on the read-only
+                // receiving side — so the (?) button is compose-only too.
+                if !isTransform {
+                    Button {
+                        showHelp.toggle()
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("使い方を表示します")
+                    .accessibilityLabel("使い方")
+                    .popover(isPresented: $showHelp, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("使い方").font(.headline)
+                            ForEach(shortcuts, id: \.0) { key, action in
+                                HStack(spacing: 8) {
+                                    Text(key)
+                                        .font(.caption.monospaced())
+                                        .frame(width: 96, alignment: .leading)
+                                    Text(action).font(.caption)
+                                }
                             }
                         }
+                        .padding(12)
                     }
-                    .padding(12)
                 }
 
-                Button {
-                    NotificationCenter.default.post(name: .captureScreenshot, object: nil)
-                } label: {
-                    Image(systemName: "camera.viewfinder")
+                if !isTransform {
+                    Button {
+                        NotificationCenter.default.post(name: .captureScreenshot, object: nil)
+                    } label: {
+                        Image(systemName: "camera.viewfinder")
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .disabled(viewModel.isCapturingScreenshot)
+                    .help("ビジョン入力としてスクリーンショットを撮影します")
+                    .accessibilityLabel("画面を撮影して読み取る")
                 }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .disabled(viewModel.isCapturingScreenshot)
-                .help("ビジョン入力としてスクリーンショットを撮影します")
-                .accessibilityLabel("画面を撮影して読み取る")
 
                 if viewModel.isRecording {
                     Image(systemName: "mic.fill").foregroundStyle(.red)
@@ -120,25 +124,28 @@ struct StagingEditorView: View {
                     ProgressView().controlSize(.small)
                 }
                 Spacer()
-                Button {
-                    Task { await viewModel.runReview() }
-                } label: {
-                    Label("レビュー", systemImage: "checkmark.shield")
-                }
-                .disabled(!viewModel.canReview)
-                .help("原文をレビューします")
+                // Reading a received message needs no actions on this side:
+                // interpretation runs automatically and the useful exits (copy
+                // the readable version / approve a reply draft) live on the
+                // result pane. Review/send/copy-source buttons are compose-only.
+                if !isTransform {
+                    Button {
+                        Task { await viewModel.runReview() }
+                    } label: {
+                        Label("レビュー", systemImage: "checkmark.shield")
+                    }
+                    .disabled(!viewModel.canReview)
+                    .help("原文をレビューします")
 
-                Button {
-                    viewModel.deployDraft()
-                } label: {
-                    Label(isTransform ? "コピー" : "送信",
-                          systemImage: isTransform ? "doc.on.clipboard.fill" : "paperplane.fill")
+                    Button {
+                        viewModel.deployDraft()
+                    } label: {
+                        Label("送信", systemImage: "paperplane.fill")
+                    }
+                    .disabled(!viewModel.canDeployDraft)
+                    .buttonStyle(.borderedProminent)
+                    .help("レビューを使わず、原文のまま送信先へ入力します")
                 }
-                .disabled(!viewModel.canDeployDraft)
-                .buttonStyle(.borderedProminent)
-                .help(isTransform
-                        ? "受信メッセージをそのままクリップボードにコピーします（相手には送信されません）"
-                        : "レビューを使わず、原文のまま送信先へ入力します")
             }
         }
         .padding()

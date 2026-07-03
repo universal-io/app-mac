@@ -414,13 +414,20 @@ in `input_units` / `output_units`.
 
 ## POST /api/ai/vision
 
-Added 2026-07-02 (Universal I/O M3-B). Screenshot interpretation
-(OpenAI Responses API). The image is never persisted by the gateway.
+Added 2026-07-02 (Universal I/O M3-B). Interpretation of a screenshot or a
+received message (OpenAI Responses API). Neither source is persisted by the
+gateway.
 
 Updated 2026-07-03 (M4): the response schema became "see → understand →
 respond" (`situation` / `extracted` / `asks` / `suggested_actions` with reply
 drafts), and the request accepts the same optional `context` / `memory`
 blocks as `POST /api/ai/review` (prompt-only, never stored).
+
+Updated 2026-07-03 (M4-B): the receiving side is a special case of
+interpretation — `input.text`（受信メッセージ、最大16,000文字）を
+`input.image_base64` の代わりに渡せる。**どちらか一方が必須**（両方・ゼロは
+`BAD_REQUEST`）。text の場合 `extracted` は「攻撃性・感情・皮肉を除いた
+中立な整理版」になる。
 
 ### Request Body
 
@@ -429,8 +436,9 @@ blocks as `POST /api/ai/review` (prompt-only, never stored).
   "request_id": "...",
   "operation": "vision",
   "input": {
-    "image_base64": "（base64。最大4M文字 ≒ 3MB）",
+    "image_base64": "（base64。最大4M文字 ≒ 3MB。text と排他）",
     "media_type": "image/png",
+    "text": "（受信メッセージ。image_base64 と排他。最大16,000文字）",
     "instruction": "（任意の追加指示）",
     "context": {
       "app_name": "Mail",
@@ -477,8 +485,8 @@ client-side):
 `meta` carries `output_language`, `model_vendor`, `model_id`, `latency_ms`.
 
 Usage events: `operation = vision`, `unit_type = call`, with
-`has_context` / `has_memory` flags in the metadata. There is no hard
-Vision quota yet (same policy as transcribe).
+`input_kind`（`image` / `text`）and `has_context` / `has_memory` flags in the
+metadata. There is no hard Vision quota yet (same policy as transcribe).
 
 ## GET/PUT /api/memory/cards
 

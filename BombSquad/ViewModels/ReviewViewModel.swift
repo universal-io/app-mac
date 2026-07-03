@@ -172,6 +172,13 @@ final class ReviewViewModel: ObservableObject {
     }
 
     func runReview() async {
+        // M4-B: the receiving side is a special case of interpretation — the
+        // selected text goes through the same "understand → respond" schema
+        // and UI as a screenshot. Compose keeps the review/diff flow.
+        if mode == .transform {
+            await runTransformInterpretation()
+            return
+        }
         errorMessage = nil
         if result != nil {
             result = nil
@@ -222,6 +229,38 @@ final class ReviewViewModel: ObservableObject {
             self.revisedDraft = result.revisedText
             self.reviewedDraft = input
             self.reviewedLanguage = language
+        } catch {
+            self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Interpret the received message (transform sessions). Same provider and
+    /// result surface as vision; the exit stays clipboard-only — a received
+    /// message is never written back.
+    private func runTransformInterpretation() async {
+        errorMessage = nil
+        visionResult = nil
+        isLoading = true
+        let started = Date()
+        defer { isLoading = false }
+
+        let input = draft
+        let context = await resolveContext()
+        let memory = await resolveMemory(context: context)
+        let provider = currentVisionProvider()
+        do {
+            let result = try await provider.interpret(
+                receivedText: input,
+                instruction: nil,
+                language: outputLanguage,
+                context: context,
+                memory: memory
+            )
+            self.lastDurationMs = Int(Date().timeIntervalSince(started) * 1000)
+            self.lastModelName = provider is GatewayVisionClient
+                ? "I//O Cloud"
+                : "OpenAI · \(result.modelID ?? AppSettings.selectedVisionModelID())"
+            self.visionResult = result
         } catch {
             self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }

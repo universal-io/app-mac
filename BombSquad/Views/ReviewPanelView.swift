@@ -14,6 +14,14 @@ struct ReviewPanelView: View {
                 Label(headerTitle, systemImage: headerSystemImage)
                     .font(.headline)
                 Spacer()
+                if viewModel.mode == .transform, viewModel.visionResult != nil {
+                    Button {
+                        viewModel.copyVisionResult()
+                    } label: {
+                        Label("コピー", systemImage: "doc.on.clipboard.fill")
+                    }
+                    .help("整理した内容全体をクリップボードにコピーします")
+                }
                 if let ms = viewModel.lastDurationMs {
                     Text("\(viewModel.lastModelName ?? "") · \(ms) ms")
                         .font(.caption2)
@@ -26,7 +34,17 @@ struct ReviewPanelView: View {
                 errorBanner(message)
             }
 
-            if let result = viewModel.result {
+            if viewModel.mode == .transform, let vision = viewModel.visionResult {
+                // M4-B: the received message goes through the same
+                // "understand → respond" view as a screenshot. Approving an
+                // action copies the draft (never writes back to the sender).
+                VisionInterpretationView(
+                    result: vision,
+                    isTransform: true,
+                    onApprove: { viewModel.approveSuggestedAction($0) },
+                    onEdit: { _ in }
+                )
+            } else if let result = viewModel.result {
                 resultBody(result)
             } else if let streaming = viewModel.streamingRevision, !streaming.isEmpty {
                 streamingBody(streaming)
@@ -447,6 +465,9 @@ private struct VisionPane<Content: View>: View {
 /// last as reference material.
 private struct VisionInterpretationView: View {
     let result: VisionInterpretationResult
+    /// Receiving side (M4-B): approve copies instead of injecting, and the
+    /// edit hand-off is hidden (the exit is clipboard-only by principle).
+    var isTransform: Bool = false
     let onApprove: (VisionSuggestedAction) -> Void
     let onEdit: (VisionSuggestedAction) -> Void
 
@@ -472,6 +493,7 @@ private struct VisionInterpretationView: View {
                             ForEach(result.suggestedActions) { action in
                                 SuggestedActionCard(
                                     action: action,
+                                    isTransform: isTransform,
                                     onApprove: { onApprove(action) },
                                     onEdit: { onEdit(action) }
                                 )
@@ -530,6 +552,7 @@ private struct VisionInterpretationView: View {
 /// presented as guidance only — I//O never executes actions itself.
 private struct SuggestedActionCard: View {
     let action: VisionSuggestedAction
+    var isTransform: Bool = false
     let onApprove: () -> Void
     let onEdit: () -> Void
 
@@ -556,21 +579,29 @@ private struct SuggestedActionCard: View {
 
                 HStack(spacing: 8) {
                     Spacer()
-                    Button {
-                        onEdit()
-                    } label: {
-                        Label("編集する", systemImage: "square.and.pencil")
+                    if !isTransform {
+                        Button {
+                            onEdit()
+                        } label: {
+                            Label("編集する", systemImage: "square.and.pencil")
+                        }
+                        .help("文案を原文エディタに引き継いで編集します")
                     }
-                    .help("文案を原文エディタに引き継いで編集します")
 
                     Button {
                         onApprove()
                     } label: {
-                        Label(action.kind == .reply ? "承認して送信" : "承認して入力",
-                              systemImage: "paperplane.fill")
+                        Label(
+                            isTransform
+                                ? "承認してコピー"
+                                : action.kind == .reply ? "承認して送信" : "承認して入力",
+                            systemImage: isTransform ? "doc.on.clipboard.fill" : "paperplane.fill"
+                        )
                     }
                     .buttonStyle(.borderedProminent)
-                    .help("この文案をそのまま呼び出し元のフィールドへ入力します")
+                    .help(isTransform
+                            ? "この文案をクリップボードにコピーします（相手には送信されません）"
+                            : "この文案をそのまま呼び出し元のフィールドへ入力します")
                 }
             }
         }

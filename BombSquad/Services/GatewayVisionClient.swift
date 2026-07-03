@@ -42,6 +42,30 @@ struct GatewayVisionClient: VisionProvider {
             "image_base64": payloadData.base64EncodedString(),
             "media_type": mediaType,
         ]
+        addCommonFields(to: &input, instruction: instruction, context: context, memory: memory)
+        return try await send(input: input, language: language)
+    }
+
+    /// M4-B receiving side: interpret a received message with the same
+    /// schema/prompt family as a screenshot (`input.text` on the gateway).
+    func interpret(
+        receivedText: String,
+        instruction: String?,
+        language: OutputLanguage,
+        context: SituationalContext?,
+        memory: MemoryInjection?
+    ) async throws -> VisionInterpretationResult {
+        var input: [String: Any] = ["text": receivedText]
+        addCommonFields(to: &input, instruction: instruction, context: context, memory: memory)
+        return try await send(input: input, language: language)
+    }
+
+    private func addCommonFields(
+        to input: inout [String: Any],
+        instruction: String?,
+        context: SituationalContext?,
+        memory: MemoryInjection?
+    ) {
         if let instruction = instruction?.trimmingCharacters(in: .whitespacesAndNewlines),
            !instruction.isEmpty {
             input["instruction"] = instruction
@@ -61,7 +85,12 @@ struct GatewayVisionClient: VisionProvider {
             if let relationship = memory.relationshipMD { memoryPayload["relationship_md"] = relationship }
             if !memoryPayload.isEmpty { input["memory"] = memoryPayload }
         }
+    }
 
+    private func send(
+        input: [String: Any],
+        language: OutputLanguage
+    ) async throws -> VisionInterpretationResult {
         var request = try await api.authorizedRequest("ai/vision")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
