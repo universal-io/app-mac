@@ -1,11 +1,13 @@
 import AppKit
 import Foundation
+import ScreenCaptureKit
 
 enum ScreenshotCaptureError: LocalizedError {
     case cancelled
     case desktopUnavailable
     case failed(status: Int32)
     case outputMissing
+    case noCaptureTarget
 
     var errorDescription: String? {
         switch self {
@@ -17,11 +19,57 @@ enum ScreenshotCaptureError: LocalizedError {
             return "スクリーンショットの撮影に失敗しました（終了コード: \(status)）。"
         case .outputMissing:
             return "スクリーンショットファイルを作成できませんでした。"
+        case .noCaptureTarget:
+            return "撮影対象のウィンドウが見つかりませんでした。"
         }
     }
 }
 
 struct ScreenshotCaptureService {
+    /// Capture the frontmost regular window of `app` without any user
+    /// interaction — the "just summon it" path of the North Star flow. The
+    /// panel is not part of the shot because the filter targets that window
+    /// alone. Throws `noCaptureTarget` when the app has no capturable window
+    /// (the caller falls back to interactive selection).
+    func captureFrontWindow(of app: NSRunningApplication) async throws -> ScreenshotAttachment {
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: true
+        )
+        // Shareable windows come front-to-back; layer 0 skips menu bar and
+        // status items, the size floor skips zero-sized helper windows.
+        guard let window = content.windows.first(where: { window in
+            window.owningApplication?.processID == app.processIdentifier
+                && window.windowLayer == 0
+                && window.frame.width >= 120 && window.frame.height >= 90
+        }) else {
+            throw ScreenshotCaptureError.noCaptureTarget
+        }
+
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let configuration = SCStreamConfiguration()
+        let scale = CGFloat(filter.pointPixelScale)
+        configuration.width = Int(filter.contentRect.width * scale)
+        configuration.height = Int(filter.contentRect.height * scale)
+        configuration.showsCursor = false
+
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: filter, configuration: configuration
+        )
+
+        let outputURL = try Self.makeDesktopOutputURL()
+        let representation = NSBitmapImageRep(cgImage: image)
+        guard let png = representation.representation(using: .png, properties: [:]) else {
+            throw ScreenshotCaptureError.outputMissing
+        }
+        try png.write(to: outputURL)
+
+        return ScreenshotAttachment(
+            url: outputURL,
+            pixelWidth: image.width,
+            pixelHeight: image.height
+        )
+    }
+
     func captureInteractive() async throws -> ScreenshotAttachment {
         let outputURL = try Self.makeDesktopOutputURL()
         try? FileManager.default.removeItem(at: outputURL)

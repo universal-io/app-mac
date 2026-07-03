@@ -441,6 +441,25 @@ M3 の Gateway 移行時にサーバー側へ移す。
 
 ### M4: Vision の再定義 —「見る → わかる → 返す」
 
+ステータス: 実装中（`feature/universal-io-m4`、2026-07-03 着手）。
+スコープ 1〜3（前面ウィンドウ自動キャプチャ / 解釈スキーマ拡張＋Persona・Relationship・L1 注入 /
+提案アクション UI）を先行実装する。スコープ 4（受信変換の統合）は、実機検証済みの
+レビュー SSE 経路とスキーマの大きな変更を伴うため、1〜3 の実機確認後に別フェーズ（M4-B）で行う。
+
+進捗（2026-07-03）: スコープ 1〜3 実装済み（macOS `xcodebuild`・web `npm run build` とも通過、
+**実機確認はこれから**）。実装メモ:
+- キャプチャ: `ScreenshotCaptureService.captureFrontWindow(of:)`（SCScreenshotManager、
+  召喚時に記録した `panelTargetApp` のレイヤー0前面ウィンドウを撮影）。失敗時と
+  パネルの「範囲を選ぶ」は従来の `screencapture -i` に落ちる。
+- スキーマ: `VisionInterpretationResult` を situation / extracted / asks /
+  suggested_actions[{title, kind, draft}] に刷新（旧 summary / visible_text 形も
+  `decodeFlexible` で受容）。Gateway `/api/ai/vision` は review と同じ
+  `input.context` / `input.memory` を受け取りプロンプトにのみ使用
+  （[api-contract.md](api-contract.md) 更新済み）。BYOK `OpenAIVisionClient` も同等。
+- UI: `VisionPanelView` 右ペインを状況→求められていること→提案アクション（カード）→
+  読み取った内容に再構成。文案付きアクションは「承認して送信」（PasteDeployer で呼び出し元へ
+  注入→パネル閉）と「編集する」（compose エディタへ引き継ぎ。パネルは 1 カラム幅へ復帰）。
+
 **目的**: Vision を「スクショ → OCR → コピー」の素材撮影から、北極星体験
 （画面を見せるだけで、やるべきことと文案が用意され、承認するだけ）の初期形へ引き上げる。
 

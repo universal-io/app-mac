@@ -317,6 +317,17 @@ struct VisionPanelView: View {
                 Label("撮り直す", systemImage: "camera.viewfinder")
             }
             .disabled(viewModel.isCapturingScreenshot)
+            .help("前面ウィンドウを自動で撮り直します")
+
+            Button {
+                NotificationCenter.default.post(
+                    name: .captureScreenshot, object: nil, userInfo: ["interactive": true]
+                )
+            } label: {
+                Label("範囲を選ぶ", systemImage: "rectangle.dashed")
+            }
+            .disabled(viewModel.isCapturingScreenshot)
+            .help("読み取る範囲をドラッグで選択します")
 
             Button {
                 Task { await viewModel.runVisionInterpretation() }
@@ -331,7 +342,6 @@ struct VisionPanelView: View {
                 Label("コピー", systemImage: "doc.on.clipboard.fill")
             }
             .disabled(viewModel.visionResult == nil)
-            .buttonStyle(.borderedProminent)
         }
     }
 
@@ -393,7 +403,11 @@ struct VisionPanelView: View {
             .padding(16)
             .background(EditorFocusBackground(isFocused: false))
         } else if let result = viewModel.visionResult {
-            VisionInterpretationView(result: result)
+            VisionInterpretationView(
+                result: result,
+                onApprove: { viewModel.approveSuggestedAction($0) },
+                onEdit: { viewModel.editSuggestedAction($0) }
+            )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(alignment: .leading, spacing: 10) {
@@ -438,41 +452,50 @@ private struct VisionPane<Content: View>: View {
     }
 }
 
+/// "See → understand → respond": situation first, then what is being asked,
+/// then prepared actions the user can approve. The raw extracted content comes
+/// last as reference material.
 private struct VisionInterpretationView: View {
     let result: VisionInterpretationResult
+    let onApprove: (VisionSuggestedAction) -> Void
+    let onEdit: (VisionSuggestedAction) -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                section("要約", systemImage: "text.magnifyingglass") {
-                    Text(result.summary)
+                section("状況", systemImage: "text.magnifyingglass") {
+                    Text(result.situation)
                         .font(.callout)
+                        .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if !result.interpretation.isEmpty {
-                    section("説明", systemImage: "doc.text") {
-                        Text(result.interpretation)
-                            .font(.callout)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-
-                if !result.visibleText.isEmpty {
-                    section("読める文字", systemImage: "text.viewfinder") {
-                        bulletList(result.visibleText)
+                if !result.asks.isEmpty {
+                    section("求められていること", systemImage: "checklist") {
+                        bulletList(result.asks)
                     }
                 }
 
                 if !result.suggestedActions.isEmpty {
-                    section("次にできること", systemImage: "checklist") {
-                        bulletList(result.suggestedActions)
+                    section("提案アクション", systemImage: "wand.and.stars") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(result.suggestedActions) { action in
+                                SuggestedActionCard(
+                                    action: action,
+                                    onApprove: { onApprove(action) },
+                                    onEdit: { onEdit(action) }
+                                )
+                            }
+                        }
                     }
                 }
 
-                if !result.uncertainties.isEmpty {
-                    section("不確かな点", systemImage: "questionmark.diamond") {
-                        bulletList(result.uncertainties)
+                if !result.extracted.isEmpty {
+                    section("読み取った内容", systemImage: "text.viewfinder") {
+                        Text(result.extracted)
+                            .font(.callout)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
@@ -502,10 +525,76 @@ private struct VisionInterpretationView: View {
                 HStack(alignment: .top, spacing: 6) {
                     Text("•")
                     Text(item)
+                        .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(.callout)
             }
+        }
+    }
+}
+
+/// One proposed action. Drafted actions (reply / fill_form) close the loop
+/// with two buttons: approve = deploy the draft as-is into the summon-time
+/// field; edit = carry it into the compose editor. Everything else is
+/// presented as guidance only — I//O never executes actions itself.
+private struct SuggestedActionCard: View {
+    let action: VisionSuggestedAction
+    let onApprove: () -> Void
+    let onEdit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(action.kind.label)
+                    .font(.caption2).bold()
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(kindColor.opacity(0.2), in: Capsule())
+                    .foregroundStyle(kindColor)
+                Text(action.title)
+                    .font(.callout).bold()
+                Spacer()
+            }
+
+            if action.hasDraft {
+                Text(action.draft)
+                    .font(.callout)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+
+                HStack(spacing: 8) {
+                    Spacer()
+                    Button {
+                        onEdit()
+                    } label: {
+                        Label("編集する", systemImage: "square.and.pencil")
+                    }
+                    .help("文案を原文エディタに引き継いで編集します")
+
+                    Button {
+                        onApprove()
+                    } label: {
+                        Label(action.kind == .reply ? "承認して送信" : "承認して入力",
+                              systemImage: "paperplane.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .help("この文案をそのまま呼び出し元のフィールドへ入力します")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var kindColor: Color {
+        switch action.kind {
+        case .reply: return .blue
+        case .fillForm: return .teal
+        case .task: return .orange
+        case .infoOnly: return .secondary
         }
     }
 }

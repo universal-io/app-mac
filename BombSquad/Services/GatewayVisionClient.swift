@@ -25,7 +25,9 @@ struct GatewayVisionClient: VisionProvider {
     func interpret(
         imageURL: URL,
         instruction: String?,
-        language: OutputLanguage
+        language: OutputLanguage,
+        context: SituationalContext?,
+        memory: MemoryInjection?
     ) async throws -> VisionInterpretationResult {
         let imageData = try Data(contentsOf: imageURL)
         var payloadData = imageData
@@ -43,6 +45,21 @@ struct GatewayVisionClient: VisionProvider {
         if let instruction = instruction?.trimmingCharacters(in: .whitespacesAndNewlines),
            !instruction.isEmpty {
             input["instruction"] = instruction
+        }
+        // Same payload shapes as ai/review: the gateway builds the prompt and
+        // stores neither block (see the API contract).
+        if let context {
+            var contextPayload: [String: Any] = ["app_name": context.appName]
+            if let title = context.windowTitle { contextPayload["window_title"] = title }
+            if let excerpt = context.conversationExcerpt { contextPayload["conversation_excerpt"] = excerpt }
+            input["context"] = contextPayload
+        }
+        if let memory {
+            var memoryPayload: [String: Any] = [:]
+            if let persona = memory.personaMD { memoryPayload["persona_md"] = persona }
+            if let subject = memory.relationshipSubject { memoryPayload["relationship_subject"] = subject }
+            if let relationship = memory.relationshipMD { memoryPayload["relationship_md"] = relationship }
+            if !memoryPayload.isEmpty { input["memory"] = memoryPayload }
         }
 
         var request = try await api.authorizedRequest("ai/vision")

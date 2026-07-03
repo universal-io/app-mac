@@ -1,5 +1,8 @@
-// AI gateway: POST /api/ai/vision. Screenshot interpretation.
-// The image arrives as base64 (PNG or JPEG); the gateway never stores it.
+// AI gateway: POST /api/ai/vision. Screenshot interpretation ("see →
+// understand → respond"): situation, extracted content, asks, and suggested
+// actions with persona-aware reply drafts.
+// The image arrives as base64 (PNG or JPEG); optional context/memory blocks
+// ride along for the prompt. The gateway stores none of them.
 // Entitlement must be active; Vision has no hard quota yet (usage is recorded
 // per call so a cap can be enforced when Stripe plans land in M3-B).
 
@@ -12,7 +15,11 @@ import {
 } from "@/lib/server/gateway";
 import { ProviderCallError } from "@/lib/server/review-engine";
 import { runVisionInterpretation } from "@/lib/server/vision-engine";
-import type { OutputLanguageCode } from "@/lib/server/prompts";
+import type {
+  MemoryPayload,
+  OutputLanguageCode,
+  SituationalContextPayload,
+} from "@/lib/server/prompts";
 
 // Vercel rejects bodies past ~4.5MB; fail with a contract error before that.
 const MAX_IMAGE_BASE64_CHARS = 4 * 1024 * 1024;
@@ -24,6 +31,8 @@ type VisionRequestBody = {
     image_base64?: string;
     media_type?: string;
     instruction?: string;
+    context?: SituationalContextPayload;
+    memory?: MemoryPayload;
   };
   preferences?: {
     output_language?: string;
@@ -77,6 +86,8 @@ export async function POST(request: Request): Promise<Response> {
       media_type: mediaType,
       image_base64_chars: imageBase64.length,
       has_instruction: Boolean(body.input?.instruction?.trim()),
+      has_context: Boolean(body.input?.context?.conversation_excerpt),
+      has_memory: Boolean(body.input?.memory?.persona_md || body.input?.memory?.relationship_md),
     };
 
     const started = Date.now();
@@ -86,6 +97,8 @@ export async function POST(request: Request): Promise<Response> {
         imageDataURL: `data:${mediaType};base64,${imageBase64}`,
         instruction: body.input?.instruction,
         language: language as OutputLanguageCode,
+        context: body.input?.context,
+        memory: body.input?.memory,
       });
     } catch (error) {
       const rateLimited = error instanceof ProviderCallError && error.rateLimited;

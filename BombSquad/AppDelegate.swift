@@ -11,8 +11,13 @@ extension Notification.Name {
     /// management window. The target section is set on `ManagementNavigator.shared`
     /// before posting.
     static let showManagement = Notification.Name("BombSquad.showManagement")
-    /// Posted from the panel to start an interactive screenshot capture.
+    /// Posted from the panel to start a screenshot capture. userInfo
+    /// ["interactive": true] forces the range-selection UI; otherwise the
+    /// front window of the summon-time target app is captured automatically.
     static let captureScreenshot = Notification.Name("BombSquad.captureScreenshot")
+    /// Posted by the view model when a vision session ends and the panel
+    /// should return to the narrow single-column layout.
+    static let visionSessionEnded = Notification.Name("BombSquad.visionSessionEnded")
     /// Posted from the panel when the user wants to grant screen recording.
     static let openScreenCaptureSettings = Notification.Name("BombSquad.openScreenCaptureSettings")
 }
@@ -30,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Created lazily and reused; never always-on.
     private var managementWindow: NSWindow?
     private var currentViewModel: ReviewViewModel?
+    /// The app that was frontmost when the panel was summoned: the paste
+    /// target, and the window vision captures automatically.
+    private var panelTargetApp: NSRunningApplication?
     private let authClient = BombSquadAuthClient.shared
     private let gesture = ShiftGestureMonitor()
     private let recorder = AudioRecorder()
@@ -81,6 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleCaptureScreenshot), name: .captureScreenshot, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleVisionSessionEnded), name: .visionSessionEnded, object: nil
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleOpenScreenCaptureSettings),
@@ -283,8 +294,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closePanel()
     }
 
-    @objc private func handleCaptureScreenshot() {
-        startScreenshotCapture()
+    @objc private func handleCaptureScreenshot(_ notification: Notification) {
+        let interactive = notification.userInfo?["interactive"] as? Bool ?? false
+        startScreenshotCapture(interactive: interactive)
+    }
+
+    /// Vision's two-pane session ended (e.g. an action draft was carried into
+    /// the compose editor): restore the narrow Spotlight-style layout.
+    @objc private func handleVisionSessionEnded() {
+        guard let panel, panel.frame.size.width > Self.textPanelSize.width else { return }
+        panel.setContentSize(Self.textPanelSize)
+        centerOnActiveScreen(panel)
     }
 
     @objc private func handleOpenScreenCaptureSettings() {
@@ -302,6 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showPanel(prefill: String? = nil, mode: ReviewMode = .compose) {
         // Capture the target BEFORE our panel activates and steals focus.
         let target = NSWorkspace.shared.frontmostApplication
+        panelTargetApp = target
         // Same timing constraint: identify the context source app now; the AX
         // tree walk itself continues in the background against that pid.
         let contextTask = SituationalContextService.captureTask()
@@ -368,9 +389,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel?.orderOut(nil)
         panel = nil
         currentViewModel = nil
+        panelTargetApp = nil
     }
 
-    private func startScreenshotCapture() {
+    /// Default (M4): capture the target app's front window automatically, so
+    /// summoning on an empty draft goes straight from "call" to "understand".
+    /// `interactive: true` (the panel's range button) or a missing target
+    /// window falls back to the system range-selection UI.
+    private func startScreenshotCapture(interactive: Bool = false) {
         guard !isCapturingScreenshot else { return }
         guard let panel, let viewModel = currentViewModel else { return }
 
@@ -391,10 +417,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         panel.orderOut(nil)
 
+        let targetApp = panelTargetApp
         Task {
             do {
-                await screenshotCaptureCue.showBriefly()
-                let attachment = try await screenshotCapture.captureInteractive()
+                let attachment = try await captureAttachment(interactive: interactive, targetApp: targetApp)
                 await MainActor.run {
                     viewModel.addScreenshotAttachment(attachment)
                 }
@@ -421,6 +447,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 panel.makeKeyAndOrderFront(nil)
             }
         }
+    }
+
+    /// Automatic front-window capture first; the interactive range selection
+    /// is the explicit choice or the fallback when the target app has no
+    /// capturable window (or the automatic shot fails).
+    private func captureAttachment(
+        interactive: Bool,
+        targetApp: NSRunningApplication?
+    ) async throws -> ScreenshotAttachment {
+        if !interactive, let targetApp {
+            do {
+                return try await screenshotCapture.captureFrontWindow(of: targetApp)
+            } catch {
+                // Fall through to range selection rather than dead-ending the flow.
+            }
+        }
+        await screenshotCaptureCue.showBriefly()
+        return try await screenshotCapture.captureInteractive()
     }
 
     /// Center the panel on whichever screen the cursor is on, so it never spills

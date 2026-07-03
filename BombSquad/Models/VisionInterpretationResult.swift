@@ -1,53 +1,128 @@
 import Foundation
 
+/// One action the model proposes after reading the screen. `reply` actions
+/// carry a ready-to-send draft (persona/relationship aware); the other kinds
+/// stop at describing what to do — I//O never executes anything itself.
+struct VisionSuggestedAction: Identifiable, Codable, Hashable {
+    enum Kind: String, Codable {
+        case reply
+        case fillForm = "fill_form"
+        case task
+        case infoOnly = "info_only"
+
+        var label: String {
+            switch self {
+            case .reply: return "返信"
+            case .fillForm: return "入力"
+            case .task: return "タスク"
+            case .infoOnly: return "情報"
+            }
+        }
+    }
+
+    var id = UUID()
+    let title: String
+    let kind: Kind
+    /// Deployable text for `reply` (and prefill guidance for `fill_form`);
+    /// empty for actions that are descriptions only.
+    let draft: String
+
+    private enum CodingKeys: String, CodingKey {
+        case title, kind, draft
+    }
+
+    var hasDraft: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+/// "See → understand → respond": what is happening on screen, what it says,
+/// what is being asked of the user, and prepared actions to approve.
 struct VisionInterpretationResult: Codable, Hashable {
     var modelID: String?
-    let summary: String
-    let visibleText: [String]
-    let interpretation: String
-    let suggestedActions: [String]
-    let uncertainties: [String]
+    /// 1-2 sentence summary of what is happening on this screen.
+    let situation: String
+    /// Body text read off the screen, as structured Markdown.
+    let extracted: String
+    /// What the user is being asked to do (requests, deadlines, facts).
+    let asks: [String]
+    let suggestedActions: [VisionSuggestedAction]
 
     enum CodingKeys: String, CodingKey {
         case modelID = "model_id"
-        case summary
-        case visibleText = "visible_text"
-        case interpretation
+        case situation
+        case extracted
+        case asks
         case suggestedActions = "suggested_actions"
-        case uncertainties
     }
 
     var copyText: String {
         var parts: [String] = []
-        parts.append("要約:\n\(summary)")
-        if !visibleText.isEmpty {
-            parts.append("読める文字:\n" + visibleText.map { "- \($0)" }.joined(separator: "\n"))
+        if !situation.isEmpty {
+            parts.append("状況:\n\(situation)")
         }
-        if !interpretation.isEmpty {
-            parts.append("説明:\n\(interpretation)")
+        if !extracted.isEmpty {
+            parts.append("読み取った内容:\n\(extracted)")
         }
-        if !suggestedActions.isEmpty {
-            parts.append("次にできること:\n" + suggestedActions.map { "- \($0)" }.joined(separator: "\n"))
+        if !asks.isEmpty {
+            parts.append("求められていること:\n" + asks.map { "- \($0)" }.joined(separator: "\n"))
         }
-        if !uncertainties.isEmpty {
-            parts.append("不確かな点:\n" + uncertainties.map { "- \($0)" }.joined(separator: "\n"))
+        for action in suggestedActions where action.hasDraft {
+            parts.append("\(action.title):\n\(action.draft)")
         }
         return parts.joined(separator: "\n\n")
     }
 
+    /// Tolerant decoding: models occasionally rename keys or return the
+    /// legacy shape (summary / visible_text / interpretation), especially on
+    /// the fallback model. Map whatever arrived onto the current schema.
     static func decodeFlexible(from data: Data) throws -> VisionInterpretationResult {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.decoding("vision result is not a JSON object")
         }
 
+        let situation = stringValue(object, keys: ["situation", "summary", "状況", "要約"]) ?? ""
+        var extracted = stringValue(object, keys: ["extracted", "interpretation", "explanation", "説明"]) ?? ""
+        if extracted.isEmpty {
+            extracted = stringListValue(object, keys: ["visible_text", "visibleText", "text", "ocr_text"])
+                .map { "- \($0)" }
+                .joined(separator: "\n")
+        }
+
         return VisionInterpretationResult(
             modelID: stringValue(object, keys: ["model_id", "modelID"]),
-            summary: stringValue(object, keys: ["summary", "要約"]) ?? "",
-            visibleText: stringListValue(object, keys: ["visible_text", "visibleText", "text", "ocr_text"]),
-            interpretation: stringValue(object, keys: ["interpretation", "explanation", "説明"]) ?? "",
-            suggestedActions: stringListValue(object, keys: ["suggested_actions", "suggestedActions", "actions", "next_actions"]),
-            uncertainties: stringListValue(object, keys: ["uncertainties", "uncertainty", "不確かな点"])
+            situation: situation,
+            extracted: extracted,
+            asks: stringListValue(object, keys: ["asks", "求められていること"]),
+            suggestedActions: actionsValue(object)
         )
+    }
+
+    private static func actionsValue(_ object: [String: Any]) -> [VisionSuggestedAction] {
+        guard let raw = object["suggested_actions"] ?? object["suggestedActions"] ?? object["actions"] else {
+            return []
+        }
+
+        if let items = raw as? [[String: Any]] {
+            return items.compactMap { item in
+                guard let title = stringValue(item, keys: ["title", "name"]), !title.isEmpty else { return nil }
+                let kindRaw = stringValue(item, keys: ["kind", "type"]) ?? ""
+                return VisionSuggestedAction(
+                    title: title,
+                    kind: VisionSuggestedAction.Kind(rawValue: kindRaw) ?? .infoOnly,
+                    draft: stringValue(item, keys: ["draft", "text", "body"]) ?? ""
+                )
+            }
+        }
+
+        // Legacy shape: a flat list of action descriptions.
+        if let strings = raw as? [String] {
+            return strings
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .map { VisionSuggestedAction(title: $0, kind: .infoOnly, draft: "") }
+        }
+        return []
     }
 
     private static func stringValue(_ object: [String: Any], keys: [String]) -> String? {

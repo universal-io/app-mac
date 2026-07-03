@@ -4,6 +4,8 @@ protocol VisionProvider {
     func interpret(
         imageURL: URL,
         instruction: String?,
-        language: OutputLanguage
+        language: OutputLanguage,
+        context: SituationalContext?,
+        memory: MemoryInjection?
     ) async throws -> VisionInterpretationResult
 }

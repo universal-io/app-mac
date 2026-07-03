@@ -323,6 +323,9 @@ final class ReviewViewModel: ObservableObject {
         visionResult = nil
         isInterpretingVision = false
         focusedField = .draft
+        // The panel window is owned by AppDelegate; let it restore the narrow
+        // single-column layout when vision's two-pane session ends.
+        NotificationCenter.default.post(name: .visionSessionEnded, object: nil)
     }
 
     func runVisionInterpretation() async {
@@ -333,12 +336,18 @@ final class ReviewViewModel: ObservableObject {
         let started = Date()
         defer { isInterpretingVision = false }
 
+        // Vision drafts replies as the user, so it gets the same L1 context
+        // and persona/relationship cards as a compose review (M1/M2 → M4).
+        let context = await resolveContext()
+        let memory = await resolveMemory(context: context)
         let provider = currentVisionProvider()
         do {
             let result = try await provider.interpret(
                 imageURL: visionImage.url,
                 instruction: visionInstruction,
-                language: outputLanguage
+                language: outputLanguage,
+                context: context,
+                memory: memory
             )
             self.lastDurationMs = Int(Date().timeIntervalSince(started) * 1000)
             self.lastModelName = provider is GatewayVisionClient
@@ -362,6 +371,32 @@ final class ReviewViewModel: ObservableObject {
         } catch {
             errorMessage = "コピーに失敗しました: \(error.localizedDescription)"
         }
+    }
+
+    /// "承認して送信": deploy a prepared action draft as-is into the field the
+    /// panel was summoned from. The user's approval is the only input — this
+    /// is the North Star loop closing for reply actions.
+    func approveSuggestedAction(_ action: VisionSuggestedAction) {
+        guard action.hasDraft else { return }
+        deploy(text: action.draft, historyInput: .init(
+            mode: historyMode,
+            sourceText: action.draft,
+            finalText: action.draft,
+            modelID: nil,
+            modelName: lastModelName,
+            outputLanguage: outputLanguage.displayName,
+            action: historyAction
+        ))
+    }
+
+    /// "編集する": carry the action draft into the compose editor so the user
+    /// can adjust it (and optionally re-review) before deploying.
+    func editSuggestedAction(_ action: VisionSuggestedAction) {
+        exitVisionMode()
+        draft = action.draft
+        result = nil
+        revisedDraft = ""
+        focusedField = .draft
     }
 
     /// True when a review exists but the draft has changed since it was made.

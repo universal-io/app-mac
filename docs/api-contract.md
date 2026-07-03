@@ -417,6 +417,11 @@ in `input_units` / `output_units`.
 Added 2026-07-02 (Universal I/O M3-B). Screenshot interpretation
 (OpenAI Responses API). The image is never persisted by the gateway.
 
+Updated 2026-07-03 (M4): the response schema became "see → understand →
+respond" (`situation` / `extracted` / `asks` / `suggested_actions` with reply
+drafts), and the request accepts the same optional `context` / `memory`
+blocks as `POST /api/ai/review` (prompt-only, never stored).
+
 ### Request Body
 
 ```json
@@ -426,7 +431,17 @@ Added 2026-07-02 (Universal I/O M3-B). Screenshot interpretation
   "input": {
     "image_base64": "（base64。最大4M文字 ≒ 3MB）",
     "media_type": "image/png",
-    "instruction": "（任意の追加指示）"
+    "instruction": "（任意の追加指示）",
+    "context": {
+      "app_name": "Mail",
+      "window_title": "（任意）",
+      "conversation_excerpt": "（任意。AX で取れた周辺テキスト）"
+    },
+    "memory": {
+      "persona_md": "（任意。L3 Persona Card）",
+      "relationship_subject": "（任意）",
+      "relationship_md": "（任意。L2 Relationship Card）"
+    }
   },
   "preferences": { "output_language": "japanese" },
   "client": { "platform": "macos", "app_version": "0.1.0" }
@@ -435,15 +450,34 @@ Added 2026-07-02 (Universal I/O M3-B). Screenshot interpretation
 
 - `media_type`: `image/png` or `image/jpeg`. Clients should re-encode large
   PNG captures as JPEG to stay under the size limit (Vercel body cap ~4.5MB).
+- `context` / `memory` are optional and used only to build the prompt
+  (recipient/tone inference and persona-aware reply drafts).
 
 ### Success Response
 
-`result` is the interpretation JSON as produced by the model
-(`summary`, `visible_text`, `interpretation`, `suggested_actions`,
-`uncertainties`); clients decode it flexibly. `meta` carries
-`output_language`, `model_vendor`, `model_id`, `latency_ms`.
+`result` is the interpretation JSON as produced by the model; clients decode
+it flexibly (legacy `summary` / `visible_text` shapes are still accepted
+client-side):
 
-Usage events: `operation = vision`, `unit_type = call`. There is no hard
+```json
+{
+  "situation": "この画面で何が起きているかの要約（1-2文）",
+  "extracted": "画面から読み取った本文（構造化 Markdown）",
+  "asks": ["あなたに求められていること（依頼・期限・事実）"],
+  "suggested_actions": [
+    {
+      "title": "田中さんへ返信する",
+      "kind": "reply | fill_form | task | info_only",
+      "draft": "kind=reply の場合、Persona/Relationship を反映した返信文案"
+    }
+  ]
+}
+```
+
+`meta` carries `output_language`, `model_vendor`, `model_id`, `latency_ms`.
+
+Usage events: `operation = vision`, `unit_type = call`, with
+`has_context` / `has_memory` flags in the metadata. There is no hard
 Vision quota yet (same policy as transcribe).
 
 ## GET/PUT /api/memory/cards
