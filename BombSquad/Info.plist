@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>BOMB_SQUAD_API_BASE_URL</key>
-	<string>https://app.universal-io.com</string>
+	<string>https://api.universal-io.com</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
