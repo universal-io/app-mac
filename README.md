@@ -154,6 +154,18 @@ xcodebuild -project BombSquad.xcodeproj -scheme BombSquad -configuration Debug b
 読み取り順は `BombSquad.local.plist` → Xcode Scheme の環境変数 →
 `Info.plist`。
 
+Gateway の向き先（`BOMB_SQUAD_API_BASE_URL`）は Info.plist に本番の
+`https://app.universal-io.com` を既定値として持つ。開発者は `BombSquad.local.plist`
+に `http://localhost:3000/api` を入れることでローカル Gateway を優先できる
+（この行を空にすると本番へフォールバック）。エンドポイント構築は base URL の
+`/api` 有無を吸収する（[`GatewayAPI.endpoint`](BombSquad/Services/GatewayAPI.swift)）。
+
+> ⚠️ リリース注意: `BombSquad.local.plist` はアプリバンドルに同梱され最優先で
+> 読まれる（[`BombSquadConfig`](BombSquad/Services/BombSquadConfig.swift)）。
+> 配布ビルドを作る前に、この plist の `BOMB_SQUAD_API_BASE_URL` を空にして
+> Info.plist の本番既定へ確実にフォールバックさせること（Supabase の値は本番も
+> 同一なので残してよい）。
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

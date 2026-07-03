@@ -408,8 +408,14 @@ M3 の Gateway 移行時にサーバー側へ移す。
   アクセシビリティ／マイク／画面収録の再許可と再ログインが必要。Supabase の
   Redirect URLs に `universal-io://auth/callback` の追加が必要（オーナー作業）。
   関連決定（同日）: Stripe はテストモードで実装先行、価格は Standard ¥1,980 /
-  Pro ¥4,980。ドメイン universal-io.com は Vercel 未設定（製品サイト・認証・課金・
-  Gateway 集約予定、メールは Cloudflare + Resend）。
+  Pro ¥4,980。**Gateway デプロイ構成（2026-07-03 決定）**: 製品サイトは
+  `universal-io.com`（既存 Vercel プロジェクト、web-product リポジトリ）で稼働中。
+  Gateway は**別 Vercel プロジェクト**に分離し `app.universal-io.com` サブドメインへ
+  （GitHub 連携 = app-mac リポジトリ、Root Directory=`web`）。apex を 2 プロジェクトに
+  当てられないためサブドメイン分離が必須。クライアントの本番向き先デフォルトは
+  Info.plist に `https://app.universal-io.com` を設定済み（開発は local.plist の
+  localhost が優先。`GatewayAPI.endpoint` が `/api` 有無を吸収）。メールは
+  Cloudflare + Resend 予定。
 
 **目的**: ビジネス成立の土台。API キーのクライアント撤去、メータリング、Stripe サブスク、
 デバイス間メモリ同期。**リブランドに伴う Bundle ID 変更もここで同時に行う**

@@ -23,6 +23,11 @@ targets:
         CFBundleDisplayName: "Universal I/O"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        # Production gateway (Vercel project "gateway", app.universal-io.com).
+        # This is the fallback read last: BombSquad.local.plist (localhost)
+        # overrides it for developers, so day-to-day dev is unaffected. The
+        # endpoint builder tolerates a base URL with or without "/api".
+        BOMB_SQUAD_API_BASE_URL: "https://app.universal-io.com"
         LSApplicationCategoryType: "public.app-category.productivity"
         NSMicrophoneUsageDescription: "音声入力（ASR）で下書きを作成するためにマイクを使用します。"
         CFBundleURLTypes:
