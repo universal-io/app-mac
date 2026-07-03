@@ -343,8 +343,14 @@ Expected client mapping:
 
 ## POST /api/ai/transcribe
 
-Added 2026-07-02 (Universal I/O M3-B). Speech-to-text proxy (Groq Whisper).
-The gateway owns the provider key and the hallucination filter.
+Added 2026-07-02 (Universal I/O M3-B). Speech-to-text proxy.
+The gateway owns the provider keys and the hallucination filter.
+
+Updated 2026-07-03（可用性の原則）: primary は Groq `whisper-large-v3`（15秒
+タイムアウト）。プロバイダ障害・レート制限・タイムアウト時は **OpenAI
+`whisper-1` へ自動フォールバック**する（別ベンダーなので Groq 全断でも共倒れ
+しない）。`meta.model_vendor` / `model_id` に実際に使ったエンジンが入り、
+`bs_usage_events` にも記録される。全エンジン失敗時のみ `PROVIDER_ERROR`。
 
 ### Request (multipart/form-data)
 

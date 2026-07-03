@@ -20,7 +20,10 @@ enum BombSquadAuthError: LocalizedError {
 
 final class BombSquadAuthClient {
     static let shared = BombSquadAuthClient()
-    static let redirectURL = URL(string: "bombsquad://auth/callback")!
+    // C4 rebrand: must be listed in Supabase Auth > URL Configuration >
+    // Redirect URLs (the legacy bombsquad:// entry can be removed once all
+    // installs have migrated).
+    static let redirectURL = URL(string: "universal-io://auth/callback")!
 
     typealias AuthStateChange = (event: AuthChangeEvent, session: Session?)
 

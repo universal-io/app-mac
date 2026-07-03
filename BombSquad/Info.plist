@@ -22,10 +22,10 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>com.heywatchme.bombsquad.auth</string>
+			<string>com.universal-io.mac.auth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>bombsquad</string>
+				<string>universal-io</string>
 			</array>
 		</dict>
 	</array>

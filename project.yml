@@ -4,7 +4,7 @@ packages:
     url: https://github.com/supabase/supabase-swift.git
     from: 2.48.0
 options:
-  bundleIdPrefix: com.heywatchme
+  bundleIdPrefix: com.universal-io
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -26,9 +26,9 @@ targets:
         LSApplicationCategoryType: "public.app-category.productivity"
         NSMicrophoneUsageDescription: "音声入力（ASR）で下書きを作成するためにマイクを使用します。"
         CFBundleURLTypes:
-          - CFBundleURLName: com.heywatchme.bombsquad.auth
+          - CFBundleURLName: com.universal-io.mac.auth
             CFBundleURLSchemes:
-              - bombsquad
+              - universal-io
     dependencies:
       - package: Supabase
         product: Supabase
@@ -43,8 +43,11 @@ targets:
         optional: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.heywatchme.bombsquad
-        PRODUCT_NAME: BombSquad
+        PRODUCT_BUNDLE_IDENTIFIER: com.universal-io.mac
+        # The .app file name (shown in permission dialogs and the TCC lists).
+        # "/" is illegal in file names, so the display name stays "Universal I/O"
+        # while the bundle is "Universal IO.app". Code namespace rename is M5.
+        PRODUCT_NAME: Universal IO
         # Stable signing with the Apple Development certificate so the Keychain
         # "Always Allow" choice persists across rebuilds (ad-hoc "-" changes the
         # signature every build and re-prompts each time).

@@ -120,11 +120,13 @@ Important clarification:
 
 Current web values:
 
-- Production site URL: `https://bombsquad.me`
+- Production site URL: `https://bombsquad.me`（将来 `https://universal-io.com` へ移行予定。
+  製品サイト・サインイン・課金・Gateway API を集約する。メールは Cloudflare + Resend 予定）
 - Local site URL: `http://localhost:3000`
 - Shared web auth callback path: `/auth/callback`
 - Supabase provider callback: `https://skcsbcyivjcvevxntvqa.supabase.co/auth/v1/callback`
-- Native macOS callback: `bombsquad://auth/callback`
+- Native macOS callback: `universal-io://auth/callback`（C4 リブランド、2026-07-03。
+  旧 `bombsquad://auth/callback` は移行期間中 Redirect URLs に残し、行き渡ったら削除）
 
 Current provider configuration notes:
 
@@ -139,7 +141,8 @@ Current provider configuration notes:
   - Redirect URLs:
     - `https://bombsquad.me/auth/callback`
     - `http://localhost:3000/auth/callback`
-    - `bombsquad://auth/callback`
+    - `universal-io://auth/callback`（C4 以降の必須エントリ）
+    - `bombsquad://auth/callback`（旧クライアント向け。移行完了後に削除可）
 
 Expected categories:
 

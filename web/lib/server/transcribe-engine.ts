@@ -1,12 +1,24 @@
-// Groq Whisper proxy for the AI gateway. Port of the macOS GroqTranscriber
+// Whisper proxy for the AI gateway. Port of the macOS GroqTranscriber
 // (BombSquad/Services/GroqTranscriber.swift) including its hallucination
 // filter; keep the two in sync until the BYOK fallback path is removed.
+//
+// Availability principle (owner decision, 2026-07-03): a provider-side
+// failure (outage, provider rate limit, misconfigured operator quota) must
+// never take the feature away from the user. Groq is the fast primary; on
+// any provider error the request silently falls back to OpenAI whisper-1
+// (a different vendor, so a Groq outage cannot take both down). Only the
+// user's own plan quota may stop a request — that check lives in the route.
 
 import { getServerEnv } from "@/lib/server/env";
 import { ProviderCallError } from "@/lib/server/review-engine";
 
-const ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions";
-const MODEL_ID = "whisper-large-v3";
+type TranscriptionEngine = {
+  vendor: string;
+  modelId: string;
+  endpoint: string;
+  apiKey: string | null;
+  timeoutMs: number;
+};
 
 export type TranscriptionOutput = {
   text: string;
@@ -24,32 +36,72 @@ type WhisperSegment = {
 
 export async function runTranscription(audio: File): Promise<TranscriptionOutput> {
   const env = getServerEnv();
-  if (!env.groqApiKey) {
-    throw new ProviderCallError('No provider key configured for vendor "groq".');
+  // Hold-to-talk clips are seconds long; a primary that stalls counts as
+  // down, so it gets a tight budget and the fallback a generous one.
+  const engines: TranscriptionEngine[] = [
+    {
+      vendor: "groq",
+      modelId: "whisper-large-v3",
+      endpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
+      apiKey: env.groqApiKey,
+      timeoutMs: 15_000,
+    },
+    {
+      vendor: "openai",
+      modelId: "whisper-1",
+      endpoint: "https://api.openai.com/v1/audio/transcriptions",
+      apiKey: env.openaiApiKey,
+      timeoutMs: 60_000,
+    },
+  ].filter((engine) => Boolean(engine.apiKey));
+
+  if (engines.length === 0) {
+    throw new ProviderCallError("No provider key configured for transcription.");
   }
 
+  let lastError: ProviderCallError | null = null;
+  for (const engine of engines) {
+    try {
+      return await transcribeWith(engine, audio);
+    } catch (error) {
+      lastError =
+        error instanceof ProviderCallError
+          ? error
+          : new ProviderCallError(String(error));
+      console.warn(
+        `[transcribe] ${engine.vendor}/${engine.modelId} failed, ` +
+          `${engine === engines[engines.length - 1] ? "no fallback left" : "falling back"}:`,
+        lastError.message,
+      );
+    }
+  }
+
+  throw lastError ?? new ProviderCallError("Transcription failed.");
+}
+
+async function transcribeWith(
+  engine: TranscriptionEngine,
+  audio: File,
+): Promise<TranscriptionOutput> {
   const form = new FormData();
-  form.append("model", MODEL_ID);
+  form.append("model", engine.modelId);
   form.append("temperature", "0");
   // verbose_json gives per-segment confidence used to filter hallucinations.
   form.append("response_format", "verbose_json");
   form.append("file", audio, audio.name || "audio.m4a");
 
-  const response = await fetch(ENDPOINT, {
+  const response = await fetch(engine.endpoint, {
     method: "POST",
-    headers: { Authorization: `Bearer ${env.groqApiKey}` },
+    headers: { Authorization: `Bearer ${engine.apiKey}` },
     body: form,
+    signal: AbortSignal.timeout(engine.timeoutMs),
   });
 
-  if (response.status === 429) {
-    throw new ProviderCallError(
-      "AI エンジンが混雑しています。数秒おいてから再試行してください。",
-      { rateLimited: true },
-    );
-  }
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 500);
-    throw new ProviderCallError(`Provider HTTP ${response.status}: ${detail}`);
+    throw new ProviderCallError(`Provider HTTP ${response.status}: ${detail}`, {
+      rateLimited: response.status === 429,
+    });
   }
 
   const root = (await response.json()) as {
@@ -75,8 +127,8 @@ export async function runTranscription(audio: File): Promise<TranscriptionOutput
 
   return {
     text,
-    modelVendor: "groq",
-    modelId: MODEL_ID,
+    modelVendor: engine.vendor,
+    modelId: engine.modelId,
     durationSeconds: typeof root.duration === "number" ? root.duration : 0,
   };
 }

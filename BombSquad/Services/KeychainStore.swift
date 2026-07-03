@@ -4,8 +4,9 @@ import Security
 /// Minimal Keychain wrapper for per-provider API keys.
 /// Keys never touch disk in plain text or the repository.
 enum KeychainStore {
-    private static let service = "com.heywatchme.bombsquad"
+    private static let service = "com.universal-io.mac"
     private static let legacyServices = [
+        "com.heywatchme.bombsquad",
         "com.matsumotokaya.justamoment",
         "com.matsumotokaya.bombsquad",
     ]
