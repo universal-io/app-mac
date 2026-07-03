@@ -317,7 +317,7 @@ struct VisionPanelView: View {
                 Label("撮り直す", systemImage: "camera.viewfinder")
             }
             .disabled(viewModel.isCapturingScreenshot)
-            .help("前面ウィンドウを自動で撮り直します")
+            .help("画面全体を自動で撮り直します")
 
             Button {
                 NotificationCenter.default.post(

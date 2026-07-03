@@ -448,8 +448,8 @@ M3 の Gateway 移行時にサーバー側へ移す。
 
 進捗（2026-07-03）: スコープ 1〜3 実装済み（macOS `xcodebuild`・web `npm run build` とも通過、
 **実機確認はこれから**）。実装メモ:
-- キャプチャ: `ScreenshotCaptureService.captureFrontWindow(of:)`（SCScreenshotManager、
-  召喚時に記録した `panelTargetApp` のレイヤー0前面ウィンドウを撮影）。失敗時と
+- キャプチャ: `ScreenshotCaptureService.captureFullScreen(displayID:)`（SCScreenshotManager、
+  カーソルのあるディスプレイ全体。5K 級はアップロード上限対策で半分に縮小）。失敗時と
   パネルの「範囲を選ぶ」は従来の `screencapture -i` に落ちる。
 - スキーマ: `VisionInterpretationResult` を situation / extracted / asks /
   suggested_actions[{title, kind, draft}] に刷新（旧 summary / visible_text 形も
@@ -466,7 +466,8 @@ M3 の Gateway 移行時にサーバー側へ移す。
 **スコープ**:
 
 1. **キャプチャの刷新**: 空の原文欄で右Shift 2回 → 範囲選択ではなく
-   **前面ウィンドウの自動キャプチャ**（ScreenCaptureKit）を既定に。
+   **画面全体の自動キャプチャ**（ScreenCaptureKit、カーソルのあるディスプレイ）を既定に
+   （2026-07-03 オーナー決定: 前面ウィンドウ単位ではなく「今見ている画面」をそのまま渡す）。
    範囲選択は補助手段として残す（Vision パネル内の「範囲を選ぶ」ボタン）。
    ユーザー操作は「呼び出すだけ」に近づける。
 2. **解釈スキーマの拡張**（`VisionInterpretationResult` を拡張）:

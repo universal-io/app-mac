@@ -35,9 +35,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Created lazily and reused; never always-on.
     private var managementWindow: NSWindow?
     private var currentViewModel: ReviewViewModel?
-    /// The app that was frontmost when the panel was summoned: the paste
-    /// target, and the window vision captures automatically.
-    private var panelTargetApp: NSRunningApplication?
     private let authClient = BombSquadAuthClient.shared
     private let gesture = ShiftGestureMonitor()
     private let recorder = AudioRecorder()
@@ -322,7 +319,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showPanel(prefill: String? = nil, mode: ReviewMode = .compose) {
         // Capture the target BEFORE our panel activates and steals focus.
         let target = NSWorkspace.shared.frontmostApplication
-        panelTargetApp = target
         // Same timing constraint: identify the context source app now; the AX
         // tree walk itself continues in the background against that pid.
         let contextTask = SituationalContextService.captureTask()
@@ -389,13 +385,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel?.orderOut(nil)
         panel = nil
         currentViewModel = nil
-        panelTargetApp = nil
     }
 
-    /// Default (M4): capture the target app's front window automatically, so
-    /// summoning on an empty draft goes straight from "call" to "understand".
-    /// `interactive: true` (the panel's range button) or a missing target
-    /// window falls back to the system range-selection UI.
+    /// Default (M4): capture the full screen under the cursor automatically,
+    /// so summoning on an empty draft goes straight from "call" to
+    /// "understand" — the model sees what the user sees. `interactive: true`
+    /// (the panel's range button) or a failed automatic shot falls back to
+    /// the system range-selection UI.
     private func startScreenshotCapture(interactive: Bool = false) {
         guard !isCapturingScreenshot else { return }
         guard let panel, let viewModel = currentViewModel else { return }
@@ -417,10 +413,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         panel.orderOut(nil)
 
-        let targetApp = panelTargetApp
+        // Resolve "the screen the user is looking at" on the main thread,
+        // before hopping into the capture task.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        let displayID = screen?.deviceDescription[
+            NSDeviceDescriptionKey("NSScreenNumber")
+        ] as? CGDirectDisplayID
+
         Task {
             do {
-                let attachment = try await captureAttachment(interactive: interactive, targetApp: targetApp)
+                let attachment = try await captureAttachment(interactive: interactive, displayID: displayID)
                 await MainActor.run {
                     viewModel.addScreenshotAttachment(attachment)
                 }
@@ -449,16 +452,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Automatic front-window capture first; the interactive range selection
-    /// is the explicit choice or the fallback when the target app has no
-    /// capturable window (or the automatic shot fails).
+    /// Automatic full-screen capture first; the interactive range selection
+    /// is the explicit choice or the fallback when the automatic shot fails.
     private func captureAttachment(
         interactive: Bool,
-        targetApp: NSRunningApplication?
+        displayID: CGDirectDisplayID?
     ) async throws -> ScreenshotAttachment {
-        if !interactive, let targetApp {
+        if !interactive {
             do {
-                return try await screenshotCapture.captureFrontWindow(of: targetApp)
+                return try await screenshotCapture.captureFullScreen(displayID: displayID)
             } catch {
                 // Fall through to range selection rather than dead-ending the flow.
             }

@@ -26,30 +26,34 @@ enum ScreenshotCaptureError: LocalizedError {
 }
 
 struct ScreenshotCaptureService {
-    /// Capture the frontmost regular window of `app` without any user
-    /// interaction — the "just summon it" path of the North Star flow. The
-    /// panel is not part of the shot because the filter targets that window
-    /// alone. Throws `noCaptureTarget` when the app has no capturable window
-    /// (the caller falls back to interactive selection).
-    func captureFrontWindow(of app: NSRunningApplication) async throws -> ScreenshotAttachment {
+    /// Capture the whole screen the user is looking at, without any user
+    /// interaction — the "just summon it" path of the North Star flow: the
+    /// model sees exactly what the user sees. The panel is ordered out by the
+    /// caller before this runs. Throws `noCaptureTarget` when no display can
+    /// be resolved (the caller falls back to interactive selection).
+    func captureFullScreen(displayID: CGDirectDisplayID?) async throws -> ScreenshotAttachment {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
         )
-        // Shareable windows come front-to-back; layer 0 skips menu bar and
-        // status items, the size floor skips zero-sized helper windows.
-        guard let window = content.windows.first(where: { window in
-            window.owningApplication?.processID == app.processIdentifier
-                && window.windowLayer == 0
-                && window.frame.width >= 120 && window.frame.height >= 90
-        }) else {
+        guard let display = content.displays.first(where: { $0.displayID == displayID })
+            ?? content.displays.first
+        else {
             throw ScreenshotCaptureError.noCaptureTarget
         }
 
-        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let filter = SCContentFilter(display: display, excludingWindows: [])
         let configuration = SCStreamConfiguration()
         let scale = CGFloat(filter.pointPixelScale)
-        configuration.width = Int(filter.contentRect.width * scale)
-        configuration.height = Int(filter.contentRect.height * scale)
+        var width = Int(CGFloat(display.width) * scale)
+        var height = Int(CGFloat(display.height) * scale)
+        // 5K-class displays produce shots past the gateway's upload budget
+        // even as JPEG; half resolution still reads fine for interpretation.
+        if max(width, height) > 4096 {
+            width /= 2
+            height /= 2
+        }
+        configuration.width = width
+        configuration.height = height
         configuration.showsCursor = false
 
         let image = try await SCScreenshotManager.captureImage(
