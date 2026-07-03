@@ -1,6 +1,6 @@
 # Universal I/O (I//O) マスタープラン
 
-最終更新: 2026-07-03（Gateway 本番デプロイ着手・引き継ぎ中。§M3「Gateway 本番デプロイ」参照）
+最終更新: 2026-07-04（Gateway 本番デプロイ完了・macOS クライアントの本番疎通を実機確認済み。§M3「Gateway 本番デプロイ」参照）
 ステータス: 承認済み（オーナー承認済みの製品方針。実装はマイルストーン M1 から開始）
 
 このドキュメントは、Bomb Squad から **Universal I/O**（ロゴ: **I//O**）への製品転換の正本である。
@@ -231,6 +231,13 @@ Slack で会話本文、VS Code で開いているファイル内容の取得を
 - 受信モード（transform）は「呼び出し時に選択があった」だけで暗黙に入るため、意図せず入ると
   「送信したのにコピーされる」ように見える（2026-07-02 報告 → 同日、モードバッジ・ボタン文言・
   トースト文言で可視化対応済み。モード切替 UI は M3-C で検討）。
+- 管理ウィンドウを開いた状態でパネルを操作すると、操作のたびに管理ウィンドウが前面へ
+  引っ張られフォーカスを奪う（2026-07-04 報告・未修正）。原因は `AppDelegate` 各所の
+  `NSApp.activate(ignoringOtherApps: true)`（[`showPanel`](../BombSquad/AppDelegate.swift) 等）が
+  アプリ全体をアクティブ化し、可視ウィンドウを道連れに前面化させること。README の macOS 方針
+  「入力補助のたびに管理ウィンドウへ勝手にフォーカスを移さない」に反する。当面は管理ウィンドウを
+  閉じておけば実害なし。修正案: activate の呼び方を見直す／パネル召喚時に管理ウィンドウを
+  背面化または一時クローズ。
 
 **目的**: ステートレス脱却の第一歩。最小工数で体感品質を最大に変える。初回ユーザーでも効果が出る。
 
@@ -413,11 +420,16 @@ M3 の Gateway 移行時にサーバー側へ移す。
     Authentication → URL Configuration → Redirect URLs に
     `https://api.universal-io.com/auth/callback` を追加（→ 追加後 supabase-setup.md も更新）。
     追加後に実機で再確認すること。
+  - **完了（2026-07-04）**:
+    1. Redirect URLs 追加と Web の Google ログイン修正（前セッション `0a3dd60`）。
+    2. macOS クライアントの本番疎通を実機確認（配布ビルド相当＝local.plist の
+       `BOMB_SQUAD_API_BASE_URL` を空にして Info.plist の `https://api.universal-io.com` へ
+       フォールバックさせたビルドで、ログイン＋レビューが本番 Gateway 経由で成功）。
+       本番各エンドポイント（review/vision/transcribe/memory）も未認証で正常応答を確認。
+       確認後 local.plist は localhost へ復元済み。**開発時の注意**: 確認中に
+       ローカル Gateway（localhost:3000）が HTTP 500 を返していた（`web/` の `npm run dev` 要確認）。
   - **次のセッションでやること**:
-    1. 上記 Redirect URLs の追加とログイン再確認。
-    2. macOS アプリの向き先を実機で疎通確認（ローカル Gateway を止めて Info.plist の既定値
-       だけで動くか＝配布ビルド相当の確認）。
-    3. Stripe: `.env.local` に `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` はまだ未設定
+    1. Stripe: `.env.local` に `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` はまだ未設定
        （テストモードで実装先行の方針）。Webhook エンドポイントは
        `https://api.universal-io.com/api/stripe/webhook` で登録し、
        secret を発行してから Vercel の環境変数へ追加する。価格は Standard ¥1,980 / Pro ¥4,980。
