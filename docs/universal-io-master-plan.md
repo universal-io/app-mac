@@ -1,6 +1,6 @@
 # Universal I/O (I//O) マスタープラン
 
-最終更新: 2026-07-03
+最終更新: 2026-07-03（Gateway 本番デプロイ着手・引き継ぎ中。§M3「Gateway 本番デプロイ」参照）
 ステータス: 承認済み（オーナー承認済みの製品方針。実装はマイルストーン M1 から開始）
 
 このドキュメントは、Bomb Squad から **Universal I/O**（ロゴ: **I//O**）への製品転換の正本である。
@@ -379,6 +379,55 @@ M3 の Gateway 移行時にサーバー側へ移す。
     `UUID().uuidString` は大文字・Postgres uuid は小文字を返すため、同期のたびカードが二重化
     （生成時小文字化＋既存 ID 正規化マイグレーションで解消）。
   残り: Stripe 課金（アカウント構造オーナー整理待ち）。
+
+  **Gateway 本番デプロイ（2026-07-03 着手、引き継ぎ中）**:
+  - 決定事項: 製品サイト `universal-io.com`（既存 Vercel プロジェクト、`web-product` リポジトリ）
+    とは**別の Vercel プロジェクト**を新規作成し、Gateway (`app-mac` リポジトリの `web/`) を
+    **`api.universal-io.com`** サブドメインへ配置する（apex は 2 プロジェクトに同居できないため）。
+    URL 構造は `api.universal-io.com/api/ai/review` のように `/api` が二重に見えるが、
+    ルート移動はせずこのまま採用（オーナー決定：実機確認済みの経路を変えるリスクを避ける）。
+  - macOS クライアントの本番向き先は設定済み: [`project.yml`](../project.yml) の Info.plist に
+    `BOMB_SQUAD_API_BASE_URL: https://api.universal-io.com` を既定値として追加
+    （[`BombSquadConfig`](../BombSquad/Services/BombSquadConfig.swift) の読み込み順は
+    `BombSquad.local.plist`（開発者のlocalhost）→ Info.plist の順なので、開発中は影響なし）。
+  - **詰まった問題と原因（解決済み）**: Vercel で「Root Directory=web」を設定しても
+    `Error: No Output Directory named "public" found` が繰り返し発生した。原因は
+    **`feature/universal-io-m4` ブランチの内容が一度も GitHub へ push されていなかったこと**。
+    Vercel が見ていた GitHub の `main` は 2026-07-02 の古いコミット（`d989bf2`）のままで、
+    Gateway の API 実装（`web/app/api/*` 一式）がそもそも存在しなかった
+    （ページ・認証・料金表のみで review/vision/transcribe/memory の route.ts が無い）。
+    Vercel の「public を探す」挙動は、実際には正しい Next.js ビルド出力があるにもかかわらず、
+    その手前でビルドしていたコード自体が不完全だったことに起因する一連の紛らわしい表示だった。
+  - **対処済み（2026-07-03）**: `feature/universal-io-m4` を `main` へ fast-forward マージし
+    `origin/main` へ push 済み（コミット `a2bbef4`）。新しいブランチは作成していない。
+  - **デプロイ成功・ドメイン割り当て完了（2026-07-03）**: `https://api.universal-io.com/` が
+    本番稼働中（トップページ 200、`/api/ai/review` は未認証で 400 を返す＝Gateway 自体は正常）。
+  - **既知の不具合（未解決）**: Web の `/auth` ページで「Google でログイン」を押すと
+    Internal Server Error になる。切り分け済み: (1) `NEXT_PUBLIC_SUPABASE_URL` 等は本番ビルドの
+    JS に正しく埋め込まれている（client 初期化は原因ではない）、(2) Supabase の
+    `/auth/v1/authorize` は正常に Google の同意画面へ 302 リダイレクトしている（Google Cloud
+    OAuth クライアント自体は生きている）。**濃厚な原因**: [supabase-setup.md](supabase-setup.md)
+    の Redirect URLs に **`https://api.universal-io.com/auth/callback` が未登録**
+    （ドメインは今日新規に確定したため）。Google 承認後、Supabase がこの URL へ戻そうとして
+    許可リストに無く弾かれている可能性が高い。**対処**: Supabase Dashboard →
+    Authentication → URL Configuration → Redirect URLs に
+    `https://api.universal-io.com/auth/callback` を追加（→ 追加後 supabase-setup.md も更新）。
+    追加後に実機で再確認すること。
+  - **次のセッションでやること**:
+    1. 上記 Redirect URLs の追加とログイン再確認。
+    2. macOS アプリの向き先を実機で疎通確認（ローカル Gateway を止めて Info.plist の既定値
+       だけで動くか＝配布ビルド相当の確認）。
+    3. Stripe: `.env.local` に `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` はまだ未設定
+       （テストモードで実装先行の方針）。Webhook エンドポイントは
+       `https://api.universal-io.com/api/stripe/webhook` で登録し、
+       secret を発行してから Vercel の環境変数へ追加する。価格は Standard ¥1,980 / Pro ¥4,980。
+       `bs_entitlements.plan` の CHECK 制約に `standard` を追加するマイグレーションが必要
+       （現状 `free/pro/team/enterprise` のみ）。
+  - **リリース前に忘れてはいけないこと**: `BombSquad.local.plist` はアプリバンドルに同梱され
+    最優先で読まれるため、配布ビルドを作る前に同ファイルの `BOMB_SQUAD_API_BASE_URL` を空にし、
+    Info.plist の本番既定へ確実にフォールバックさせること（README の「セットアップ」節に
+    注意書き済み）。
+
 - **M3-C（実装中、`feature/universal-io`、2026-07-02 着手）**: パネル UI 刷新。
   デザイン原則 3.5 を全面適用する。フェーズ分割:
   - **C1 情報設計**: パネルを Spotlight/Raycast 型の縦 1 カラム（1 入力欄＋結果、
