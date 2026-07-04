@@ -53,10 +53,23 @@ targets:
         # "/" is illegal in file names, so the display name stays "Universal I/O"
         # while the bundle is "Universal IO.app". Code namespace rename is M5.
         PRODUCT_NAME: Universal IO
-        # Stable signing with the Apple Development certificate so the Keychain
-        # "Always Allow" choice persists across rebuilds (ad-hoc "-" changes the
-        # signature every build and re-prompts each time).
         CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: 004CF9C3CBE3574A3855E662DCAE27D6AFFE39C2
         PROVISIONING_PROFILE_SPECIFIER: ""
-        ENABLE_HARDENED_RUNTIME: NO
+        # Microphone entitlement (audio-input). Harmless under Debug too.
+        CODE_SIGN_ENTITLEMENTS: BombSquad/BombSquad.entitlements
+      configs:
+        # Debug: everyday local builds signed with the free personal team's
+        # Apple Development cert (48P276DZDB). Hardened Runtime off keeps the
+        # Keychain "Always Allow" choice persistent across rebuilds.
+        Debug:
+          CODE_SIGN_IDENTITY: "Apple Development"
+          DEVELOPMENT_TEAM: 48P276DZDB
+          ENABLE_HARDENED_RUNTIME: NO
+        # Release: notarizable distribution build signed with the paid team's
+        # Developer ID Application cert (TG68TFXG88). Hardened Runtime on is a
+        # notarization requirement. Build via tools/release.sh; see ~/AGENTS.md
+        # "Apple Developer Accounts" for the team split.
+        Release:
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: TG68TFXG88
+          ENABLE_HARDENED_RUNTIME: YES
