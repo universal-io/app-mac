@@ -1,12 +1,27 @@
 @import "tailwindcss";
 
-:root {
-  --background: #f3e5c1;
-  --foreground: #1f1a10;
-}
+@theme {
+  /* Universal I/O palette (shared with web-product) */
+  --color-ink: #101114;
+  --color-body: #43485c;
+  --color-slate: #7a8194;
+  --color-faint: #9ba3b5;
+  --color-ghost: #c4cad6;
+  --color-edge: #d9dee7;
+  --color-line: #e7eaf0;
+  --color-hair: #eef0f4;
+  --color-paper: #f7f8fa;
+  --color-iris: #5b5cff;
+  --color-iris-deep: #4849e8;
+  --color-cyan: #37d5f2;
+  --color-coral: #ff6b6b;
+  --color-carbon: #2a2c33;
 
-* {
-  box-sizing: border-box;
+  --font-sans:
+    var(--font-geist-sans), var(--font-noto-jp), "Helvetica Neue", Helvetica,
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+  --font-mono:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 html {
@@ -14,27 +29,84 @@ html {
 }
 
 body {
-  margin: 0;
-  min-width: 320px;
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-body), sans-serif;
-}
-
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-family: var(--font-display), sans-serif;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
+  background: #ffffff;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: rgba(249, 115, 22, 0.28);
+  background: var(--color-iris);
+  color: #ffffff;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+.text-pretty {
+  text-wrap: pretty;
+}
+
+/* ---- Brand keyframes (shared with web-product) ---- */
+@keyframes ioBlink {
+  0%,
+  54% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes ioScan {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+@keyframes ioRing {
+  0% {
+    box-shadow: 0 0 0 0 rgba(91, 92, 255, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 16px rgba(91, 92, 255, 0);
+  }
+}
+
+/* ---- Brand utilities ---- */
+.io-caret {
+  animation: ioBlink 1.1s step-start infinite;
+}
+.io-scan {
+  background-image: linear-gradient(
+    110deg,
+    #5b5cff 35%,
+    #37d5f2 50%,
+    #5b5cff 65%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: ioScan 2.8s linear infinite;
+}
+.io-ring {
+  animation: ioRing 2.4s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .io-caret,
+  .io-scan,
+  .io-ring {
+    animation: none;
+  }
+  .io-scan {
+    color: var(--color-iris);
+    background-image: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
 }

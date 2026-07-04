@@ -3,11 +3,11 @@ import { AuthCallbackHandler } from "./callback-handler";
 
 export default function AuthCallbackPage() {
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-stone-100 px-6 text-stone-950">
+    <main className="flex min-h-dvh items-center justify-center bg-paper px-6 text-ink">
       <Suspense
         fallback={
-          <section className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
-            <p className="text-sm text-stone-600">メールリンクのログインを確認しています。</p>
+          <section className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+            <p className="text-sm text-body">メールリンクのログインを確認しています。</p>
           </section>
         }
       >

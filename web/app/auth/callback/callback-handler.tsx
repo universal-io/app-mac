@@ -92,14 +92,14 @@ export function AuthCallbackHandler() {
   }, [router, searchParams]);
 
   return (
-    <section className="w-full max-w-md rounded-2xl border border-stone-200 bg-white p-8 shadow-sm">
-      <h1 className="text-2xl font-semibold text-stone-950">
+    <section className="w-full max-w-md rounded-2xl border border-line bg-white p-8 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+      <h1 className="text-2xl font-semibold text-ink">
         {state === "checking" ? "ログイン処理中" : "ログインできませんでした"}
       </h1>
-      <p className="mt-4 text-sm leading-6 text-stone-600">{message}</p>
+      <p className="mt-4 text-sm leading-6 text-body">{message}</p>
       {state === "error" ? (
         <Link
-          className="mt-6 inline-flex rounded-full bg-stone-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-stone-800"
+          className="mt-6 inline-flex rounded-xl bg-ink px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-iris"
           href="/auth"
         >
           認証ページに戻る

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getPublicEnv } from "@/lib/env";
 import { ensureBombSquadUser } from "@/lib/supabase/bootstrap";
@@ -130,9 +129,9 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
 
   if (!isConfigured) {
     return (
-      <section className="rounded-2xl border border-stone-200 bg-white p-8 shadow-sm">
-        <h2 className="text-2xl font-semibold text-stone-950">ログイン</h2>
-        <p className="mt-3 text-sm leading-6 text-stone-600">
+      <section className="rounded-2xl border border-line bg-white p-8 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
+        <h2 className="text-2xl font-semibold text-ink">ログイン</h2>
+        <p className="mt-3 text-sm leading-6 text-body">
           現在はログイン設定を確認しています。少し時間を置いて再度お試しください。
         </p>
       </section>
@@ -140,80 +139,75 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
   }
 
   return (
-    <section className="rounded-2xl border border-stone-200 bg-white p-8 shadow-sm">
+    <section className="rounded-2xl border border-line bg-white p-8 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold text-stone-950">
+          <h2 className="text-2xl font-semibold text-ink">
             {session ? "ログイン済み" : "ログイン"}
           </h2>
-          <p className="mt-3 text-sm leading-6 text-stone-600">
+          <p className="mt-3 text-sm leading-6 text-body">
             {session
-              ? "このブラウザでは Bomb Squad アカウントにログインできています。"
+              ? "このブラウザで Universal I/O にログインできています。"
               : "メールアドレスまたは Google アカウントでログインできます。"}
           </p>
         </div>
-        <div className="rounded-full border border-stone-200 px-3 py-1 text-xs text-stone-600">
+        <div className="rounded-full border border-line px-3 py-1 text-xs text-slate">
           {session ? "Signed in" : "Guest"}
         </div>
       </div>
 
       {notice ? (
-        <div aria-live="polite" className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-900">
+        <div aria-live="polite" className="mt-6 flex items-start gap-2.5 rounded-xl border border-line bg-paper px-4 py-3 text-sm leading-6 text-body">
+          <span className="mt-[7px] h-2 w-2 shrink-0 rounded-full bg-cyan" />
           {notice}
         </div>
       ) : null}
 
       {errorMessage ? (
-        <div aria-live="polite" className="mt-6 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-900">
+        <div aria-live="polite" className="mt-6 rounded-xl border border-coral/40 bg-coral/5 px-4 py-3 text-sm leading-6 text-ink">
           {errorMessage}
         </div>
       ) : null}
 
       {session?.user.email ? (
         <div className="mt-8 space-y-6">
-          <div className="rounded-2xl border border-stone-200 bg-stone-50 p-5">
-            <div className="text-sm text-stone-500">アカウント</div>
-            <div className="mt-2 text-lg font-medium text-stone-950">{session.user.email}</div>
-            <p className="mt-3 text-sm leading-6 text-stone-600">
+          <div className="rounded-xl border border-line bg-paper p-5">
+            <div className="text-sm text-slate">アカウント</div>
+            <div className="mt-2 text-lg font-medium text-ink">{session.user.email}</div>
+            <p className="mt-3 text-sm leading-6 text-body">
               このブラウザでは現在このアカウントで利用できます。
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
             <button
-              className="rounded-full bg-stone-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-xl bg-ink px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-iris disabled:cursor-not-allowed disabled:opacity-50"
               disabled={isSigningOut}
               onClick={signOut}
               type="button"
             >
               {isSigningOut ? "ログアウト中..." : "ログアウト"}
             </button>
-            <Link
-              className="rounded-full border border-stone-300 px-5 py-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:text-stone-950"
-              href="/pricing"
-            >
-              料金プランを見る
-            </Link>
           </div>
         </div>
       ) : (
-          <div className="mt-8">
+        <div className="mt-8">
           <form className="space-y-5" onSubmit={sendMagicLink}>
             <div>
-              <label className="mb-2 block text-sm font-medium text-stone-700" htmlFor="email">
+              <label className="mb-2 block text-sm font-medium text-body" htmlFor="email">
                 メールアドレス
               </label>
               <input
                 aria-describedby={hasSentLink ? "email-help" : errorMessage ? "email-error" : undefined}
                 aria-invalid={errorMessage ? "true" : "false"}
-                className="w-full rounded-xl border border-stone-300 bg-white px-4 py-3 text-stone-950 outline-none transition focus:border-stone-950"
+                className="w-full rounded-xl border border-edge bg-white px-4 py-3 text-ink outline-none transition-colors placeholder:text-faint focus:border-iris"
                 id="email"
                 onChange={(event) => setEmail(event.target.value)}
                 placeholder="you@example.com"
                 type="email"
                 value={session?.user.email ?? email}
               />
-              <p className="mt-2 text-sm text-stone-500" id={hasSentLink ? "email-help" : errorMessage ? "email-error" : undefined}>
+              <p className="mt-2 text-sm text-slate" id={hasSentLink ? "email-help" : errorMessage ? "email-error" : undefined}>
                 {hasSentLink
                   ? "メールを再送したい場合は、そのままもう一度送信できます。"
                   : "入力したアドレス宛てにログインリンクを送信します。"}
@@ -221,7 +215,7 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
             </div>
 
             <button
-              className="w-full rounded-full bg-stone-950 px-5 py-3 text-sm font-medium text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-xl bg-ink px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-iris disabled:cursor-not-allowed disabled:opacity-50"
               disabled={isSending || !email.trim()}
               type="submit"
             >
@@ -230,28 +224,19 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
           </form>
 
           <div className="my-6 flex items-center gap-3">
-            <div className="h-px flex-1 bg-stone-200" />
-            <span className="text-sm text-stone-500">または</span>
-            <div className="h-px flex-1 bg-stone-200" />
+            <div className="h-px flex-1 bg-line" />
+            <span className="text-sm text-slate">または</span>
+            <div className="h-px flex-1 bg-line" />
           </div>
 
           <button
-            className="w-full rounded-full border border-stone-300 bg-white px-5 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-400 hover:text-stone-950 disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-xl border border-edge bg-white px-5 py-3 text-sm font-medium text-ink transition-colors hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
             disabled={isGoogleSigningIn}
             onClick={signInWithGoogle}
             type="button"
           >
             {isGoogleSigningIn ? "Google に移動しています..." : "Google でログイン"}
           </button>
-
-          <div className="mt-8 rounded-2xl border border-stone-200 bg-stone-50 p-5">
-            <h3 className="text-sm font-medium text-stone-950">ログイン方法</h3>
-            <ol className="mt-3 space-y-2 text-sm leading-6 text-stone-600">
-              <li>1. メールアドレスを入力するか、Google でログインを選びます。</li>
-              <li>2. 認証を完了すると、この画面に戻ります。</li>
-              <li>3. 「ログイン済み」とメールアドレスが表示されたら完了です。</li>
-            </ol>
-          </div>
         </div>
       )}
     </section>
