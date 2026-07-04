@@ -20,6 +20,7 @@ BombSquad.xcodeproj/
 .env
 secrets.*
 BombSquad.local.plist
+tools/release.env
 
 # Web app local files
 web/node_modules/

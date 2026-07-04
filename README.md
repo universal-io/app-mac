@@ -206,6 +206,43 @@ Supabase SDK ではメールリンク送信にも `signInWithOTP(...)` という
 
 Bomb Squad では Web も macOS も `{{ .ConfirmationURL }}` 前提で揃える。
 
+## 配布（ベータ）
+
+App Store を通さず、公証済み DMG を Web から直接配布する。2026-07-04 に一連の経路が
+完成し、「製品サイトのボタン → ダウンロード → 起動 → ログイン → 使える」を実機確認済み。
+
+- **署名分岐**（[`project.yml`](project.yml) の `configs`）: Debug は Apple Development
+  （無料チーム `48P276DZDB` / localhost）、Release は Developer ID Application
+  （有料チーム `TG68TFXG88`）で署名し Hardened Runtime を有効化。マイク用 entitlement は
+  [`BombSquad/BombSquad.entitlements`](BombSquad/BombSquad.entitlements)。日々の開発（Debug）は
+  従来どおり無傷。Apple の2チームの使い分けは `~/AGENTS.md` の「Apple Developer Accounts」に記録。
+- **1コマンドリリース**: [`tools/release.sh`](tools/release.sh) が
+  build → sign → notarize → staple → DMG → R2 アップロードまで実行する。
+
+  ```bash
+  bash tools/release.sh                   # フル（公証 + R2 アップロード）
+  SKIP_NOTARIZE=1 bash tools/release.sh   # 署名構成の検証のみ（Apple 往復なし）
+  ```
+
+- **公証**: 初回のみ notarytool の資格情報をキーチェーンに保存する（app用パスワード方式、
+  profile 名 `universal-io-notary`）。
+
+  ```bash
+  xcrun notarytool store-credentials universal-io-notary \
+    --apple-id <apple-id> --team-id TG68TFXG88 --password <app-specific-password>
+  ```
+
+- **配布先**: Cloudflare R2 バケット `universal-io-downloads` → カスタムドメイン
+  `dl.universal-io.com`。R2 の認証は aws CLI プロファイル `r2`、エンドポイント／バケット名は
+  gitignore された `tools/release.env`。DMG はバージョン付き（`Universal-IO-<version>.dmg`）と
+  固定名 `Universal-IO.dmg`（latest）の2つを置く。
+- **ダウンロード導線**: 製品サイト（別リポジトリ `web-product`）のヒーロー主ボタンが
+  `https://dl.universal-io.com/Universal-IO.dmg` を指す。latest 固定名なので、バージョンを
+  上げてもボタンのリンクは不変（release.sh が毎回 latest を上書きする）。
+- **配布ビルドの向き先**: release.sh がビルド中だけ `BombSquad.local.plist` の
+  `BOMB_SQUAD_API_BASE_URL` を空にし、Info.plist の本番 `https://api.universal-io.com` へ
+  フォールバックさせる。ビルド後に local.plist は自動復元される。
+
 ## Known issues（凍結中の残タスク）
 
 ### アプリ名リネーム完了

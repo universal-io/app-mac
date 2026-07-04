@@ -24,6 +24,11 @@ APP_NAME="Universal IO"
 TEAM_ID="TG68TFXG88"
 NOTARY_PROFILE="${NOTARY_PROFILE:-universal-io-notary}"
 
+# Optional R2 upload. Set R2_ENDPOINT / R2_BUCKET / R2_PROFILE in
+# tools/release.env (gitignored) to auto-upload the notarized DMG. Credentials
+# live in the aws CLI profile, not here. Absent config = build only.
+[[ -f "$PROJECT_ROOT/tools/release.env" ]] && source "$PROJECT_ROOT/tools/release.env"
+
 BUILD_DIR="$PROJECT_ROOT/build"
 ARCHIVE_PATH="$BUILD_DIR/${SCHEME}.xcarchive"
 EXPORT_DIR="$BUILD_DIR/export"
@@ -138,6 +143,18 @@ if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
   xcrun stapler validate "$DMG_PATH"
 else
   echo "== SKIP_NOTARIZE: DMG built but not notarized/stapled =="
+fi
+
+# Upload to R2 only for a real (notarized) release with config present.
+if [[ -z "${SKIP_NOTARIZE:-}" && -n "${R2_ENDPOINT:-}" && -n "${R2_BUCKET:-}" ]]; then
+  echo "== upload to R2 =="
+  CT="application/x-apple-diskimage"
+  aws s3 cp "$DMG_PATH" "s3://${R2_BUCKET}/Universal-IO-$VERSION.dmg" \
+    --profile "${R2_PROFILE:-r2}" --endpoint-url "$R2_ENDPOINT" --content-type "$CT"
+  aws s3 cp "$DMG_PATH" "s3://${R2_BUCKET}/Universal-IO.dmg" \
+    --profile "${R2_PROFILE:-r2}" --endpoint-url "$R2_ENDPOINT" --content-type "$CT"
+  echo "-> uploaded: Universal-IO-$VERSION.dmg and Universal-IO.dmg (latest)"
+  echo "-> https://dl.universal-io.com/Universal-IO.dmg"
 fi
 
 echo ""

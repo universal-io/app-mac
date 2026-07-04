@@ -1,6 +1,6 @@
 # Universal I/O (I//O) マスタープラン
 
-最終更新: 2026-07-04（macOS 本番疎通確認済み。Android 展開の見立てを §M5 にピン留め追加）
+最終更新: 2026-07-04（macOS の Web 直接配布パイプライン完成＝ §4.5。Android 展開の見立ては §M5）
 ステータス: 承認済み（オーナー承認済みの製品方針。実装はマイルストーン M1 から開始）
 
 このドキュメントは、Bomb Squad から **Universal I/O**（ロゴ: **I//O**）への製品転換の正本である。
@@ -200,6 +200,33 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
 | 権限 | `BombSquad/Services/AccessibilityPermission.swift`, `ScreenCapturePermission.swift` |
 
 ---
+
+## 4.5 配布パイプライン（2026-07-04 完成・実機確認済み）
+
+App Store を通さず、公証済み DMG を Web から直接配布する経路が完成した。
+「製品サイトのボタン → ダウンロード → 起動 → ログイン → 使える」を実機で確認済み
+（フィードバック獲得フェーズの土台）。詳細手順は [../README.md](../README.md) の「配布（ベータ）」。
+
+- **署名分岐**（[`project.yml`](../project.yml) の `configs`）: Debug=Apple Development
+  （無料チーム `48P276DZDB` / localhost、日々の開発は無傷）、Release=Developer ID Application
+  （有料チーム `TG68TFXG88`）+ Hardened Runtime + マイク entitlement
+  （[`BombSquad/BombSquad.entitlements`](../BombSquad/BombSquad.entitlements)）。
+  Apple の2チームの使い分けは `~/AGENTS.md` の「Apple Developer Accounts」に記録。
+- **1コマンドリリース**: [`tools/release.sh`](../tools/release.sh) が
+  build → sign → notarize → staple → DMG → R2 アップロードを実行。`SKIP_NOTARIZE=1` で
+  署名検証のみ。公証資格は keychain profile `universal-io-notary`（app用パスワード方式）。
+- **ホスティング**: Cloudflare R2 バケット `universal-io-downloads` → カスタムドメイン
+  `dl.universal-io.com`。DMG はバージョン付き + 固定名 `Universal-IO.dmg`（latest）。
+  R2 認証は aws CLI プロファイル `r2`、設定は gitignore された `tools/release.env`。
+- **ダウンロード導線**: 製品サイト（`web-product`）のヒーロー主ボタンを
+  `https://dl.universal-io.com/Universal-IO.dmg` に変更（waitlist メール登録は下部に維持）。
+- **現行バージョン**: 0.1.0（公証済み DMG を配布中）。
+- **残・次の一手**:
+  - app用パスワードのローテーション（チャットに露出したため任意だが推奨）。
+  - Stripe 課金（M3 残）。ベータ配布中は招待者に Pro 相当を付与すれば課金なしで使ってもらえる。
+  - 製品サイトと Gateway（`web/`）の認証 UI のトンマナ統一（`web-product` の
+    デザイントークン／コンポーネント指定に合わせる。UX 上のログイン導線が確定する前でも、
+    ログインページ単体のスタイルを先に揃える方針）。
 
 ## 5. マイルストーン
 
