@@ -58,12 +58,17 @@ targets:
         # Microphone entitlement (audio-input). Harmless under Debug too.
         CODE_SIGN_ENTITLEMENTS: BombSquad/BombSquad.entitlements
       configs:
-        # Debug: everyday local builds signed with the free personal team's
-        # Apple Development cert (48P276DZDB). Hardened Runtime off keeps the
-        # Keychain "Always Allow" choice persistent across rebuilds.
+        # Debug: a stable certificate identity so TCC grants (screen
+        # recording / accessibility / microphone) and Keychain "Always Allow"
+        # survive rebuilds — ad-hoc signing gets a new CDHash every build and
+        # invalidates them all. The only Apple Development cert on this
+        # machine belongs to the PAID team: its CN reads "... (48P276DZDB)"
+        # but that suffix is a certificate id, the real team is in OU =
+        # TG68TFXG88. Pointing DEVELOPMENT_TEAM at the free team therefore
+        # fails with "No signing certificate 'Mac Development' found".
         Debug:
           CODE_SIGN_IDENTITY: "Apple Development"
-          DEVELOPMENT_TEAM: 48P276DZDB
+          DEVELOPMENT_TEAM: TG68TFXG88
           ENABLE_HARDENED_RUNTIME: NO
         # Release: notarizable distribution build signed with the paid team's
         # Developer ID Application cert (TG68TFXG88). Hardened Runtime on is a

@@ -211,11 +211,15 @@ Bomb Squad では Web も macOS も `{{ .ConfirmationURL }}` 前提で揃える�
 App Store を通さず、公証済み DMG を Web から直接配布する。2026-07-04 に一連の経路が
 完成し、「製品サイトのボタン → ダウンロード → 起動 → ログイン → 使える」を実機確認済み。
 
-- **署名分岐**（[`project.yml`](project.yml) の `configs`）: Debug は Apple Development
-  （無料チーム `48P276DZDB` / localhost）、Release は Developer ID Application
+- **署名分岐**（[`project.yml`](project.yml) の `configs`）: Debug は `Apple Development`
+  ＋チーム `TG68TFXG88`（このMacにある唯一の開発証明書。CN の「(48P276DZDB)」は証明書識別子で
+  チームIDではない — 実チームは OU=TG68TFXG88）、Release は Developer ID Application
   （有料チーム `TG68TFXG88`）で署名し Hardened Runtime を有効化。マイク用 entitlement は
-  [`BombSquad/BombSquad.entitlements`](BombSquad/BombSquad.entitlements)。日々の開発（Debug）は
-  従来どおり無傷。Apple の2チームの使い分けは `~/AGENTS.md` の「Apple Developer Accounts」に記録。
+  [`BombSquad/BombSquad.entitlements`](BombSquad/BombSquad.entitlements)。
+  **Debug を ad-hoc 署名にしてはいけない**: ad-hoc はビルドごとに CDHash が変わり、
+  TCC 許可（画面収録・アクセシビリティ・マイク）と Keychain の「常に許可」がリビルドの
+  たびに無効化される（設定画面ではオンに見えるのに実際は許可されない）。
+  Apple の2チームの使い分けは `~/AGENTS.md` の「Apple Developer Accounts」に記録。
 - **1コマンドリリース**: [`tools/release.sh`](tools/release.sh) が
   build → sign → notarize → staple → DMG → R2 アップロードまで実行する。
 

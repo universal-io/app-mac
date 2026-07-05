@@ -207,9 +207,9 @@ App Store を通さず、公証済み DMG を Web から直接配布する経路
 「製品サイトのボタン → ダウンロード → 起動 → ログイン → 使える」を実機で確認済み
 （フィードバック獲得フェーズの土台）。詳細手順は [../README.md](../README.md) の「配布（ベータ）」。
 
-- **署名分岐**（[`project.yml`](../project.yml) の `configs`）: Debug=Apple Development
-  （無料チーム `48P276DZDB` / localhost、日々の開発は無傷）、Release=Developer ID Application
-  （有料チーム `TG68TFXG88`）+ Hardened Runtime + マイク entitlement
+- **署名分岐**（[`project.yml`](../project.yml) の `configs`）: Debug=`Apple Development`
+  ＋チーム `TG68TFXG88`（安定した証明書署名。ad-hoc はビルドごとに TCC 許可が無効化されるため禁止）、
+  Release=Developer ID Application（有料チーム `TG68TFXG88`）+ Hardened Runtime + マイク entitlement
   （[`BombSquad/BombSquad.entitlements`](../BombSquad/BombSquad.entitlements)）。
   Apple の2チームの使い分けは `~/AGENTS.md` の「Apple Developer Accounts」に記録。
 - **1コマンドリリース**: [`tools/release.sh`](../tools/release.sh) が

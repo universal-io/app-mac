@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The single on-demand management window (account/settings/history/pricing).
     /// Created lazily and reused; never always-on.
     private var managementWindow: NSWindow?
+    private var permissionsWindow: NSWindow?
+    // Lazy so the @MainActor initializer runs on first use (in
+    // applicationDidFinishLaunching), not in a nonisolated property default.
+    private lazy var permissions = PermissionsCoordinator()
     private var currentViewModel: ReviewViewModel?
     private let authClient = BombSquadAuthClient.shared
     private let gesture = ShiftGestureMonitor()
@@ -54,18 +58,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start the shared auth session subscription now (not on first summon),
         // so the panel never flashes the login screen while it loads.
         _ = AuthViewModel.shared
-        // Guide the user to grant Accessibility once; needed for paste injection.
-        AccessibilityPermission.prompt()
         // Sync memory cards with the gateway now, and on every future local
         // edit (debounced). No-op until the gateway is configured and the
         // user is signed in.
         Task { await MemorySyncService.shared.start() }
         // Pre-register sound cues so the first one is instant.
         SoundFeedback.prepare()
-        // Pre-request mic access, then warm up the audio system off the hot path.
-        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-            guard granted else { return }
-            DispatchQueue.main.async { self?.recorder.warmUp() }
+        // Permissions: one focused setup window that requests Accessibility,
+        // Screen Recording, and Microphone deliberately (and registers Screen
+        // Recording in the TCC list so it can be toggled after a reset). Shown
+        // only when something is missing; otherwise we just warm up audio.
+        permissions.onMicrophoneGranted = { [weak self] in self?.recorder.warmUp() }
+        permissions.refresh()
+        if permissions.needsAny {
+            presentPermissionsSetup()
         }
         // Right Shift double-tap = summon → review, or empty text → vision → close.
         // Right Shift long-press = hold-to-talk dictation. ⌘J toggles the panel.
@@ -297,6 +303,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// First-run permission setup. A real key window (unlike the menu-bar
+    /// accessory alone) keeps the system permission prompts on the active
+    /// screen instead of scattering them across displays.
+    private func presentPermissionsSetup() {
+        if let permissionsWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            permissionsWindow.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 470, height: 420),
+            styleMask: [.titled, .closable],
+            backing: .buffered, defer: false
+        )
+        window.title = "Universal I/O"
+        window.isReleasedWhenClosed = false
+        window.contentViewController = NSHostingController(
+            rootView: PermissionsSetupView(coordinator: permissions) { [weak self] in
+                self?.permissionsWindow?.close()
+            }
+        )
+        // Put the window on the display the user is actually looking at, so the
+        // system permission dialogs land on the same screen.
+        centerOnActiveScreen(window)
+
+        permissionsWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
     @objc private func handleClosePanel() {
         closePanel()
     }
@@ -492,13 +529,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Center the panel on whichever screen the cursor is on, so it never spills
     /// off-screen (e.g. Gmail's right-side compose box).
-    private func centerOnActiveScreen(_ panel: NSPanel) {
+    private func centerOnActiveScreen(_ window: NSWindow) {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
-        let size = panel.frame.size
+        let size = window.frame.size
         let origin = NSPoint(x: visible.midX - size.width / 2,
                              y: visible.midY - size.height / 2)
-        panel.setFrameOrigin(origin)
+        window.setFrameOrigin(origin)
     }
 }

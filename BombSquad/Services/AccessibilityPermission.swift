@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 
 /// Accessibility permission is required to post synthetic key events (⌘V) into
@@ -13,5 +14,12 @@ enum AccessibilityPermission {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let options = [key: true] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
+    }
+
+    static func openSettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        ) else { return }
+        NSWorkspace.shared.open(url)
     }
 }
