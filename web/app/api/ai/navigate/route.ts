@@ -207,7 +207,15 @@ function streamingResponse(input: StreamingResponseInput): Response {
           inputUnits: finalOutput.inputTokens,
           outputUnits: finalOutput.outputTokens,
           latencyMs,
-          metadata: { ...input.metadata, harness: finalOutput.harnessId },
+          metadata: {
+            ...input.metadata,
+            harness: finalOutput.harnessId,
+            // Marker adherence metrics (docs/navigator-copilot-plan.md §2-d):
+            // has_locator tracks the highlight rate, locator_supplemented how
+            // often the model missed the contract and enforcement kicked in.
+            has_locator: finalOutput.hasLocator,
+            locator_supplemented: finalOutput.locatorSupplemented,
+          },
         });
         send("result", {
           request_id: input.requestId,

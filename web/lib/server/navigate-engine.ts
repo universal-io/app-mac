@@ -45,6 +45,10 @@ export type NavigateEngineOutput = {
   modelId: string;
   inputTokens: number;
   outputTokens: number;
+  /** Whether the final text carries a [[target/loc]] marker (metric seed). */
+  hasLocator: boolean;
+  /** Whether the marker came from the enforcement supplement call. */
+  locatorSupplemented: boolean;
 };
 
 export type NavigateStreamEvent =
@@ -83,6 +87,12 @@ export async function* runNavigateStream(
   }
 
   const harness = selectHarness(input.hints);
+  const providerMessages: Array<Record<string, unknown>> = [
+    { role: "system", content: systemPrompt(input.language, harness, input.hints) },
+    ...input.messages.map((message, index) =>
+      providerMessage(message, index === 0, input.messages.length === 1),
+    ),
+  ];
   const body: Record<string, unknown> = {
     model: modelId,
     // The first turn is contractually one sentence; navigation answers are
@@ -92,10 +102,7 @@ export async function* runNavigateStream(
     max_completion_tokens: firstTurn ? 400 : 1200,
     stream: true,
     stream_options: { include_usage: true },
-    messages: [
-      { role: "system", content: systemPrompt(input.language, harness, input.hints) },
-      ...input.messages.map((message, index) => providerMessage(message, index === 0)),
-    ],
+    messages: providerMessages,
   };
 
   const response = await fetch(endpoint, {
@@ -171,6 +178,35 @@ export async function* runNavigateStream(
     throw new ProviderCallError("Provider stream ended without content.");
   }
 
+  // Rule-based marker enforcement (docs/navigator-copilot-plan.md §2-c): a
+  // navigation answer without a locator gets one small follow-up call asking
+  // only for the [[target:…]] of whatever the answer pointed at. The client
+  // strips markers from the streamed display, so the appended delta is
+  // invisible text-wise and only surfaces as the highlight. Best-effort: a
+  // failed supplement never fails the turn.
+  let locatorSupplemented = false;
+  if (!firstTurn && !LOCATOR_MARKER.test(fullText)) {
+    try {
+      const supplement = await fetchLocatorSupplement({
+        endpoint,
+        apiKey,
+        modelId,
+        providerMessages,
+        answerText: fullText,
+      });
+      if (supplement) {
+        const addition = ` ${supplement.marker}`;
+        fullText += addition;
+        inputTokens += supplement.inputTokens;
+        outputTokens += supplement.outputTokens;
+        locatorSupplemented = true;
+        yield { type: "delta", text: addition };
+      }
+    } catch {
+      // Ignore: the verbal answer already streamed; only the highlight is lost.
+    }
+  }
+
   yield {
     type: "final",
     output: {
@@ -180,7 +216,58 @@ export async function* runNavigateStream(
       modelId,
       inputTokens,
       outputTokens,
+      hasLocator: LOCATOR_MARKER.test(fullText),
+      locatorSupplemented,
     },
+  };
+}
+
+// Matches any complete locator marker. Deliberately un-anchored and without
+// the `g` flag: `.test` must stay stateless across calls.
+const LOCATOR_MARKER = /\[\[(?:target|loc):[^\]]+\]\]/;
+
+const LOCATOR_SUPPLEMENT_INSTRUCTION = `あなたの直前の回答が、ユーザーの画面上に見えている要素（ボタン・メニュー・リンク・入力欄など）を指しているなら、その要素に実際に表示されている文字列を [[target:表示文字列]] の形式で1つだけ出力してください（翻訳・言い換えをしない）。回答が画面内の要素を指していない場合（対象が画面に見えていない・一般的な説明のみ）は NONE とだけ出力してください。それ以外の文章は出力しないでください。`;
+
+/** One non-streaming mini-call that turns a marker-less answer into a
+ * locator. Returns null when the model answers NONE or emits no marker. */
+async function fetchLocatorSupplement(args: {
+  endpoint: string;
+  apiKey: string;
+  modelId: string;
+  providerMessages: Array<Record<string, unknown>>;
+  answerText: string;
+}): Promise<{ marker: string; inputTokens: number; outputTokens: number } | null> {
+  const response = await fetch(args.endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${args.apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: args.modelId,
+      max_completion_tokens: 400,
+      messages: [
+        ...args.providerMessages,
+        { role: "assistant", content: args.answerText },
+        { role: "user", content: LOCATOR_SUPPLEMENT_INSTRUCTION },
+      ],
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) return null;
+  const json = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  const content = json.choices?.[0]?.message?.content ?? "";
+  // Accept only a target marker: the supplement exists because the main
+  // answer was coordinate-shy, so a guessed [[loc]] here would be noise.
+  const marker = content.match(/\[\[target:[^\]]{1,120}\]\]/)?.[0];
+  if (!marker) return null;
+  return {
+    marker,
+    inputTokens: json.usage?.prompt_tokens ?? 0,
+    outputTokens: json.usage?.completion_tokens ?? 0,
   };
 }
 
@@ -208,6 +295,14 @@ const FIRST_TURN_INSTRUCTION = `これはユーザーがホットキーを押し
 - それ以外（分析ツール・業務システム・ブラウザ等の一般画面）なら: 「◯◯の△△画面のようです。」という現状認識を1文だけ返して、そこで止めてください。詳しい解説・推測でのナビゲーション・選択肢の列挙は禁止です。
 - この初手では位置マーカー（[[target:…]] [[loc:…]] [[fill:…]]）を一切付けないでください。意図が不明な段階で操作を提案しないこと。マーカーはユーザーが質問した後の回答にだけ使います。`;
 
+// The API is stateless, so the auto first turn's message is re-sent with
+// every follow-up request. Its marker ban must NOT ride along then: replayed
+// as history, the ban reads as a conversation-wide user instruction and
+// suppresses markers in every later answer (the 821f6cb regression). History
+// gets this neutral note instead.
+const FIRST_TURN_HISTORY_NOTE =
+  "（ホットキー直後の自動の初手。画面認識の1文だけを求めた）";
+
 function systemPrompt(
   language: OutputLanguageCode,
   harness: Harness | null,
@@ -223,10 +318,11 @@ function systemPrompt(
 - 折りたたみメニューの展開状態を必ず画像で確認する: 項目の直下に子項目が字下げされて見えていれば、その項目は既に展開済み。展開済みの項目を「開いてください」と案内しない（もう一度押すと閉じてしまう）。子項目が見えているなら、目的の子項目そのものを案内する。
 - 出力は平文（必要なら短い箇条書き）。JSON・コードフェンス・見出し記号は使わない。
 - すべての出力は${LANGUAGE_PROMPT_NAMES[language]}で書く。
-- 画面上の場所（ボタン・メニュー・リンク等）を案内するときは、原則として回答の一番最後に位置マーカーを付ける。形式は [[target:表示文字列]][[loc:x0,y0,x1,y1]]（例: 「左メニューの「テクノロジー」を開いてください。[[target:テクノロジー]][[loc:40,620,160,650]]」）。
-  - [[target:…]] は対象要素に実際に表示されている文字列そのまま（ボタンのラベル・メニュー項目名。翻訳・言い換え・要約をしない）。ラベルの無いアイコンだけの要素なら target は省略してよい。
-  - [[loc:…]] は直近のスクリーンショットの左上を(0,0)、右下を(1000,1000)とする整数座標で、対象要素を囲む矩形。
-  - 付けないのは、対象が画面内に見えていない・候補が複数あって絞れない・位置の確信が低い、のいずれかの場合だけ。この判断は毎ターン独立に行う——前の回答で付けなかった会話でも、今回の対象を特定できるなら必ず付ける。本文の途中には決して書かない。
+- ナビゲート方針: 当てずっぽうの断定は禁止。ただし、ユーザーの質問に画面上の場所（ボタン・メニュー・リンク・入力欄等）で答えられるなら、必ずその場所を示して答える。場所を示せることがこの製品の価値。
+- 画面上の要素に言及して案内するときは、回答の一番最後に位置マーカーを付ける（ユーザーの画面上のハイライト表示に使われる。例: 「左メニューの「テクノロジー」を開いてください。[[target:テクノロジー]]」）。
+  - 主契約は [[target:表示文字列]]。対象要素に実際に表示されている文字列そのまま（ボタンのラベル・メニュー項目名。翻訳・言い換え・要約をしない）。位置の特定は端末側が OCR とアクセシビリティ情報で行うため、座標に自信が無くても target は必ず付けられる。
+  - 座標にも自信がある場合は続けて [[loc:x0,y0,x1,y1]] を付ける（直近のスクリーンショットの左上を(0,0)、右下を(1000,1000)とする整数座標で、対象要素を囲む矩形）。自信が無ければ loc は省略する。ラベルの無いアイコンだけの要素は target を省略し loc だけでよい。
+  - マーカーを付けないのは、対象が画面内に見えていない場合だけ。似た候補が複数あるときは最も文脈に合うものを1つ選んで付ける。この判断は毎ターン独立に行う——前の回答で付けなかった会話でも、今回の対象が画面内に見えるなら必ず付ける。本文の途中には決して書かない。
   - 入力欄に特定の文字列を入力するよう案内する場合は、さらに [[fill:入力する文字列]] を続ける（例: 「検索欄に入力してください。[[target:検索]][[loc:300,20,700,60]][[fill:直帰率]]」）。fill はユーザーが承認ボタンを押した時だけ実行される提案であり、勝手に実行されることはない。
 - 画像の中に赤や青の枠線が描かれている場合、それはユーザーが「この部分について」と指し示した領域。質問はその領域に関するものとして答える。`,
   ];
@@ -263,7 +359,11 @@ const RECAPTURE_INSTRUCTION = `画面が撮り直されました。添付の画�
 2. 反映されていれば、目的に向けた次の一歩を案内する。すでに同じ操作を案内済みなら同じ案内を繰り返さない。
 3. 反映されていなければ、その事実を短く述べ、別の到達方法を提案する（同じボタンをもう一度押させてループしない）。`;
 
-function providerMessage(message: NavigateMessage, isFirst: boolean): Record<string, unknown> {
+function providerMessage(
+  message: NavigateMessage,
+  isFirst: boolean,
+  soloTurn: boolean,
+): Record<string, unknown> {
   if (message.role === "assistant") {
     return { role: "assistant", content: message.text ?? "" };
   }
@@ -275,7 +375,7 @@ function providerMessage(message: NavigateMessage, isFirst: boolean): Record<str
   // (an executed-action note rides as text on the capture turn).
   const pieces: string[] = [];
   if (text) pieces.push(text);
-  if (isFirst && !text) pieces.push(FIRST_TURN_INSTRUCTION);
+  if (isFirst && !text) pieces.push(soloTurn ? FIRST_TURN_INSTRUCTION : FIRST_TURN_HISTORY_NOTE);
   else if (!isFirst && message.imageDataURL) pieces.push(RECAPTURE_INSTRUCTION);
   else if (!text) pieces.push(RECAPTURE_INSTRUCTION);
   parts.push({ type: "text", text: pieces.join("\n\n") });
