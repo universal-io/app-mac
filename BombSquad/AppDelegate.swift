@@ -15,6 +15,13 @@ extension Notification.Name {
     /// overlay opens with the full screen pre-selected (Enter confirms,
     /// dragging picks a region instead).
     static let captureScreenshot = Notification.Name("BombSquad.captureScreenshot")
+    /// Hide the panel while an approved action executes: a synthetic click
+    /// must land on the TARGET app, not on our own floating panel covering
+    /// it. Sessions are single-action for now (the multi-step loop with an
+    /// automatic progress re-capture is parked: restoring the panel after a
+    /// synthetic click proved unreliable); the failure path restores it.
+    static let hidePanelForAction = Notification.Name("BombSquad.hidePanelForAction")
+    static let showPanelAfterAction = Notification.Name("BombSquad.showPanelAfterAction")
     /// Posted by the view model when a vision session ends and the panel
     /// should return to the narrow single-column layout.
     static let visionSessionEnded = Notification.Name("BombSquad.visionSessionEnded")
@@ -93,6 +100,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleCaptureScreenshot), name: .captureScreenshot, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleHidePanelForAction),
+            name: .hidePanelForAction, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleShowPanelAfterAction),
+            name: .showPanelAfterAction, object: nil
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleVisionSessionEnded), name: .visionSessionEnded, object: nil
@@ -347,6 +362,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startScreenshotCapture()
     }
 
+    /// The approved action is about to run: get the panel out of the way so
+    /// a synthetic click hits the target app (and the user sees it happen).
+    @objc private func handleHidePanelForAction(_ notification: Notification) {
+        panel?.orderOut(nil)
+    }
+
+    /// The action failed (or no capture follows): restore the panel.
+    ///
+    /// After a synthetic click the TARGET app is frontmost, and macOS 14's
+    /// cooperative activation can silently refuse `NSApp.activate` from a
+    /// background app — after which makeKeyAndOrderFront does nothing and
+    /// the panel looks "gone". `orderFrontRegardless` bypasses activation
+    /// and puts the floating panel back on screen unconditionally.
+    @objc private func handleShowPanelAfterAction(_ notification: Notification) {
+        guard let panel else {
+            NSLog("[Action] restore skipped: panel is nil")
+            return
+        }
+        NSLog("[Action] restoring panel (visible=%d)", panel.isVisible ? 1 : 0)
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
+    }
+
     /// Vision's two-pane session ended (e.g. an action draft was carried into
     /// the compose editor): restore the narrow Spotlight-style layout.
     @objc private func handleVisionSessionEnded() {
@@ -437,6 +476,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func closePanel() {
+        // Whatever closes the panel, a finished navigator conversation is
+        // worth keeping — the history popover is its only afterlife.
+        MainActor.assumeIsolated {
+            currentViewModel?.saveNavigatorSessionIfNeeded()
+        }
         panel?.orderOut(nil)
         panel = nil
         currentViewModel = nil

@@ -223,10 +223,12 @@ struct GatewayNavigateClient {
         hints: SituationalContext?,
         language: OutputLanguage
     ) -> [String: Any] {
-        // History stays light: only the first and the latest screenshot are
-        // sent; intermediate turns keep their text but drop the image.
+        // Only the LATEST screenshot rides along. Sending the first one too
+        // made the model mix up past and present ("Technology isn't open
+        // yet" while looking at an old shot) — text history carries the
+        // context; exactly one image means exactly one "now".
         let imageIndices = turns.indices.filter { turns[$0].imageBase64 != nil }
-        let keptImageIndices = Set([imageIndices.first, imageIndices.last].compactMap { $0 })
+        let keptImageIndices = Set([imageIndices.last].compactMap { $0 })
 
         let messages: [[String: Any]] = turns.enumerated().map { index, turn in
             var payload: [String: Any] = ["role": turn.role.rawValue]

@@ -55,14 +55,26 @@ enum NavigatorLocator {
     private static let targetMarker = try! NSRegularExpression(
         pattern: #"\[\[target:([^\]]{1,120})\]\]"#
     )
-    /// A marker still being streamed at the end of the text.
-    private static let partialMarker = try! NSRegularExpression(
-        pattern: #"\[?\[(?:loc|target):[^\]]*\]?$"#
+    /// Text the AI proposes to type into the target field (approval-driven
+    /// fill: the user must press the approve button before anything happens).
+    private static let fillMarker = try! NSRegularExpression(
+        pattern: #"\[\[fill:([^\]]{1,500})\]\]"#
+    )
+    /// Any marker debris: complete, truncated mid-stream, or left dangling
+    /// by the model (e.g. a bare "[[loc" before a newline). Display text must
+    /// never show marker syntax, so this sweeps aggressively — no legitimate
+    /// answer contains "[[loc"-like sequences.
+    private static let markerDebris = try! NSRegularExpression(
+        pattern: #"\[?\[(?:loc|target|fill)\b[^\]]*(?:\]\]|\]|$)"#,
+        options: [.anchorsMatchLines]
     )
 
     /// Splits an answer into display text (markers removed), the model's own
-    /// highlight box (normalized image coordinates), and the target label.
-    static func extract(from text: String) -> (text: String, box: CGRect?, target: String?) {
+    /// highlight box (normalized image coordinates), the target label, and
+    /// the proposed fill text (nil unless the AI suggests typing something).
+    static func extract(
+        from text: String
+    ) -> (text: String, box: CGRect?, target: String?, fill: String?) {
         var box: CGRect?
         let range = NSRange(text.startIndex..., in: text)
         if let match = marker.firstMatch(in: text, range: range) {
@@ -90,14 +102,21 @@ enum NavigatorLocator {
             if !label.isEmpty { target = label }
         }
 
-        return (strippingMarkers(text), box, target)
+        var fill: String?
+        if let match = fillMarker.firstMatch(in: text, range: range),
+           let r = Range(match.range(at: 1), in: text) {
+            let value = String(text[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !value.isEmpty { fill = value }
+        }
+
+        return (strippingMarkers(text), box, target, fill)
     }
 
-    /// Removes complete markers anywhere and a partially streamed marker at
-    /// the end, so tokens of `[[loc:…` never flash up during streaming.
+    /// Removes complete markers anywhere and any partial/dangling marker
+    /// debris, so tokens of `[[loc:…` never appear — streaming or final.
     static func strippingMarkers(_ text: String) -> String {
         var result = text
-        for expression in [marker, targetMarker, partialMarker] {
+        for expression in [marker, targetMarker, fillMarker, markerDebris] {
             let range = NSRange(result.startIndex..., in: result)
             result = expression.stringByReplacingMatches(
                 in: result, range: range, withTemplate: ""

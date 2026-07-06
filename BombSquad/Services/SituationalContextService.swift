@@ -90,6 +90,7 @@ enum SituationalContextService {
         return SituationalContext(
             appName: appName,
             bundleID: bundleID,
+            pid: pid,
             windowTitle: windowTitle,
             conversationExcerpt: excerpt,
             capturedAt: Date()

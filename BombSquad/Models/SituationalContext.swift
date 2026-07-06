@@ -10,6 +10,9 @@ import Foundation
 struct SituationalContext {
     let appName: String
     let bundleID: String?
+    /// Process id of the source app — the handle for approved AX actions
+    /// (press a button, focus a field) back into that app.
+    let pid: pid_t
     let windowTitle: String?
     /// Text collected from around the focused field (the conversation thread),
     /// in rough reading order, trimmed to a budget. Nil when nothing readable

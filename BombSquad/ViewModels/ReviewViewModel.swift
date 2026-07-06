@@ -30,6 +30,29 @@ struct NavigatorDisplayTurn: Identifiable {
     let text: String
 }
 
+/// An executable step proposed by the navigator, pending user approval.
+struct NavigatorAction: Equatable {
+    enum Kind: Equatable {
+        /// Press the element carrying `targetLabel` (AXPress, click fallback).
+        case press
+        /// Focus the field carrying `targetLabel` and paste `text` into it.
+        case fill(text: String)
+    }
+
+    let kind: Kind
+    let targetLabel: String
+    /// The model's own location estimate projected to global display
+    /// coordinates; disambiguates duplicate labels in the AX tree.
+    let globalRect: CGRect?
+
+    var buttonTitle: String {
+        switch kind {
+        case .press: return "「\(targetLabel)」を押す"
+        case .fill: return "「\(targetLabel)」に入力する"
+        }
+    }
+}
+
 /// Owns the staging → review → deploy flow and all UI state.
 @MainActor
 final class ReviewViewModel: ObservableObject {
@@ -78,6 +101,11 @@ final class ReviewViewModel: ObservableObject {
     @Published var screenshotAnnotations: [ScreenshotAnnotation] = []
     /// Box the AI pointed at in its latest answer (normalized image coords).
     @Published private(set) var navigatorHighlight: CGRect?
+    /// Executable proposal from the latest answer (press a button / fill a
+    /// field). Nothing runs until the user presses the approve button —
+    /// approval-driven by product principle (master plan §1.2).
+    @Published private(set) var navigatorProposedAction: NavigatorAction?
+    @Published private(set) var isExecutingNavigatorAction = false
     /// Briefly toggled true after a successful deploy for toast feedback.
     @Published var didDeploy = false
     @Published var focusedField: FocusField?
@@ -100,6 +128,8 @@ final class ReviewViewModel: ObservableObject {
     /// OCR fragments (text + measured rect) of the current screenshot, kept
     /// on-device to resolve AI-named targets to exact positions.
     private var navigatorOCRFragments: [RecognizedTextFragment] = []
+    /// Guards against double-saving one session into the history store.
+    private var didSaveNavigatorSession = false
     /// Prepared capture waiting for the first question (auto first turn off).
     private var navigatorPendingCapture: NavigateTurn?
     private var navigatorStreamTask: Task<Void, Never>?
@@ -500,9 +530,11 @@ final class ReviewViewModel: ObservableObject {
     /// Re-capture inside a running session: always auto-runs — pressing
     /// 撮り直す is itself the question "check my progress".
     private func appendNavigatorCapture(_ attachment: ScreenshotAttachment) {
-        // Annotations and highlights are anchored to the previous image.
+        // Annotations, highlights, and pending proposals are anchored to the
+        // previous image.
         screenshotAnnotations = []
         navigatorHighlight = nil
+        navigatorProposedAction = nil
         navigatorTurns.append(NavigatorDisplayTurn(role: .user, text: "（画面を撮り直しました）"))
         prepareNavigatorCapture(attachment, autoRun: true)
     }
@@ -545,6 +577,7 @@ final class ReviewViewModel: ObservableObject {
         guard !question.isEmpty, !isNavigating else { return }
         navigatorInput = ""
         navigatorHighlight = nil
+        navigatorProposedAction = nil
         navigatorTurns.append(NavigatorDisplayTurn(role: .user, text: question))
 
         let annotations = screenshotAnnotations
@@ -609,6 +642,7 @@ final class ReviewViewModel: ObservableObject {
             )
             var finalText: String?
             var harness: String?
+            var modelID: String?
             for try await event in stream {
                 switch event {
                 case .delta(let text):
@@ -621,9 +655,10 @@ final class ReviewViewModel: ObservableObject {
                         NSLog("[Navigator] first token in %d ms", firstTokenMs!)
                     }
                     navigatorStreamingText = (navigatorStreamingText ?? "") + text
-                case .result(let text, let resultHarness, _):
+                case .result(let text, let resultHarness, let resultModelID):
                     finalText = text
                     harness = resultHarness
+                    modelID = resultModelID
                 }
             }
             guard let finalText else {
@@ -632,7 +667,7 @@ final class ReviewViewModel: ObservableObject {
             // The wire history keeps the raw text (marker included) so the
             // model sees its own past answers verbatim; the display and the
             // highlight take the parsed halves.
-            let (displayText, vlmBox, target) = NavigatorLocator.extract(from: finalText)
+            let (displayText, vlmBox, target, fill) = NavigatorLocator.extract(from: finalText)
             navigatorWireTurns.append(NavigateTurn(role: .assistant, text: finalText))
             navigatorTurns.append(NavigatorDisplayTurn(role: .assistant, text: displayText))
             // Precision ladder: an OCR-measured rect for the named target
@@ -640,7 +675,18 @@ final class ReviewViewModel: ObservableObject {
             let box = resolveHighlightRect(target: target, vlmBox: vlmBox)
             navigatorHighlight = box
             showLiveHighlight(for: box)
-            lastModelName = harness.map { "I//O Cloud · \($0)" } ?? "I//O Cloud"
+            if let target {
+                navigatorProposedAction = NavigatorAction(
+                    kind: fill.map { .fill(text: $0) } ?? .press,
+                    targetLabel: target,
+                    globalRect: projectToGlobal(box)
+                )
+            }
+            // Surface the actual model id: a leftover experiment override
+            // (e.g. a weaker vision model in .env.local) once masqueraded as
+            // a regression — never let the engine choice be invisible.
+            let engineLabel = modelID ?? "I//O Cloud"
+            lastModelName = harness.map { "\(engineLabel) · \($0)" } ?? engineLabel
         } catch is CancellationError {
             // Session was reset mid-stream; nothing to surface.
         } catch {
@@ -720,22 +766,118 @@ final class ReviewViewModel: ObservableObject {
         return dx * dx + dy * dy
     }
 
-    /// Projects the normalized box back onto the physical screen and rings
-    /// it there (POC Step 3): the panel shows where in the picture, the live
-    /// overlay points at the actual pixels. Only possible when the capture
-    /// origin is known (ScreenCaptureKit paths; not `screencapture -i`).
-    private func showLiveHighlight(for box: CGRect?) {
-        guard let box, let capture = visionImage?.captureRect else { return }
-        let target = CGRect(
+    /// Normalized image box → global display coordinates (CG top-left),
+    /// via the recorded capture origin. nil when the origin is unknown.
+    private func projectToGlobal(_ box: CGRect?) -> CGRect? {
+        guard let box, let capture = visionImage?.captureRect else { return nil }
+        return CGRect(
             x: capture.minX + box.minX * capture.width,
             y: capture.minY + box.minY * capture.height,
             width: box.width * capture.width,
             height: box.height * capture.height
         )
+    }
+
+    /// Projects the normalized box back onto the physical screen and rings
+    /// it there (POC Step 3): the panel shows where in the picture, the live
+    /// overlay points at the actual pixels. Only possible when the capture
+    /// origin is known (ScreenCaptureKit paths; not `screencapture -i`).
+    private func showLiveHighlight(for box: CGRect?) {
+        guard let target = projectToGlobal(box) else { return }
         HighlightOverlayPresenter.shared.show(around: target)
     }
 
+    /// Runs the approved action (master plan stair 2). Approval-driven: this
+    /// only ever fires from the button the user pressed. On success the
+    /// screen is silently re-captured so the AI verifies the step landed —
+    /// execution needs approval; observation is automatic.
+    func approveNavigatorAction() {
+        guard let action = navigatorProposedAction, !isExecutingNavigatorAction else { return }
+        isExecutingNavigatorAction = true
+        errorMessage = nil
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isExecutingNavigatorAction = false }
+            guard let context = await self.resolveContext() else {
+                self.errorMessage = "操作対象のアプリを特定できませんでした。"
+                return
+            }
+            // The panel must not sit between the synthetic click and the
+            // target app — hide it for the whole execute-and-verify beat
+            // (the progress capture brings it back with the new turn).
+            NSLog("[Action] approving: %@", action.buttonTitle)
+            NotificationCenter.default.post(name: .hidePanelForAction, object: nil)
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            do {
+                switch action.kind {
+                case .press:
+                    let pressedFrame = try await AXActionService.press(
+                        pid: context.pid,
+                        label: action.targetLabel,
+                        near: action.globalRect
+                    )
+                    // Show exactly where the press landed — mis-hits become
+                    // visible instead of silently looping.
+                    if let pressedFrame {
+                        HighlightOverlayPresenter.shared.show(around: pressedFrame, duration: 0.5)
+                    }
+                case .fill(let text):
+                    try await AXActionService.focusTextInput(
+                        pid: context.pid,
+                        label: action.targetLabel,
+                        near: action.globalRect
+                    )
+                    // Give focus a beat to settle, then paste through the
+                    // existing clipboard-preserving synthesis.
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                    let deployer = PasteDeployer(
+                        targetApp: NSRunningApplication(processIdentifier: context.pid),
+                        onDismiss: {}
+                    )
+                    try deployer.deploy(text)
+                }
+                self.navigatorProposedAction = nil
+                self.navigatorTurns.append(NavigatorDisplayTurn(
+                    role: .user,
+                    text: "（\(action.buttonTitle) を実行しました）"
+                ))
+                // Single-action sessions for now: the multi-step loop
+                // (execute → auto re-capture → panel restore) is parked as a
+                // known issue — the panel reliably failed to come back after
+                // a synthetic click (3 attempts, unresolved). The click
+                // feedback ring plays out on the live screen, then the
+                // session ends; past sessions stay reachable via history.
+                NSLog("[Action] executed; ending session (single-action mode)")
+                self.saveNavigatorSessionIfNeeded()
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                HighlightOverlayPresenter.shared.hide()
+                NotificationCenter.default.post(name: .closePanel, object: nil)
+            } catch {
+                NotificationCenter.default.post(name: .showPanelAfterAction, object: nil)
+                self.errorMessage = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+            }
+        }
+    }
+
+    /// Persists the finished conversation (text only) so the guidance stays
+    /// reachable after the session ends. Idempotent per session — called from
+    /// every exit path (reset, panel close, executed action).
+    func saveNavigatorSessionIfNeeded() {
+        guard !didSaveNavigatorSession else { return }
+        let turns = navigatorTurns.map {
+            NavigatorSessionRecord.Turn(role: $0.role.rawValue, text: $0.text)
+        }
+        guard turns.contains(where: { $0.role == "assistant" }) else { return }
+        didSaveNavigatorSession = true
+        Task.detached(priority: .utility) {
+            await NavigatorSessionStore.shared.save(turns: turns)
+        }
+    }
+
     private func resetNavigatorSession() {
+        saveNavigatorSessionIfNeeded()
+        didSaveNavigatorSession = false
         navigatorStreamTask?.cancel()
         navigatorStreamTask = nil
         navigatorStreamGeneration += 1
@@ -748,6 +890,8 @@ final class ReviewViewModel: ObservableObject {
         screenshotAnnotations = []
         navigatorHighlight = nil
         navigatorOCRFragments = []
+        navigatorProposedAction = nil
+        isExecutingNavigatorAction = false
         previewTool = .pan
         HighlightOverlayPresenter.shared.hide()
     }

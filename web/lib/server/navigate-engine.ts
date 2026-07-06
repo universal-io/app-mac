@@ -205,7 +205,8 @@ function apiKeyFor(vendor: string): string | null {
 // proactive draft.
 const FIRST_TURN_INSTRUCTION = `これはユーザーがホットキーを押した直後の自動の初手です。ユーザーの意図はまだ不明です。
 - この画面が、ユーザー宛のメッセージへの返信を明らかに求めている場面（メール・チャットで相手の発言が最後にある等）なら: 状況を1文で述べ、続けて短い返信文案を1つ提案してください。
-- それ以外（分析ツール・業務システム・ブラウザ等の一般画面）なら: 「◯◯の△△画面のようです。」という現状認識を1文だけ返して、そこで止めてください。詳しい解説・推測でのナビゲーション・選択肢の列挙は禁止です。`;
+- それ以外（分析ツール・業務システム・ブラウザ等の一般画面）なら: 「◯◯の△△画面のようです。」という現状認識を1文だけ返して、そこで止めてください。詳しい解説・推測でのナビゲーション・選択肢の列挙は禁止です。
+- この初手では位置マーカー（[[target:…]] [[loc:…]] [[fill:…]]）を一切付けないでください。意図が不明な段階で操作を提案しないこと。マーカーはユーザーが質問した後の回答にだけ使います。`;
 
 function systemPrompt(
   language: OutputLanguageCode,
@@ -219,12 +220,14 @@ function systemPrompt(
 - 短く。ナビゲーションは1〜3ステップずつ（例: 「左メニューの「レポート」→「集客」を押してください」）。長い解説や網羅的な列挙はしない。
 - 位置は言葉で指す（「左メニュー」「右上」「上から3番目」）。
 - 画面から分からないことは推測で断定せず、「この画面からは分かりません。◯◯を開いてもう一度見せてください」と正直に言う。
+- 折りたたみメニューの展開状態を必ず画像で確認する: 項目の直下に子項目が字下げされて見えていれば、その項目は既に展開済み。展開済みの項目を「開いてください」と案内しない（もう一度押すと閉じてしまう）。子項目が見えているなら、目的の子項目そのものを案内する。
 - 出力は平文（必要なら短い箇条書き）。JSON・コードフェンス・見出し記号は使わない。
 - すべての出力は${LANGUAGE_PROMPT_NAMES[language]}で書く。
 - 画面上の場所（ボタン・メニュー・リンク等）を案内するときは、原則として回答の一番最後に位置マーカーを付ける。形式は [[target:表示文字列]][[loc:x0,y0,x1,y1]]（例: 「左メニューの「テクノロジー」を開いてください。[[target:テクノロジー]][[loc:40,620,160,650]]」）。
   - [[target:…]] は対象要素に実際に表示されている文字列そのまま（ボタンのラベル・メニュー項目名。翻訳・言い換え・要約をしない）。ラベルの無いアイコンだけの要素なら target は省略してよい。
   - [[loc:…]] は直近のスクリーンショットの左上を(0,0)、右下を(1000,1000)とする整数座標で、対象要素を囲む矩形。
   - 付けないのは、対象が画面内に見えていない・候補が複数あって絞れない・位置の確信が低い、のいずれかの場合だけ。この判断は毎ターン独立に行う——前の回答で付けなかった会話でも、今回の対象を特定できるなら必ず付ける。本文の途中には決して書かない。
+  - 入力欄に特定の文字列を入力するよう案内する場合は、さらに [[fill:入力する文字列]] を続ける（例: 「検索欄に入力してください。[[target:検索]][[loc:300,20,700,60]][[fill:直帰率]]」）。fill はユーザーが承認ボタンを押した時だけ実行される提案であり、勝手に実行されることはない。
 - 画像の中に赤や青の枠線が描かれている場合、それはユーザーが「この部分について」と指し示した領域。質問はその領域に関するものとして答える。`,
   ];
 
@@ -255,8 +258,10 @@ ${lines.join("\n")}
 
 // A textless user message mid-conversation is a re-capture ("did I get to the
 // right place?"), not the auto first turn.
-const RECAPTURE_INSTRUCTION =
-  "ユーザーが画面を撮り直しました。これまでの会話を踏まえて進捗を確認し、目的に対する次の一歩を案内してください。";
+const RECAPTURE_INSTRUCTION = `画面が撮り直されました。添付の画像が今この瞬間の画面です（過去の画像や記憶ではなく、必ずこの画像だけを現在の状態として扱う）。次の手順で答えてください:
+1. 直前に案内した操作がこの画像に反映されているか確認する（メニューが展開された・ページが遷移した等）。
+2. 反映されていれば、目的に向けた次の一歩を案内する。すでに同じ操作を案内済みなら同じ案内を繰り返さない。
+3. 反映されていなければ、その事実を短く述べ、別の到達方法を提案する（同じボタンをもう一度押させてループしない）。`;
 
 function providerMessage(message: NavigateMessage, isFirst: boolean): Record<string, unknown> {
   if (message.role === "assistant") {
@@ -265,10 +270,15 @@ function providerMessage(message: NavigateMessage, isFirst: boolean): Record<str
 
   const parts: Array<Record<string, unknown>> = [];
   const text = message.text?.trim();
-  parts.push({
-    type: "text",
-    text: text || (isFirst ? FIRST_TURN_INSTRUCTION : RECAPTURE_INSTRUCTION),
-  });
+  // A mid-conversation image is always a fresh look at the screen; the
+  // verification protocol applies whether or not the turn carries text
+  // (an executed-action note rides as text on the capture turn).
+  const pieces: string[] = [];
+  if (text) pieces.push(text);
+  if (isFirst && !text) pieces.push(FIRST_TURN_INSTRUCTION);
+  else if (!isFirst && message.imageDataURL) pieces.push(RECAPTURE_INSTRUCTION);
+  else if (!text) pieces.push(RECAPTURE_INSTRUCTION);
+  parts.push({ type: "text", text: pieces.join("\n\n") });
   const ocr = message.ocrText?.trim();
   if (ocr) {
     parts.push({

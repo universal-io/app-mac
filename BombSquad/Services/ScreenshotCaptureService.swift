@@ -103,7 +103,7 @@ struct ScreenshotCaptureService {
         _ image: CGImage,
         captureRect: CGRect?
     ) throws -> ScreenshotAttachment {
-        let outputURL = try makeDesktopOutputURL()
+        let outputURL = try makeCaptureOutputURL()
         let representation = NSBitmapImageRep(cgImage: image)
         guard let png = representation.representation(using: .png, properties: [:]) else {
             throw ScreenshotCaptureError.outputMissing
@@ -119,7 +119,7 @@ struct ScreenshotCaptureService {
     }
 
     func captureInteractive() async throws -> ScreenshotAttachment {
-        let outputURL = try Self.makeDesktopOutputURL()
+        let outputURL = try Self.makeCaptureOutputURL()
         try? FileManager.default.removeItem(at: outputURL)
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -159,12 +159,15 @@ struct ScreenshotCaptureService {
         }
     }
 
-    private static func makeDesktopOutputURL() throws -> URL {
-        guard let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
-            throw ScreenshotCaptureError.desktopUnavailable
-        }
+    /// Captures live in the temporary directory: they exist for the session
+    /// (preview, wire upload, explicit save). Nothing lands on the Desktop
+    /// unless the user presses the save button and picks a location.
+    private static func makeCaptureOutputURL() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("UniversalIO-Captures", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let fileName = "Universal-IO-\(Self.fileTimestamp()).png"
-        return desktop.appendingPathComponent(fileName)
+        return directory.appendingPathComponent(fileName)
     }
 
     private static func fileTimestamp() -> String {

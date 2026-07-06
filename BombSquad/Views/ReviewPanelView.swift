@@ -278,6 +278,93 @@ struct ReviewPanelView: View {
     }
 }
 
+/// Clock button + popover with recent navigator sessions (view + copy only:
+/// the screen has moved on, so past sessions are never resumed). Lives next
+/// to the question input; keeps its own state so the live session is never
+/// disturbed.
+private struct NavigatorHistoryButton: View {
+    @State private var isPresented = false
+    @State private var records: [NavigatorSessionRecord] = []
+    @State private var selected: NavigatorSessionRecord?
+
+    var body: some View {
+        Button {
+            Task {
+                records = await NavigatorSessionStore.shared.recent()
+                selected = nil
+                isPresented = true
+            }
+        } label: {
+            Image(systemName: "clock")
+                .font(.system(size: 15))
+        }
+        .buttonStyle(.borderless)
+        .help("過去のセッション（直近\(NavigatorSessionStore.sessionLimit)件・閲覧とコピーのみ）")
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            popoverContent
+                .frame(width: 460, height: 400)
+        }
+    }
+
+    @ViewBuilder
+    private var popoverContent: some View {
+        if let selected {
+            VStack(spacing: 8) {
+                HStack {
+                    Button {
+                        self.selected = nil
+                    } label: {
+                        Label("一覧へ", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(.borderless)
+                    Text(Self.relative(selected.createdAt))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                TranscriptTextView(
+                    turns: selected.turns.map {
+                        NavigatorDisplayTurn(
+                            role: NavigateTurn.Role(rawValue: $0.role) ?? .assistant,
+                            text: $0.text
+                        )
+                    },
+                    streamingText: nil
+                )
+            }
+            .padding(12)
+        } else if records.isEmpty {
+            Text("保存されたセッションはまだありません")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List(records) { record in
+                Button {
+                    selected = record
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(record.title)
+                            .lineLimit(1)
+                        Text(Self.relative(record.createdAt))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.inset)
+        }
+    }
+
+    private static func relative(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
 /// Tiny badge shown next to the model info when the gateway is overridden
 /// away from the production default (e.g. localhost during development).
 /// Replaces the old full-width orange banner, which was visually too loud.
@@ -540,6 +627,29 @@ struct VisionPanelView: View {
             }
             .background(EditorFocusBackground(isFocused: false))
 
+            // Approval-driven execution (master plan stair 2): the AI
+            // proposed a concrete step; nothing runs until this button.
+            if let action = viewModel.navigatorProposedAction {
+                HStack(spacing: 8) {
+                    Button {
+                        viewModel.approveNavigatorAction()
+                    } label: {
+                        if viewModel.isExecutingNavigatorAction {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("実行中…")
+                            }
+                        } else {
+                            Label(action.buttonTitle, systemImage: "checkmark.circle.fill")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.isExecutingNavigatorAction)
+                    .help("承認するとこの操作を実行し、画面を撮り直して進捗を確認します")
+                    Spacer()
+                }
+            }
+
             // Same dictation feedback as the compose editor: hold-to-talk is
             // one experience everywhere (mic while recording, spinner after).
             if viewModel.isRecording {
@@ -557,6 +667,8 @@ struct VisionPanelView: View {
             }
 
             HStack(alignment: .bottom, spacing: 8) {
+                NavigatorHistoryButton()
+
                 SendableTextEditor(
                     text: $viewModel.navigatorInput,
                     focusedField: $viewModel.focusedField,
