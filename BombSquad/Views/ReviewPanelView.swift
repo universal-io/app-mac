@@ -627,6 +627,48 @@ struct VisionPanelView: View {
             }
             .background(EditorFocusBackground(isFocused: false))
 
+            // Copilot entry (docs/navigator-copilot-plan.md §3-c): the
+            // planner proposed a step plan; guided mode starts only on this
+            // tap — a deterministic mode switch, not a model judgement.
+            if let task = viewModel.navigatorProposedTask {
+                HStack(spacing: 8) {
+                    Button {
+                        viewModel.startProposedNavigation()
+                    } label: {
+                        Label(
+                            "ナビゲーション開始（\(task.steps.count)ステップ）: \(task.goal)",
+                            systemImage: "point.bottomleft.forward.to.point.topright.scurvepath"
+                        )
+                        .lineLimit(1)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.isNavigating)
+                    .help("ステップごとに画面上でハイライトしながら案内します")
+                    Button {
+                        viewModel.dismissProposedNavigation()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("提案を閉じる")
+                    Spacer()
+                }
+            }
+
+            // Copilot progress: plan and step cursor are session data, shown
+            // so the user always knows where the guidance stands.
+            if let task = viewModel.navigatorActiveTask {
+                HStack(spacing: 6) {
+                    Image(systemName: "location.fill")
+                        .foregroundStyle(.tint)
+                    Text("ステップ \(min(task.currentStep + 1, task.steps.count))/\(task.steps.count) · \(task.goal)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                }
+            }
+
             // Approval-driven execution (master plan stair 2): the AI
             // proposed a concrete step; nothing runs until this button.
             if let action = viewModel.navigatorProposedAction {
@@ -933,5 +975,84 @@ private struct IssueCard: View {
         case .impoliteness: return .red
         case .unclear: return .purple
         }
+    }
+}
+
+// MARK: - Copilot strip (docs/poc-ga-navigator.md あるべきユーザー体験)
+
+/// The whole panel while guided navigation runs: a corner strip with the
+/// step counter, the current instruction, and an exit button. The real UI is
+/// the navigated screen itself — the user clicks the highlighted spot there,
+/// a global monitor notices, and the progress check runs automatically.
+struct CopilotStripView: View {
+    @ObservedObject var viewModel: ReviewViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "location.fill")
+                    .foregroundStyle(.tint)
+                if let task = viewModel.navigatorActiveTask {
+                    Text("ステップ \(min(task.currentStep + 1, task.steps.count))/\(task.steps.count)")
+                        .font(.caption.weight(.semibold))
+                    Text(task.goal)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Button {
+                    NotificationCenter.default.post(name: .closePanel, object: nil)
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .help("ナビゲーションを終了")
+            }
+
+            Divider()
+
+            ScrollView {
+                Text(currentInstruction)
+                    .font(.callout)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+
+            HStack(spacing: 8) {
+                if viewModel.isNavigating || viewModel.isCopilotChecking {
+                    ProgressView().controlSize(.small)
+                    Text("画面を確認しています…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "cursorarrow.click.2")
+                        .foregroundStyle(.secondary)
+                    Text("赤い枠の場所をクリックしてください。クリック後、自動で進捗を確認します")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Button("撮り直す") {
+                    viewModel.requestCopilotProgressCheck()
+                }
+                .controlSize(.small)
+                .disabled(viewModel.isNavigating || viewModel.isCopilotChecking)
+                .help("いま手動で進捗を確認する")
+            }
+        }
+        .padding(14)
+    }
+
+    /// The latest guidance: the streaming answer while it arrives (markers
+    /// stripped live), otherwise the last finished assistant turn.
+    private var currentInstruction: String {
+        if let streaming = viewModel.navigatorStreamingText {
+            let stripped = NavigatorLocator.strippingMarkers(streaming)
+            if !stripped.isEmpty { return stripped }
+        }
+        return viewModel.navigatorTurns.last(where: { $0.role == .assistant })?.text
+            ?? "案内を待っています…"
     }
 }

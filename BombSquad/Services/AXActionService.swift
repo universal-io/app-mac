@@ -143,7 +143,7 @@ enum AXActionService {
         let deadline = Date().addingTimeInterval(Budget.deadline)
         var visited = 0
         var stack: [AXUIElement] = [appElement]
-        var hits: [Actionable] = []
+        var hits: [(tier: Int, actionable: Actionable)] = []
 
         while let element = stack.popLast() {
             if visited >= Budget.maxNodes || Date() >= deadline { break }
@@ -160,20 +160,18 @@ enum AXActionService {
                     textInput ? copyString(element, "AXPlaceholderValue") : nil,
                     pressable ? copyString(element, kAXValueAttribute) : nil,
                 ]
-                let matched = candidates.contains { candidate in
-                    guard let candidate else { return false }
-                    let key = matchKey(candidate)
-                    guard !key.isEmpty else { return false }
-                    return key.contains(needle) || (needle.contains(key) && key.count >= 2)
-                }
-                if matched {
-                    hits.append(Actionable(
+                let tier = candidates.compactMap { candidate -> Int? in
+                    guard let candidate else { return nil }
+                    return matchTier(needle: needle, candidate: candidate)
+                }.min()
+                if let tier {
+                    hits.append((tier, Actionable(
                         element: element,
                         role: role,
                         label: label,
                         frame: copyFrame(element),
                         isTextInput: textInput
-                    ))
+                    )))
                 }
             }
 
@@ -182,12 +180,29 @@ enum AXActionService {
             }
         }
 
-        guard !hits.isEmpty else { return nil }
-        guard let globalRect, hits.count > 1 else { return hits[0] }
+        // Exact label beats partial: a bare "ユーザー" section header must
+        // never win over "ユーザーの環境の詳細" when the AI named the latter
+        // (pressing the wrong one toggles menus shut — the 2026-07-06 bug).
+        guard let bestTier = hits.map(\.tier).min() else { return nil }
+        let finalists = hits.filter { $0.tier == bestTier }.map(\.actionable)
+        guard let globalRect, finalists.count > 1 else { return finalists[0] }
         let center = CGPoint(x: globalRect.midX, y: globalRect.midY)
-        return hits.min { lhs, rhs in
+        return finalists.min { lhs, rhs in
             distance(lhs.frame, to: center) < distance(rhs.frame, to: center)
         }
+    }
+
+    /// Label-match quality: 0 = exact, 1 = candidate contains the label,
+    /// 2 = partial (label contains the candidate). nil = no match. Mirrors
+    /// ReviewViewModel.matchTier — "the AI names WHAT, the device resolves
+    /// WHERE" only works when every resolver ranks matches the same way.
+    private static func matchTier(needle: String, candidate: String) -> Int? {
+        let key = matchKey(candidate)
+        guard !key.isEmpty else { return nil }
+        if key == needle { return 0 }
+        if key.contains(needle) { return 1 }
+        if needle.contains(key), key.count >= 2 { return 2 }
+        return nil
     }
 
     private static func distance(_ frame: CGRect?, to point: CGPoint) -> CGFloat {

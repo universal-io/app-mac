@@ -16,8 +16,10 @@ final class HighlightOverlayPresenter {
 
     /// Shows the ring around a rect given in global display coordinates
     /// (CG orientation, top-left origin) — the coordinate space of
-    /// `ScreenshotAttachment.captureRect`.
-    func show(around cgRect: CGRect, duration: TimeInterval = 2.6) {
+    /// `ScreenshotAttachment.captureRect`. `duration: nil` keeps the ring up
+    /// until the next `show`/`hide` — copilot mode needs the target to stay
+    /// marked while the user moves the mouse over to click it.
+    func show(around cgRect: CGRect, duration: TimeInterval? = 2.6) {
         hide()
 
         // CG (top-left origin) → Cocoa global (bottom-left of main display).
@@ -55,10 +57,12 @@ final class HighlightOverlayPresenter {
         }
 
         self.window = window
-        dismissTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            self?.fadeOutAndHide()
+        if let duration {
+            dismissTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                self?.fadeOutAndHide()
+            }
         }
     }
 

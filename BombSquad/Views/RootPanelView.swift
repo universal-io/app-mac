@@ -31,7 +31,13 @@ struct RootPanelView: View {
     var body: some View {
         Group {
             if authViewModel.hasSession {
-                ContentView(viewModel: reviewViewModel)
+                if reviewViewModel.navigatorActiveTask != nil {
+                    // Guided navigation: the whole panel becomes the corner
+                    // strip; the screen being navigated is the real UI.
+                    CopilotStripView(viewModel: reviewViewModel)
+                } else {
+                    ContentView(viewModel: reviewViewModel)
+                }
             } else {
                 LoginRequiredView(viewModel: authViewModel, config: config)
             }

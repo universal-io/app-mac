@@ -27,6 +27,12 @@ extension Notification.Name {
     static let visionSessionEnded = Notification.Name("BombSquad.visionSessionEnded")
     /// Posted from the panel when the user wants to grant screen recording.
     static let openScreenCaptureSettings = Notification.Name("BombSquad.openScreenCaptureSettings")
+    /// Posted by the view model when guided navigation (copilot) starts or
+    /// ends (`userInfo["active"]: Bool`). While active the panel drops its
+    /// modal behavior: it shrinks to a corner strip, survives outside
+    /// clicks, and never steals focus from the app being navigated
+    /// (docs/poc-ga-navigator.md あるべきユーザー体験).
+    static let copilotModeChanged = Notification.Name("BombSquad.copilotModeChanged")
 }
 
 /// Owns the global hotkey and the floating review panel summoned by ⌘J.
@@ -36,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Text mode is a single Spotlight-style column; vision needs two panes.
     private static let textPanelSize = NSSize(width: 680, height: 660)
     private static let visionPanelSize = NSSize(width: 960, height: 640)
+    /// Guided navigation shrinks the panel to a corner strip so the screen
+    /// being navigated stays visible and clickable.
+    private static let copilotPanelSize = NSSize(width: 460, height: 240)
 
     private var panel: NSPanel?
     /// The single on-demand management window (account/settings/history/pricing).
@@ -57,6 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Guards against duplicate begin/end callbacks so the cues fire exactly once.
     private var isDictating = false
     private var isCapturingScreenshot = false
+    /// True while guided navigation runs: suspends the panel's modal
+    /// close-on-resign behavior (clicking the target app IS the interaction).
+    private var isCopilotActive = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminateOtherRunningCopies()
@@ -113,6 +125,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(handleVisionSessionEnded), name: .visionSessionEnded, object: nil
         )
         NotificationCenter.default.addObserver(
+            self, selector: #selector(handleCopilotModeChanged), name: .copilotModeChanged, object: nil
+        )
+        NotificationCenter.default.addObserver(
             self, selector: #selector(handleOpenScreenCaptureSettings),
             name: .openScreenCaptureSettings, object: nil
         )
@@ -153,6 +168,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func handleResignActive() {
         guard !isCapturingScreenshot else { return }
 
+        // Guided navigation inverts the modal rule: clicking the target app
+        // is the interaction, so losing active is the NORMAL state, never a
+        // close signal (docs/poc-ga-navigator.md あるべきユーザー体験 §5).
+        guard !isCopilotActive else { return }
+
         // Login can legitimately move focus to the browser or Mail. Keep the
         // auth gate alive so the user has a visible return point after callback.
         guard authClient.currentSession() != nil else { return }
@@ -160,6 +180,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The staging panel is a transient "capture" mode; touching another app's
         // input releases it. Closing on resign makes it behave modally.
         if panel != nil { closePanel() }
+    }
+
+    /// Copilot on: shrink to a bottom-right strip that never covers the
+    /// navigated screen. Copilot off (task finished or abandoned while the
+    /// panel is open): restore the wide vision layout and bring the panel
+    /// forward so the final answer is readable.
+    @objc private func handleCopilotModeChanged(_ notification: Notification) {
+        let active = (notification.userInfo?["active"] as? Bool) ?? false
+        isCopilotActive = active
+        guard let panel else { return }
+        if active {
+            panel.setContentSize(Self.copilotPanelSize)
+            positionBottomTrailing(panel)
+        } else {
+            panel.setContentSize(Self.visionPanelSize)
+            centerOnActiveScreen(panel)
+            NSApp.activate(ignoringOtherApps: true)
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    /// Bottom-right corner of the screen the cursor is on, with a margin.
+    private func positionBottomTrailing(_ window: NSWindow) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+        let margin: CGFloat = 24
+        let size = window.frame.size
+        window.setFrameOrigin(NSPoint(
+            x: visible.maxX - size.width - margin,
+            y: visible.minY + margin
+        ))
     }
 
     /// Right Shift double-tap: closed summons text mode; empty text mode enters
@@ -476,11 +528,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func closePanel() {
-        // Whatever closes the panel, a finished navigator conversation is
-        // worth keeping — the history popover is its only afterlife.
+        // Whatever closes the panel, the view model is about to be
+        // discarded: save the conversation, stop the copilot click monitor,
+        // and take the highlight ring down with it.
         MainActor.assumeIsolated {
-            currentViewModel?.saveNavigatorSessionIfNeeded()
+            currentViewModel?.panelWillClose()
         }
+        isCopilotActive = false
         panel?.orderOut(nil)
         panel = nil
         currentViewModel = nil

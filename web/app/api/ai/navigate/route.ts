@@ -21,6 +21,7 @@ import {
   runNavigateStream,
   type NavigateEngineOutput,
   type NavigateMessage,
+  type NavigateTask,
 } from "@/lib/server/navigate-engine";
 import type { NavigateHints } from "@/lib/server/harness";
 import type { OutputLanguageCode } from "@/lib/server/prompts";
@@ -40,12 +41,19 @@ type WireMessage = {
   ocr_text?: string;
 };
 
+type WireTask = {
+  goal?: string;
+  steps?: Array<{ verbal?: string; target?: string; fill?: string }>;
+  current_step?: number;
+};
+
 type NavigateRequestBody = {
   request_id?: string;
   operation?: string;
   input?: {
     messages?: WireMessage[];
     hints?: NavigateHints;
+    task?: WireTask;
   };
   preferences?: {
     output_language?: string;
@@ -121,6 +129,44 @@ export async function POST(request: Request): Promise<Response> {
       return errorResponse(400, "BAD_REQUEST", "The last message must be from the user.", requestId);
     }
 
+    // Active copilot task (client-held session state; docs/navigator-copilot-plan.md §3-a).
+    let task: NavigateTask | undefined;
+    if (body.input?.task) {
+      const wireTask = body.input.task;
+      const steps = Array.isArray(wireTask.steps) ? wireTask.steps : [];
+      const validSteps = steps.every(
+        (step) =>
+          typeof step?.verbal === "string" &&
+          step.verbal.length > 0 &&
+          step.verbal.length <= 300 &&
+          (step.target === undefined || (typeof step.target === "string" && step.target.length <= 120)) &&
+          (step.fill === undefined || (typeof step.fill === "string" && step.fill.length <= 500)),
+      );
+      if (
+        typeof wireTask.goal !== "string" ||
+        !wireTask.goal ||
+        wireTask.goal.length > 200 ||
+        steps.length < 1 ||
+        steps.length > 8 ||
+        !validSteps ||
+        typeof wireTask.current_step !== "number" ||
+        !Number.isInteger(wireTask.current_step) ||
+        wireTask.current_step < 0 ||
+        wireTask.current_step >= steps.length
+      ) {
+        return errorResponse(400, "BAD_REQUEST", "input.task is malformed.", requestId);
+      }
+      task = {
+        goal: wireTask.goal,
+        steps: steps.map((step) => ({
+          verbal: step.verbal!,
+          target: step.target,
+          fill: step.fill,
+        })),
+        currentStep: wireTask.current_step,
+      };
+    }
+
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
 
@@ -134,6 +180,8 @@ export async function POST(request: Request): Promise<Response> {
       has_hints: Boolean(
         body.input?.hints?.app_name || body.input?.hints?.window_title || body.input?.hints?.url,
       ),
+      task_active: Boolean(task),
+      task_step: task?.currentStep,
     };
 
     return streamingResponse({
@@ -145,6 +193,7 @@ export async function POST(request: Request): Promise<Response> {
         messages,
         hints: body.input?.hints,
         language: language as OutputLanguageCode,
+        task,
       },
       metadata,
     });
@@ -215,6 +264,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
             // often the model missed the contract and enforcement kicked in.
             has_locator: finalOutput.hasLocator,
             locator_supplemented: finalOutput.locatorSupplemented,
+            task_proposed: Boolean(finalOutput.proposedTask),
           },
         });
         send("result", {
@@ -222,6 +272,19 @@ function streamingResponse(input: StreamingResponseInput): Response {
           result: {
             text: finalOutput.text,
             harness: finalOutput.harnessId,
+            // Proposed plan for this session; the client shows the "start
+            // navigation" button and owns the task state from here on.
+            task: finalOutput.proposedTask
+              ? {
+                  goal: finalOutput.proposedTask.goal,
+                  steps: finalOutput.proposedTask.steps.map((step) => ({
+                    verbal: step.verbal,
+                    target: step.target ?? null,
+                    fill: step.fill ?? null,
+                  })),
+                  current_step: finalOutput.proposedTask.currentStep,
+                }
+              : null,
           },
           meta: {
             output_language: input.language,

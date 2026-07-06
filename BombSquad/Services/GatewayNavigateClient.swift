@@ -15,12 +15,33 @@ struct NavigateTurn {
     var ocrText: String?
 }
 
+/// The session's step plan (docs/navigator-copilot-plan.md §3-a). Generated
+/// once by the gateway planner, then owned by the client: it rides on every
+/// request as `input.task`, and `currentStep` advances on the [[step:done]]
+/// marker — the plan is data, not something the model re-derives per turn.
+struct NavigatorTask: Equatable {
+    struct Step: Equatable {
+        let verbal: String
+        /// Exact on-screen label, resolved to a position via OCR/AX.
+        let target: String?
+        /// Approval-driven text entry for input fields.
+        let fill: String?
+    }
+
+    let goal: String
+    let steps: [Step]
+    var currentStep: Int
+
+    var isFinished: Bool { currentStep >= steps.count }
+}
+
 /// One event of a streaming navigation answer (SSE from the gateway).
 enum NavigateStreamEvent {
     /// A plain-text increment of the answer as the model produces it.
     case delta(String)
     /// The full answer; always the last event of a successful stream.
-    case result(text: String, harness: String?, modelID: String?)
+    /// `task` is a freshly planned step sequence awaiting the user's consent.
+    case result(text: String, harness: String?, modelID: String?, task: NavigatorTask?)
 }
 
 /// Client for the screen navigator (POST /api/ai/navigate, always SSE).
@@ -55,13 +76,14 @@ struct GatewayNavigateClient {
     func navigateStream(
         turns: [NavigateTurn],
         hints: SituationalContext?,
-        language: OutputLanguage
+        language: OutputLanguage,
+        task: NavigatorTask? = nil
     ) async throws -> AsyncThrowingStream<NavigateStreamEvent, Error> {
         var request = try await api.authorizedRequest("ai/navigate")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue("text/event-stream", forHTTPHeaderField: "accept")
         request.httpBody = try JSONSerialization.data(
-            withJSONObject: requestBody(turns: turns, hints: hints, language: language)
+            withJSONObject: requestBody(turns: turns, hints: hints, language: language, task: task)
         )
 
         let (bytes, response): (URLSession.AsyncBytes, URLResponse)
@@ -117,7 +139,8 @@ struct GatewayNavigateClient {
                             continuation.yield(.result(
                                 text: text,
                                 harness: result["harness"] as? String,
-                                modelID: meta?["model_id"] as? String
+                                modelID: meta?["model_id"] as? String,
+                                task: Self.parseTask(result["task"])
                             ))
                         case "error":
                             throw GatewayAPI.error(status: 502, data: data)
@@ -132,6 +155,30 @@ struct GatewayNavigateClient {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Decodes `result.task` from the result event; nil on any malformed
+    /// shape (a broken plan must never enter the session state).
+    private static func parseTask(_ value: Any?) -> NavigatorTask? {
+        guard
+            let dict = value as? [String: Any],
+            let goal = dict["goal"] as? String, !goal.isEmpty,
+            let rawSteps = dict["steps"] as? [[String: Any]], !rawSteps.isEmpty
+        else { return nil }
+        let steps = rawSteps.compactMap { raw -> NavigatorTask.Step? in
+            guard let verbal = raw["verbal"] as? String, !verbal.isEmpty else { return nil }
+            return NavigatorTask.Step(
+                verbal: verbal,
+                target: raw["target"] as? String,
+                fill: raw["fill"] as? String
+            )
+        }
+        guard steps.count == rawSteps.count else { return nil }
+        return NavigatorTask(
+            goal: goal,
+            steps: steps,
+            currentStep: max(0, (dict["current_step"] as? Int) ?? 0)
+        )
     }
 
     // MARK: - Image preparation
@@ -221,7 +268,8 @@ struct GatewayNavigateClient {
     private func requestBody(
         turns: [NavigateTurn],
         hints: SituationalContext?,
-        language: OutputLanguage
+        language: OutputLanguage,
+        task: NavigatorTask?
     ) -> [String: Any] {
         // Only the LATEST screenshot rides along. Sending the first one too
         // made the model mix up past and present ("Technology isn't open
@@ -246,6 +294,18 @@ struct GatewayNavigateClient {
             var hintsPayload: [String: Any] = ["app_name": hints.appName]
             if let title = hints.windowTitle { hintsPayload["window_title"] = title }
             input["hints"] = hintsPayload
+        }
+        if let task {
+            input["task"] = [
+                "goal": task.goal,
+                "steps": task.steps.map { step -> [String: Any] in
+                    var payload: [String: Any] = ["verbal": step.verbal]
+                    if let target = step.target { payload["target"] = target }
+                    if let fill = step.fill { payload["fill"] = fill }
+                    return payload
+                },
+                "current_step": task.currentStep,
+            ] as [String: Any]
         }
 
         return [

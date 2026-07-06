@@ -60,21 +60,28 @@ enum NavigatorLocator {
     private static let fillMarker = try! NSRegularExpression(
         pattern: #"\[\[fill:([^\]]{1,500})\]\]"#
     )
+    /// Copilot progress signal: the model confirmed the task's current step
+    /// is complete on the latest screen. The view model advances
+    /// NavigatorTask.currentStep on it — at most one advance per answer.
+    private static let stepDoneMarker = try! NSRegularExpression(
+        pattern: #"\[\[step:done\]\]"#
+    )
     /// Any marker debris: complete, truncated mid-stream, or left dangling
     /// by the model (e.g. a bare "[[loc" before a newline). Display text must
     /// never show marker syntax, so this sweeps aggressively — no legitimate
     /// answer contains "[[loc"-like sequences.
     private static let markerDebris = try! NSRegularExpression(
-        pattern: #"\[?\[(?:loc|target|fill)\b[^\]]*(?:\]\]|\]|$)"#,
+        pattern: #"\[?\[(?:loc|target|fill|step)\b[^\]]*(?:\]\]|\]|$)"#,
         options: [.anchorsMatchLines]
     )
 
     /// Splits an answer into display text (markers removed), the model's own
-    /// highlight box (normalized image coordinates), the target label, and
-    /// the proposed fill text (nil unless the AI suggests typing something).
+    /// highlight box (normalized image coordinates), the target label, the
+    /// proposed fill text (nil unless the AI suggests typing something), and
+    /// the copilot step-done signal.
     static func extract(
         from text: String
-    ) -> (text: String, box: CGRect?, target: String?, fill: String?) {
+    ) -> (text: String, box: CGRect?, target: String?, fill: String?, stepDone: Bool) {
         var box: CGRect?
         let range = NSRange(text.startIndex..., in: text)
         if let match = marker.firstMatch(in: text, range: range) {
@@ -109,14 +116,16 @@ enum NavigatorLocator {
             if !value.isEmpty { fill = value }
         }
 
-        return (strippingMarkers(text), box, target, fill)
+        let stepDone = stepDoneMarker.firstMatch(in: text, range: range) != nil
+
+        return (strippingMarkers(text), box, target, fill, stepDone)
     }
 
     /// Removes complete markers anywhere and any partial/dangling marker
     /// debris, so tokens of `[[loc:…` never appear — streaming or final.
     static func strippingMarkers(_ text: String) -> String {
         var result = text
-        for expression in [marker, targetMarker, fillMarker, markerDebris] {
+        for expression in [marker, targetMarker, fillMarker, stepDoneMarker, markerDebris] {
             let range = NSRange(result.startIndex..., in: result)
             result = expression.stringByReplacingMatches(
                 in: result, range: range, withTemplate: ""
