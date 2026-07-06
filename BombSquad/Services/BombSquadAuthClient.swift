@@ -132,40 +132,6 @@ final class BombSquadAuthClient {
         return tenantID
     }
 
-    func fetchAccountSummary() async throws -> BombSquadAccountSummary {
-        guard let client else {
-            throw missingConfigurationError()
-        }
-
-        guard let session = currentSession() else {
-            throw BombSquadAuthError.missingConfiguration
-        }
-
-        let profile: ProfileRow = try await client
-            .from("bs_profiles")
-            .select("email, default_tenant_id")
-            .eq("id", value: session.user.id)
-            .single()
-            .execute()
-            .value
-
-        let entitlement: EntitlementRow = try await client
-            .from("bs_entitlements")
-            .select("plan, status, monthly_review_limit")
-            .eq("tenant_id", value: profile.defaultTenantID)
-            .single()
-            .execute()
-            .value
-
-        return BombSquadAccountSummary(
-            email: profile.email ?? session.user.email ?? "",
-            tenantID: profile.defaultTenantID,
-            tier: .fromEntitlementPlan(entitlement.plan),
-            state: .fromRawValue(entitlement.status),
-            monthlyReviewLimit: entitlement.monthlyReviewLimit
-        )
-    }
-
     func accessToken() async throws -> String {
         guard let client else {
             throw missingConfigurationError()
@@ -195,27 +161,5 @@ final class BombSquadAuthClient {
     private func isValidEmail(_ value: String) -> Bool {
         guard !value.isEmpty else { return false }
         return value.contains("@") && value.contains(".")
-    }
-}
-
-private struct ProfileRow: Decodable {
-    let email: String?
-    let defaultTenantID: UUID
-
-    private enum CodingKeys: String, CodingKey {
-        case email
-        case defaultTenantID = "default_tenant_id"
-    }
-}
-
-private struct EntitlementRow: Decodable {
-    let plan: String
-    let status: String
-    let monthlyReviewLimit: Int
-
-    private enum CodingKeys: String, CodingKey {
-        case plan
-        case status
-        case monthlyReviewLimit = "monthly_review_limit"
     }
 }

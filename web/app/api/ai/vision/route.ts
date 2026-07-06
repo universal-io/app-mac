@@ -9,6 +9,7 @@
 
 import {
   authenticate,
+  enforceQuota,
   errorResponse,
   gatewayErrorResponse,
   GatewayError,
@@ -90,7 +91,8 @@ export async function POST(request: Request): Promise<Response> {
       return errorResponse(400, "BAD_REQUEST", "client.platform is required.", requestId);
     }
 
-    const { userId, tenantId } = await authenticate(request);
+    const { userId, tenantId, entitlement } = await authenticate(request);
+    await enforceQuota(tenantId, entitlement);
 
     const metadata = {
       platform,

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -20,6 +21,13 @@ private enum ComposeDraftStore {
     static func clear() {
         UserDefaults.standard.removeObject(forKey: key)
     }
+}
+
+/// One turn of the navigator conversation as shown in the panel transcript.
+struct NavigatorDisplayTurn: Identifiable {
+    let id = UUID()
+    let role: NavigateTurn.Role
+    let text: String
 }
 
 /// Owns the staging → review → deploy flow and all UI state.
@@ -56,6 +64,20 @@ final class ReviewViewModel: ObservableObject {
     @Published var visionResult: VisionInterpretationResult?
     @Published var visionInstruction = ""
     @Published var isInterpretingVision = false
+    /// Navigator conversation shown in the vision panel (docs/poc-ga-navigator.md).
+    @Published private(set) var navigatorTurns: [NavigatorDisplayTurn] = []
+    /// Answer accumulating token by token during a navigator stream.
+    @Published private(set) var navigatorStreamingText: String?
+    /// The question being typed in the navigator input field.
+    @Published var navigatorInput = ""
+    @Published private(set) var isNavigating = false
+    /// What a mouse drag does on the screenshot preview (hand vs. pen tool).
+    @Published var previewTool: ScreenshotPreviewTool = .pan
+    @Published var annotationTint: ScreenshotAnnotation.Tint = .red
+    /// User-drawn rectangles; burned into the next question's image.
+    @Published var screenshotAnnotations: [ScreenshotAnnotation] = []
+    /// Box the AI pointed at in its latest answer (normalized image coords).
+    @Published private(set) var navigatorHighlight: CGRect?
     /// Briefly toggled true after a successful deploy for toast feedback.
     @Published var didDeploy = false
     @Published var focusedField: FocusField?
@@ -72,6 +94,18 @@ final class ReviewViewModel: ObservableObject {
     /// The exact draft text and language that produced the current `result`.
     private var reviewedDraft: String?
     private var reviewedLanguage: OutputLanguage?
+    /// Full navigator conversation as sent to the gateway (screenshots and
+    /// OCR ride on user turns; the client trims images to first + latest).
+    private var navigatorWireTurns: [NavigateTurn] = []
+    /// OCR fragments (text + measured rect) of the current screenshot, kept
+    /// on-device to resolve AI-named targets to exact positions.
+    private var navigatorOCRFragments: [RecognizedTextFragment] = []
+    /// Prepared capture waiting for the first question (auto first turn off).
+    private var navigatorPendingCapture: NavigateTurn?
+    private var navigatorStreamTask: Task<Void, Never>?
+    /// Guards a superseded stream (re-capture cancels the previous one) from
+    /// clearing the state of the stream that replaced it.
+    private var navigatorStreamGeneration = 0
     private var hasLoadedRecentHistory = false
     /// Pending background AX capture; resolved lazily on first use.
     private var contextCaptureTask: Task<SituationalContext?, Never>?
@@ -319,16 +353,35 @@ final class ReviewViewModel: ObservableObject {
         }
     }
 
-    /// Append dictated text to the draft (with a separating space as needed).
+    /// Routes dictated text to whichever input is active, so hold-to-talk
+    /// behaves identically in every text field (draft, revision, navigator).
     func appendTranscription(_ text: String) {
         let piece = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !piece.isEmpty else { return }
-        if draft.isEmpty {
-            draft = piece
-        } else {
-            let needsSpace = !(draft.hasSuffix(" ") || draft.hasSuffix("\n"))
-            draft += (needsSpace ? " " : "") + piece
+        switch activeTranscriptionTarget {
+        case .navigator:
+            navigatorInput = appending(piece, to: navigatorInput)
+        case .revision:
+            revisedDraft = appending(piece, to: revisedDraft)
+        case .draft:
+            draft = appending(piece, to: draft)
         }
+    }
+
+    /// The field dictation should land in. Inside a navigator session the
+    /// question input is the only editable field; otherwise follow focus.
+    private var activeTranscriptionTarget: FocusField {
+        if sessionKind == .vision {
+            return navigatorSessionActive ? .navigator : .draft
+        }
+        if focusedField == .revision, canFocusRevision { return .revision }
+        return .draft
+    }
+
+    private func appending(_ piece: String, to base: String) -> String {
+        if base.isEmpty { return piece }
+        let needsSpace = !(base.hasSuffix(" ") || base.hasSuffix("\n"))
+        return base + (needsSpace ? " " : "") + piece
     }
 
     func addScreenshotAttachment(_ attachment: ScreenshotAttachment) {
@@ -345,15 +398,26 @@ final class ReviewViewModel: ObservableObject {
     }
 
     func enterVisionMode(with attachment: ScreenshotAttachment) {
+        // A capture while a navigator conversation is open is a re-capture
+        // ("did I get to the right place?"), not a new session.
+        let isRecapture = sessionKind == .vision && navigatorSessionActive
         sessionKind = .vision
         visionImage = attachment
         visionResult = nil
         revisedDraft = ""
         result = nil
-        lastDurationMs = nil
-        lastModelName = nil
         focusedField = nil
-        Task { await runVisionInterpretation() }
+        if isNavigatorAvailable {
+            if isRecapture {
+                appendNavigatorCapture(attachment)
+            } else {
+                startNavigatorSession(with: attachment)
+            }
+        } else {
+            lastDurationMs = nil
+            lastModelName = nil
+            Task { await runVisionInterpretation() }
+        }
     }
 
     func exitVisionMode() {
@@ -361,6 +425,7 @@ final class ReviewViewModel: ObservableObject {
         visionImage = nil
         visionResult = nil
         isInterpretingVision = false
+        resetNavigatorSession()
         focusedField = .draft
         // The panel window is owned by AppDelegate; let it restore the narrow
         // single-column layout when vision's two-pane session ends.
@@ -396,6 +461,295 @@ final class ReviewViewModel: ObservableObject {
         } catch {
             self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    // MARK: - Navigator (docs/poc-ga-navigator.md)
+
+    /// The navigator is gateway-only (server-owned prompts, model staging,
+    /// harness selection). Signed-out/BYOK sessions fall back to the legacy
+    /// one-shot interpretation.
+    var isNavigatorAvailable: Bool {
+        AppSettings.isNavigatorEnabled()
+            && (overrideVisionProvider == nil)
+            && GatewayNavigateClient.make() != nil
+    }
+
+    var navigatorSessionActive: Bool {
+        !navigatorWireTurns.isEmpty || navigatorPendingCapture != nil
+    }
+
+    var canSendNavigatorQuestion: Bool {
+        !navigatorInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isNavigating
+    }
+
+    /// Starts a navigator session for a fresh capture. Image downscale and
+    /// OCR run concurrently off the main thread; when the auto first turn is
+    /// enabled the stream fires as soon as they land (the hotkey itself is
+    /// the intent "read this screen").
+    private func startNavigatorSession(with attachment: ScreenshotAttachment) {
+        resetNavigatorSession()
+        errorMessage = nil
+        lastDurationMs = nil
+        lastModelName = nil
+        // The input is ready immediately: the user can type the follow-up
+        // question while the auto first turn is still streaming.
+        focusedField = .navigator
+        prepareNavigatorCapture(attachment, autoRun: AppSettings.isNavigatorAutoFirstTurnEnabled())
+    }
+
+    /// Re-capture inside a running session: always auto-runs — pressing
+    /// 撮り直す is itself the question "check my progress".
+    private func appendNavigatorCapture(_ attachment: ScreenshotAttachment) {
+        // Annotations and highlights are anchored to the previous image.
+        screenshotAnnotations = []
+        navigatorHighlight = nil
+        navigatorTurns.append(NavigatorDisplayTurn(role: .user, text: "（画面を撮り直しました）"))
+        prepareNavigatorCapture(attachment, autoRun: true)
+    }
+
+    private func prepareNavigatorCapture(_ attachment: ScreenshotAttachment, autoRun: Bool) {
+        navigatorStreamTask?.cancel()
+        navigatorStreamTask = Task { [weak self] in
+            async let imageAsync = GatewayNavigateClient.preparedImage(from: attachment.url)
+            async let ocrAsync = ScreenTextRecognizer.recognize(at: attachment.url)
+            let image = await imageAsync
+            let ocr = await ocrAsync
+            guard let self, !Task.isCancelled else { return }
+            // Fragment rects stay on-device: they resolve [[target:…]] labels
+            // to measured rectangles, which beat the model's estimated box.
+            self.navigatorOCRFragments = ocr?.fragments ?? []
+            let turn = NavigateTurn(
+                role: .user,
+                text: nil,
+                imageBase64: image?.base64,
+                mediaType: image?.mediaType,
+                ocrText: ocr?.joinedText
+            )
+            if autoRun {
+                self.navigatorWireTurns.append(turn)
+                await self.runNavigatorStream()
+            } else {
+                // Auto first turn off: hold the capture until the first
+                // question, which will carry it.
+                self.navigatorPendingCapture = turn
+            }
+        }
+    }
+
+    /// Sends the question in the input field as the next conversation turn.
+    /// If the user drew annotation rectangles, they are burned into a fresh
+    /// copy of the screenshot that rides with this turn — the model literally
+    /// sees what "this part" points at.
+    func sendNavigatorQuestion() {
+        let question = navigatorInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, !isNavigating else { return }
+        navigatorInput = ""
+        navigatorHighlight = nil
+        navigatorTurns.append(NavigatorDisplayTurn(role: .user, text: question))
+
+        let annotations = screenshotAnnotations
+        if !annotations.isEmpty, let imageURL = visionImage?.url {
+            screenshotAnnotations = []
+            let pendingOCR = navigatorPendingCapture?.ocrText
+            navigatorPendingCapture = nil
+            navigatorStreamTask = Task { [weak self] in
+                let image = await GatewayNavigateClient.preparedImage(
+                    from: imageURL, annotations: annotations
+                )
+                guard let self, !Task.isCancelled else { return }
+                self.navigatorWireTurns.append(NavigateTurn(
+                    role: .user,
+                    text: question,
+                    imageBase64: image?.base64,
+                    mediaType: image?.mediaType,
+                    ocrText: pendingOCR
+                ))
+                await self.runNavigatorStream()
+            }
+            return
+        }
+
+        if var pending = navigatorPendingCapture {
+            pending.text = question
+            navigatorPendingCapture = nil
+            navigatorWireTurns.append(pending)
+        } else {
+            navigatorWireTurns.append(NavigateTurn(role: .user, text: question))
+        }
+        navigatorStreamTask = Task { [weak self] in
+            await self?.runNavigatorStream()
+        }
+    }
+
+    private func runNavigatorStream() async {
+        guard let client = GatewayNavigateClient.make() else {
+            errorMessage = "ナビゲーターには I//O Cloud へのログインが必要です。"
+            return
+        }
+        isNavigating = true
+        navigatorStreamingText = ""
+        errorMessage = nil
+        navigatorStreamGeneration += 1
+        let generation = navigatorStreamGeneration
+        let started = Date()
+        var firstTokenMs: Int?
+        defer {
+            if generation == navigatorStreamGeneration {
+                isNavigating = false
+                navigatorStreamingText = nil
+            }
+        }
+
+        let context = await resolveContext()
+        do {
+            let stream = try await client.navigateStream(
+                turns: navigatorWireTurns,
+                hints: isContextExcluded ? nil : context,
+                language: outputLanguage
+            )
+            var finalText: String?
+            var harness: String?
+            for try await event in stream {
+                switch event {
+                case .delta(let text):
+                    if firstTokenMs == nil {
+                        // The POC's success metric: capture-confirm → first
+                        // visible token (target ≤1500ms). Shown in the header
+                        // and logged for measurement runs.
+                        firstTokenMs = Int(Date().timeIntervalSince(started) * 1000)
+                        lastDurationMs = firstTokenMs
+                        NSLog("[Navigator] first token in %d ms", firstTokenMs!)
+                    }
+                    navigatorStreamingText = (navigatorStreamingText ?? "") + text
+                case .result(let text, let resultHarness, _):
+                    finalText = text
+                    harness = resultHarness
+                }
+            }
+            guard let finalText else {
+                throw ProviderError.decoding("stream ended without a result")
+            }
+            // The wire history keeps the raw text (marker included) so the
+            // model sees its own past answers verbatim; the display and the
+            // highlight take the parsed halves.
+            let (displayText, vlmBox, target) = NavigatorLocator.extract(from: finalText)
+            navigatorWireTurns.append(NavigateTurn(role: .assistant, text: finalText))
+            navigatorTurns.append(NavigatorDisplayTurn(role: .assistant, text: displayText))
+            // Precision ladder: an OCR-measured rect for the named target
+            // wins over the model's estimated box (which stays as fallback).
+            let box = resolveHighlightRect(target: target, vlmBox: vlmBox)
+            navigatorHighlight = box
+            showLiveHighlight(for: box)
+            lastModelName = harness.map { "I//O Cloud · \($0)" } ?? "I//O Cloud"
+        } catch is CancellationError {
+            // Session was reset mid-stream; nothing to surface.
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    /// Saves a copy of the current screenshot wherever the user picks. The
+    /// capture is already auto-saved on the Desktop; this is the explicit
+    /// download affordance on the preview.
+    func saveScreenshotAs() {
+        guard let sourceURL = visionImage?.url else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = sourceURL.lastPathComponent
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+        } catch {
+            errorMessage = "保存に失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    /// Copies the latest navigator answer to the clipboard.
+    func copyNavigatorAnswer() {
+        guard let last = navigatorTurns.last(where: { $0.role == .assistant }) else { return }
+        do {
+            try ClipboardDeployer().deploy(last.text)
+            didDeploy = true
+            Task {
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+                self.didDeploy = false
+            }
+        } catch {
+            errorMessage = "コピーに失敗しました: \(error.localizedDescription)"
+        }
+    }
+
+    /// Resolves the highlight rectangle with the precision ladder:
+    /// 1. The model names the target's on-screen label ([[target:…]]) and
+    ///    local OCR measured that exact string → pixel-accurate rect.
+    /// 2. Otherwise the model's own estimated box ([[loc:…]]).
+    private func resolveHighlightRect(target: String?, vlmBox: CGRect?) -> CGRect? {
+        guard let target, !navigatorOCRFragments.isEmpty else { return vlmBox }
+        let needle = Self.matchKey(target)
+        guard !needle.isEmpty else { return vlmBox }
+
+        let hits = navigatorOCRFragments.filter { fragment in
+            let key = Self.matchKey(fragment.text)
+            return key.contains(needle) || needle.contains(key) && key.count >= 2
+        }
+        guard !hits.isEmpty else { return vlmBox }
+
+        // Several fragments can carry the same label (e.g. a menu item and a
+        // breadcrumb); prefer the one nearest the model's own estimate.
+        if let vlmBox, hits.count > 1 {
+            let center = CGPoint(x: vlmBox.midX, y: vlmBox.midY)
+            let nearest = hits.min { lhs, rhs in
+                distanceSquared(from: lhs.rect, to: center)
+                    < distanceSquared(from: rhs.rect, to: center)
+            }
+            return nearest?.rect
+        }
+        return hits[0].rect
+    }
+
+    /// Case/whitespace-insensitive comparison key for label matching.
+    private static func matchKey(_ text: String) -> String {
+        text.lowercased().filter { !$0.isWhitespace }
+    }
+
+    private func distanceSquared(from rect: CGRect, to point: CGPoint) -> CGFloat {
+        let dx = rect.midX - point.x
+        let dy = rect.midY - point.y
+        return dx * dx + dy * dy
+    }
+
+    /// Projects the normalized box back onto the physical screen and rings
+    /// it there (POC Step 3): the panel shows where in the picture, the live
+    /// overlay points at the actual pixels. Only possible when the capture
+    /// origin is known (ScreenCaptureKit paths; not `screencapture -i`).
+    private func showLiveHighlight(for box: CGRect?) {
+        guard let box, let capture = visionImage?.captureRect else { return }
+        let target = CGRect(
+            x: capture.minX + box.minX * capture.width,
+            y: capture.minY + box.minY * capture.height,
+            width: box.width * capture.width,
+            height: box.height * capture.height
+        )
+        HighlightOverlayPresenter.shared.show(around: target)
+    }
+
+    private func resetNavigatorSession() {
+        navigatorStreamTask?.cancel()
+        navigatorStreamTask = nil
+        navigatorStreamGeneration += 1
+        navigatorTurns = []
+        navigatorWireTurns = []
+        navigatorPendingCapture = nil
+        navigatorStreamingText = nil
+        navigatorInput = ""
+        isNavigating = false
+        screenshotAnnotations = []
+        navigatorHighlight = nil
+        navigatorOCRFragments = []
+        previewTool = .pan
+        HighlightOverlayPresenter.shared.hide()
     }
 
     func copyVisionResult() {

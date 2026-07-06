@@ -5,6 +5,7 @@ import SwiftUI
 enum FocusField: Hashable {
     case draft     // top: original
     case revision  // bottom: review result
+    case navigator // vision panel: navigator question input
 }
 
 /// Root layout: a single Spotlight-style column — input on top, result below.
@@ -32,6 +33,11 @@ struct ContentView: View {
     }
 
     var body: some View {
+        // Keep this Group as the body's root: wrapping it in a VStack changed
+        // the view identity and reset the SendableTextEditor's first responder,
+        // which broke Enter-to-deploy. The dev-gateway indicator lives as a
+        // small GatewayOverrideBadge in each header's model-info row, not as
+        // a full-width banner here.
         Group {
             if viewModel.sessionKind == .vision {
                 VisionPanelView(viewModel: viewModel)

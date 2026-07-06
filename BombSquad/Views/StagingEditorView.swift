@@ -16,7 +16,7 @@ struct StagingEditorView: View {
 
     /// Hotkeys shown in the help popover. Kept terse: keys only.
     private let shortcuts: [(String, String)] = [
-        ("Enter", "送信"),
+        ("Enter", "確定"),
         ("Shift+Enter", "改行"),
         ("右Shift ×2", "起動 / レビュー / 画面"),
         ("右Shift 長押し", "音声"),
@@ -140,11 +140,11 @@ struct StagingEditorView: View {
                     Button {
                         viewModel.deployDraft()
                     } label: {
-                        Label("送信", systemImage: "paperplane.fill")
+                        Label("確定", systemImage: "paperplane.fill")
                     }
                     .disabled(!viewModel.canDeployDraft)
                     .buttonStyle(.borderedProminent)
-                    .help("レビューを使わず、原文のまま送信先へ入力します")
+                    .help("レビューを使わず、原文のまま入力先へ確定します")
                 }
             }
         }

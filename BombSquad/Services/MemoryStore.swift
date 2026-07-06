@@ -434,10 +434,7 @@ actor MemoryStore {
     }
 
     private func applicationSupportDirectory() throws -> URL {
-        guard let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            throw CocoaError(.fileNoSuchFile)
-        }
-        return root.appendingPathComponent("BombSquad", isDirectory: true)
+        try AppSupport.directory()
     }
 
     private func databaseError(database: OpaquePointer? = nil) -> NSError {

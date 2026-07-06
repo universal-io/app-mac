@@ -14,24 +14,20 @@ final class KeyablePanel: NSPanel {
     }
 }
 
-/// Liquid Glass chrome for the floating panel: glass on macOS 26 (Tahoe),
-/// regular material on earlier systems (design principle 3.5). The window
-/// behind it is transparent; this shape IS the visible panel.
+/// Chrome for the floating panel. Opaque window background (2026-07-06):
+/// the earlier glass/material let the desktop bleed through and hurt text
+/// legibility, and its edge treatment showed as a stray dark outline around
+/// the panel. The window behind is transparent; this shape IS the panel.
 struct PanelChrome: ViewModifier {
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 24, style: .continuous)
     }
 
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content
-                .clipShape(shape)
-                .glassEffect(.regular, in: shape)
-        } else {
-            content
-                .background(.regularMaterial, in: shape)
-                .clipShape(shape)
-        }
+        content
+            .background(Color(nsColor: .windowBackgroundColor), in: shape)
+            .overlay(shape.strokeBorder(.separator.opacity(0.6), lineWidth: 1))
+            .clipShape(shape)
     }
 }
 

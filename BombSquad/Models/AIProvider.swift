@@ -100,6 +100,8 @@ enum AppSettings {
     static let isHistoryEnabledKey = "isHistoryEnabled"
     static let isContextCaptureEnabledKey = "isContextCaptureEnabled"
     static let isMemoryEnabledKey = "isMemoryEnabled"
+    static let isNavigatorEnabledKey = "isNavigatorEnabled"
+    static let isNavigatorAutoFirstTurnEnabledKey = "isNavigatorAutoFirstTurnEnabled"
     static let outputLanguageKey = "outputLanguage"
     static let localHistoryLimit = 100
     static let defaultVisionModelID = "gpt-5.4-mini"
@@ -144,5 +146,26 @@ enum AppSettings {
             return true
         }
         return UserDefaults.standard.bool(forKey: isMemoryEnabledKey)
+    }
+
+    /// Screen navigator (streaming chat over screenshots) instead of the
+    /// legacy one-shot vision interpretation. Gateway-only; the legacy path
+    /// also remains the fallback for signed-out/BYOK sessions.
+    static func isNavigatorEnabled() -> Bool {
+        if UserDefaults.standard.object(forKey: isNavigatorEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: isNavigatorEnabledKey)
+    }
+
+    /// Auto first turn of the navigator (scene recognition fired at capture,
+    /// before the user asks anything). Kept toggleable on purpose: whether
+    /// the one-liner beats "just ask" is an open question to be measured
+    /// (docs/poc-ga-navigator.md §1-b).
+    static func isNavigatorAutoFirstTurnEnabled() -> Bool {
+        if UserDefaults.standard.object(forKey: isNavigatorAutoFirstTurnEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: isNavigatorAutoFirstTurnEnabledKey)
     }
 }

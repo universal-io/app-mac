@@ -57,10 +57,10 @@ struct GatewayAPI {
         return baseURL.appendingPathComponent(full)
     }
 
-    func authorizedRequest(_ path: String) async throws -> URLRequest {
+    func authorizedRequest(_ path: String, method: String = "POST") async throws -> URLRequest {
         let token = try await BombSquadAuthClient.shared.accessToken()
         var request = URLRequest(url: endpoint(path))
-        request.httpMethod = "POST"
+        request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }

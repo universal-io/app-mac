@@ -3,6 +3,7 @@
 // envelope (docs/api-contract.md). Route handlers own their own request
 // validation and quota policy.
 
+import { getServerEnv } from "@/lib/server/env";
 import {
   getSupabaseAdminClient,
   getSupabaseUserClient,
@@ -17,7 +18,17 @@ export type Entitlement = {
 export type AuthContext = {
   userId: string;
   tenantId: string;
+  email: string | null;
   entitlement: Entitlement;
+};
+
+export type AuthenticateOptions = {
+  /**
+   * When false, skips the entitlement status check (active/trialing) so
+   * read-only endpoints can show account state even for lapsed plans.
+   * A missing entitlement row still fails with 402. Defaults to true.
+   */
+  requireActiveEntitlement?: boolean;
 };
 
 /** Thrown by shared helpers; route handlers convert it via `errorResponse`. */
@@ -45,7 +56,11 @@ export class GatewayError extends Error {
  * user lazily on first request), and checks the entitlement is usable.
  * Throws `GatewayError` on any failure.
  */
-export async function authenticate(request: Request): Promise<AuthContext> {
+export async function authenticate(
+  request: Request,
+  options?: AuthenticateOptions,
+): Promise<AuthContext> {
+  const requireActiveEntitlement = options?.requireActiveEntitlement ?? true;
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ")
     ? authorization.slice(7).trim()
@@ -60,6 +75,7 @@ export async function authenticate(request: Request): Promise<AuthContext> {
     throw new GatewayError(401, "UNAUTHENTICATED", "Invalid Supabase access token.");
   }
   const userId = userData.user.id;
+  const email = userData.user.email ?? null;
 
   let tenantId = await fetchDefaultTenantId(userId);
   if (!tenantId) {
@@ -78,7 +94,9 @@ export async function authenticate(request: Request): Promise<AuthContext> {
     .maybeSingle();
   if (
     !entitlement ||
-    (entitlement.status !== "active" && entitlement.status !== "trialing")
+    (requireActiveEntitlement &&
+      entitlement.status !== "active" &&
+      entitlement.status !== "trialing")
   ) {
     throw new GatewayError(
       402,
@@ -87,7 +105,7 @@ export async function authenticate(request: Request): Promise<AuthContext> {
     );
   }
 
-  return { userId, tenantId, entitlement };
+  return { userId, tenantId, email, entitlement };
 }
 
 async function fetchDefaultTenantId(userId: string): Promise<string | null> {
@@ -167,6 +185,85 @@ export function gatewayErrorResponse(
   requestId: string | null,
 ): Response {
   return errorResponse(error.status, error.code, error.message, requestId, error.details);
+}
+
+export type QuotaInfo = {
+  plan: string;
+  used: number;
+  limit: number;
+  remaining: number;
+  resets_at: string;
+};
+
+/**
+ * Effective monthly usage limit: plan override or the free-tier default.
+ * Historically named "review limit" (the DB column keeps that name), but
+ * since 2026-07-06 it caps ALL AI operations, one request = one unit.
+ */
+export function monthlyReviewLimit(entitlement: Entitlement): number {
+  return entitlement.monthly_review_limit ?? getServerEnv().freeMonthlyReviewLimit;
+}
+
+/** Builds the quota envelope for a given usage count (no I/O). */
+export function quotaInfo(
+  entitlement: Entitlement,
+  used: number,
+  limit: number,
+): QuotaInfo {
+  return {
+    plan: entitlement.plan,
+    used,
+    limit,
+    remaining: Math.max(0, limit - used),
+    resets_at: nextMonthStartUTC().toISOString(),
+  };
+}
+
+/**
+ * Counts successful usage events of EVERY operation (review, navigate,
+ * vision, transcribe, distill…) for the tenant in the current UTC month.
+ * One request = one unit: screenshots and dictation consume resources the
+ * same way reviews do, and a single number keeps the mental model simple.
+ */
+export async function countMonthlyUsage(tenantId: string): Promise<number> {
+  const admin = getSupabaseAdminClient();
+  const { count } = await admin
+    .from("bs_usage_events")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId)
+    .eq("status", "success")
+    .gte("created_at", currentMonthStartUTC().toISOString());
+  return count ?? 0;
+}
+
+/**
+ * Rejects with QUOTA_EXCEEDED when the tenant's monthly budget is spent.
+ * Shared by every metered AI route except review, which needs the count
+ * for its response envelope and checks inline.
+ */
+export async function enforceQuota(
+  tenantId: string,
+  entitlement: Entitlement,
+): Promise<void> {
+  const limit = monthlyReviewLimit(entitlement);
+  const used = await countMonthlyUsage(tenantId);
+  if (used >= limit) {
+    throw new GatewayError(429, "QUOTA_EXCEEDED", "Monthly usage limit reached.");
+  }
+}
+
+/**
+ * Counts current-month usage and returns the quota envelope. `usedOffset`
+ * lets callers report in-flight usage (e.g. `+1` after a successful review)
+ * without a second count query.
+ */
+export async function buildQuota(
+  tenantId: string,
+  entitlement: Entitlement,
+  usedOffset = 0,
+): Promise<QuotaInfo> {
+  const used = (await countMonthlyUsage(tenantId)) + usedOffset;
+  return quotaInfo(entitlement, used, monthlyReviewLimit(entitlement));
 }
 
 export function currentMonthStartUTC(): Date {

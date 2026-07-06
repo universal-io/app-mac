@@ -41,6 +41,37 @@ enum BombSquadConfig {
     static let supabaseURLKey = "BOMB_SQUAD_SUPABASE_URL"
     static let supabaseAnonKey = "BOMB_SQUAD_SUPABASE_ANON_KEY"
 
+    /// The gateway base URL actually in effect after the local → env → Info
+    /// resolution. nil only if even the Info.plist default is missing.
+    static func resolvedAPIBaseURL(bundle: Bundle = .main) -> String? {
+        let entry = snapshot(bundle: bundle).apiBaseURL
+        return entry.isConfigured ? entry.value : nil
+    }
+
+    /// The production default baked into Info.plist (never overridden).
+    static func productionAPIBaseURL(bundle: Bundle = .main) -> String? {
+        let value = (bundle.object(forInfoDictionaryKey: apiBaseURLKey) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (value?.isEmpty == false) ? value : nil
+    }
+
+    /// True when a local.plist / env override points the app somewhere other
+    /// than the Info.plist production default. Surfaced in the UI so a leftover
+    /// dev override (e.g. localhost) can never silently stand in for production
+    /// — the recurring failure mode where the app quietly talks to a local
+    /// gateway instead of Vercel.
+    static func isUsingOverriddenGateway(bundle: Bundle = .main) -> Bool {
+        guard let resolved = resolvedAPIBaseURL(bundle: bundle) else { return false }
+        guard let production = productionAPIBaseURL(bundle: bundle) else { return false }
+        return normalizedURL(resolved) != normalizedURL(production)
+    }
+
+    private static func normalizedURL(_ url: String) -> String {
+        url.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            .lowercased()
+    }
+
     static func snapshot(bundle: Bundle = .main, environment: [String: String] = ProcessInfo.processInfo.environment) -> Snapshot {
         let localConfig = localConfigValues(bundle: bundle)
         return Snapshot(

@@ -32,14 +32,14 @@ struct ScreenshotCaptureService {
     /// this runs. Throws `noCaptureTarget` when no display can be resolved
     /// (the caller falls back to interactive selection).
     func captureFullScreen(displayID: CGDirectDisplayID?) async throws -> ScreenshotAttachment {
-        let (image, _) = try await captureDisplayImage(displayID: displayID)
-        return try Self.writeAttachment(image)
+        let (image, _, resolvedID) = try await captureDisplayImage(displayID: displayID)
+        return try Self.writeAttachment(image, captureRect: CGDisplayBounds(resolvedID))
     }
 
     /// Capture a region of the display, given in screen-local points with a
     /// bottom-left origin (as reported by the selection overlay).
     func captureRegion(_ rect: CGRect, displayID: CGDirectDisplayID?) async throws -> ScreenshotAttachment {
-        let (image, displaySize) = try await captureDisplayImage(displayID: displayID)
+        let (image, displaySize, resolvedID) = try await captureDisplayImage(displayID: displayID)
         // The shot may be downscaled (5K budget), so derive the point→pixel
         // ratio from the image itself, and flip to CGImage's top-left origin.
         let scaleX = CGFloat(image.width) / displaySize.width
@@ -55,12 +55,20 @@ struct ScreenshotCaptureService {
         else {
             throw ScreenshotCaptureError.noCaptureTarget
         }
-        return try Self.writeAttachment(cropped)
+        // Same flip, but into global display coordinates (CG top-left).
+        let displayBounds = CGDisplayBounds(resolvedID)
+        let globalRect = CGRect(
+            x: displayBounds.minX + rect.minX,
+            y: displayBounds.minY + (displaySize.height - rect.maxY),
+            width: rect.width,
+            height: rect.height
+        )
+        return try Self.writeAttachment(cropped, captureRect: globalRect)
     }
 
     private func captureDisplayImage(
         displayID: CGDirectDisplayID?
-    ) async throws -> (image: CGImage, displaySize: CGSize) {
+    ) async throws -> (image: CGImage, displaySize: CGSize, displayID: CGDirectDisplayID) {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
         )
@@ -88,10 +96,13 @@ struct ScreenshotCaptureService {
         let image = try await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: configuration
         )
-        return (image, CGSize(width: display.width, height: display.height))
+        return (image, CGSize(width: display.width, height: display.height), display.displayID)
     }
 
-    private static func writeAttachment(_ image: CGImage) throws -> ScreenshotAttachment {
+    private static func writeAttachment(
+        _ image: CGImage,
+        captureRect: CGRect?
+    ) throws -> ScreenshotAttachment {
         let outputURL = try makeDesktopOutputURL()
         let representation = NSBitmapImageRep(cgImage: image)
         guard let png = representation.representation(using: .png, properties: [:]) else {
@@ -102,7 +113,8 @@ struct ScreenshotCaptureService {
         return ScreenshotAttachment(
             url: outputURL,
             pixelWidth: image.width,
-            pixelHeight: image.height
+            pixelHeight: image.height,
+            captureRect: captureRect
         )
     }
 
@@ -151,7 +163,7 @@ struct ScreenshotCaptureService {
         guard let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else {
             throw ScreenshotCaptureError.desktopUnavailable
         }
-        let fileName = "BombSquad-\(Self.fileTimestamp()).png"
+        let fileName = "Universal-IO-\(Self.fileTimestamp()).png"
         return desktop.appendingPathComponent(fileName)
     }
 

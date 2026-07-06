@@ -214,7 +214,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isDictating else { return }
         if panel == nil { showPanel() }
         let vm = currentViewModel
-        guard MainActor.assumeIsolated({ vm?.sessionKind == .text }) else { return }
+        // Dictation is available wherever there is an editable field: the text
+        // compose/review session, and the navigator's question input. The bare
+        // (pre-navigator) vision one-shot has no input to dictate into.
+        guard MainActor.assumeIsolated({
+            vm?.sessionKind == .text || vm?.navigatorSessionActive == true
+        }) else { return }
         isDictating = true
         SoundFeedback.recordingStarted()
         MainActor.assumeIsolated {
@@ -413,7 +418,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.isMovableByWindowBackground = true
+        // Never move the window from arbitrary drags: dragging must belong to
+        // the content (text selection, image pan, annotation rectangles). The
+        // header rows expose an explicit drag handle (WindowDragHandle),
+        // matching standard macOS/iOS behavior of "grab the title area".
+        panel.isMovableByWindowBackground = false
         panel.contentViewController = NSHostingController(
             rootView: MainActor.assumeIsolated { RootPanelView(reviewViewModel: viewModel) }
         )

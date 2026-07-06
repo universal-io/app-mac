@@ -2,16 +2,16 @@
 // Flow: verify Supabase JWT -> resolve tenant -> check entitlement/quota ->
 // call provider -> record usage event -> return result + quota envelope.
 
-import { getServerEnv } from "@/lib/server/env";
-import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 import {
   authenticate,
-  currentMonthStartUTC,
+  countMonthlyUsage,
   errorResponse,
   gatewayErrorResponse,
   GatewayError,
-  nextMonthStartUTC,
+  monthlyReviewLimit,
+  quotaInfo,
   recordUsage,
+  type QuotaInfo,
 } from "@/lib/server/gateway";
 import {
   ProviderCallError,
@@ -51,14 +51,6 @@ type ReviewRequestBody = {
   };
 };
 
-type QuotaInfo = {
-  plan: string;
-  used: number;
-  limit: number;
-  remaining: number;
-  resets_at: string;
-};
-
 export async function POST(request: Request): Promise<Response> {
   let requestId: string | null = null;
   try {
@@ -96,26 +88,10 @@ export async function POST(request: Request): Promise<Response> {
     const { userId, tenantId, entitlement } = await authenticate(request);
 
     // --- Quota ---
-    const env = getServerEnv();
-    const limit = entitlement.monthly_review_limit ?? env.freeMonthlyReviewLimit;
-    const periodStart = currentMonthStartUTC();
-    const admin = getSupabaseAdminClient();
-    const { count } = await admin
-      .from("bs_usage_events")
-      .select("id", { count: "exact", head: true })
-      .eq("tenant_id", tenantId)
-      .eq("operation", "review")
-      .eq("status", "success")
-      .gte("created_at", periodStart.toISOString());
-    const used = count ?? 0;
+    const limit = monthlyReviewLimit(entitlement);
+    const used = await countMonthlyUsage(tenantId);
 
-    const quota = (usedNow: number): QuotaInfo => ({
-      plan: entitlement.plan,
-      used: usedNow,
-      limit,
-      remaining: Math.max(0, limit - usedNow),
-      resets_at: nextMonthStartUTC().toISOString(),
-    });
+    const quota = (usedNow: number): QuotaInfo => quotaInfo(entitlement, usedNow, limit);
 
     if (used >= limit) {
       return errorResponse(429, "QUOTA_EXCEEDED", "Monthly review limit reached.", requestId, quota(used));

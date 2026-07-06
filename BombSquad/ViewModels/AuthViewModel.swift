@@ -190,7 +190,28 @@ final class AuthViewModel: ObservableObject {
             initializedUserID = session.user.id
         }
 
-        accountSummary = try await authClient.fetchAccountSummary()
+        accountSummary = try await fetchAccountSummary()
+    }
+
+    /// Refreshes the account summary (and the quota bundled with it) from the
+    /// gateway. Called when the my page appears so usage is always current.
+    /// Keeps the existing summary while loading and on failure (no flicker).
+    func refreshAccount() async {
+        guard hasSession else { return }
+        do {
+            accountSummary = try await fetchAccountSummary()
+        } catch {
+            await present(error)
+        }
+    }
+
+    private func fetchAccountSummary() async throws -> BombSquadAccountSummary {
+        guard let client = GatewayAccountClient.make() else {
+            throw ProviderError.gateway(
+                message: "アカウント情報を取得できませんでした。API の設定とログイン状態を確認してください。"
+            )
+        }
+        return try await client.fetchAccount()
     }
 
     private func present(_ error: Error) async {

@@ -42,7 +42,7 @@ struct AccountView: View {
                         Divider()
                         infoRow("契約状態", summary.state.label)
                         Divider()
-                        infoRow("月間レビュー枠", "\(summary.monthlyReviewLimit) 回")
+                        infoRow("月間利用枠", "\(summary.monthlyReviewLimit) 回")
                     }
                     if let quota = quotaStore.latest {
                         Divider()
@@ -66,6 +66,11 @@ struct AccountView: View {
             }
             .controlSize(.large)
             .disabled(viewModel.isBusy)
+        }
+        // Refresh summary + quota from the gateway every time the my page is
+        // shown; existing values stay on screen while the request runs.
+        .task {
+            await viewModel.refreshAccount()
         }
     }
 

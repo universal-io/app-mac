@@ -4,7 +4,7 @@ import SwiftUI
 /// Pricing section. In-app billing UI is a later phase; for now this is just an
 /// entry point that opens the web pricing page in the browser.
 struct PricingView: View {
-    private static let pricingURL = URL(string: "https://bombsquad.me/pricing")!
+    private static let pricingURL = URL(string: "https://universal-io.com/pricing")!
 
     var body: some View {
         VStack(spacing: 16) {

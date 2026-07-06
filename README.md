@@ -61,7 +61,7 @@ M4 で「スクショ → OCR → コピー」から「見る → わかる → 
   エディタへ文案を引き継いで調整**の 2 ボタン。文案生成には L1 コンテクストと
   Persona / Relationship カードを注入する（M1・M2 の成果を接続）。
 - 「コピー」は読み取り結果全体をテキストとしてクリップボードへ。スクリーンショット自体は
-  `~/Desktop/BombSquad-YYYYMMDD-HHMMSS.png` に保存する。
+  `~/Desktop/Universal-IO-YYYYMMDD-HHMMSS.png` に保存する。
 - Vision 表示中に **右Shift2回** すると閉じる。
 
 ### 受信側（読解支援）— 送信側の鏡像
@@ -159,6 +159,13 @@ Gateway の向き先（`BOMB_SQUAD_API_BASE_URL`）は Info.plist に本番の
 に `http://localhost:3000/api` を入れることでローカル Gateway を優先できる
 （この行を空にすると本番へフォールバック）。エンドポイント構築は base URL の
 `/api` 有無を吸収する（[`GatewayAPI.endpoint`](BombSquad/Services/GatewayAPI.swift)）。
+
+> ⚠️ 向き先の可視化（戻し忘れ対策）: Info.plist の本番既定**以外**を向いている間は、
+> パネル上部にオレンジの警告バー（現在の向き先 URL 付き）が出る
+> （[`BombSquadConfig.isUsingOverriddenGateway`](BombSquad/Services/BombSquadConfig.swift)）。
+> ローカル Gateway 開発の設定を残したまま「本番のつもりでローカルを見る／ローカルが
+> たまたま動いていて本番の不調に気づかない」という再発しやすい事故を防ぐための安全策。
+> 普段（本番）は無表示。ローカル開発が終わったら `BOMB_SQUAD_API_BASE_URL` を空に戻す。
 
 > ⚠️ リリース注意: `BombSquad.local.plist` はアプリバンドルに同梱され最優先で
 > 読まれる（[`BombSquadConfig`](BombSquad/Services/BombSquadConfig.swift)）。

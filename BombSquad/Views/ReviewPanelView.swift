@@ -28,7 +28,9 @@ struct ReviewPanelView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
+                GatewayOverrideBadge()
             }
+            .background(WindowDragHandle())
 
             if let message = viewModel.errorMessage {
                 errorBanner(message)
@@ -59,7 +61,7 @@ struct ReviewPanelView: View {
         .animation(.easeInOut(duration: 0.18), value: viewModel.isLoading)
         .overlay(alignment: .bottom) {
             if viewModel.didDeploy {
-                Label(viewModel.mode == .transform ? "クリップボードにコピーしました" : "送信先へ入力しました",
+                Label(viewModel.mode == .transform ? "クリップボードにコピーしました" : "入力先へ確定しました",
                       systemImage: "checkmark.circle.fill")
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(.green.opacity(0.9), in: Capsule())
@@ -104,7 +106,7 @@ struct ReviewPanelView: View {
             } label: {
                 // Receiving side never sends back to the sender; it only copies
                 // the readable version to the clipboard for the reader's own use.
-                Label(viewModel.mode == .transform ? "コピー" : "送信",
+                Label(viewModel.mode == .transform ? "コピー" : "確定",
                       systemImage: viewModel.mode == .transform ? "doc.on.clipboard.fill" : "paperplane.fill")
             }
             .buttonStyle(.borderedProminent)
@@ -272,12 +274,43 @@ struct ReviewPanelView: View {
     }()
 
     private func errorBanner(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle.fill")
-            .font(.callout)
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.red.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
-            .foregroundStyle(.red)
+        ErrorBanner(message: message)
+    }
+}
+
+/// Tiny badge shown next to the model info when the gateway is overridden
+/// away from the production default (e.g. localhost during development).
+/// Replaces the old full-width orange banner, which was visually too loud.
+struct GatewayOverrideBadge: View {
+    var body: some View {
+        if BombSquadConfig.isUsingOverriddenGateway() {
+            Text("開発GW")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.orange, in: Capsule())
+                .help("開発Gatewayに接続中: \(BombSquadConfig.resolvedAPIBaseURL() ?? "?")")
+        }
+    }
+}
+
+/// Shared error banner. The message is a `Text` (not a `Label`) so it can be
+/// selected and copied — essential for reporting gateway/provider errors.
+struct ErrorBanner: View {
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(message)
+                .textSelection(.enabled)
+        }
+        .font(.callout)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.red.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(.red)
     }
 }
 
@@ -328,33 +361,15 @@ struct VisionPanelView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
+            GatewayOverrideBadge()
             Spacer()
-            Button {
-                NotificationCenter.default.post(name: .captureScreenshot, object: nil)
-            } label: {
-                Label("撮り直す", systemImage: "camera.viewfinder")
-            }
-            .disabled(viewModel.isCapturingScreenshot)
-            .help("全画面が選択された状態で撮り直します。Enter で確定、ドラッグで範囲選択")
-
-            Button {
-                Task { await viewModel.runVisionInterpretation() }
-            } label: {
-                Label("再読み取り", systemImage: "arrow.triangle.2.circlepath")
-            }
-            .disabled(viewModel.visionImage == nil || viewModel.isInterpretingVision)
-
-            Button {
-                viewModel.copyVisionResult()
-            } label: {
-                Label("コピー", systemImage: "doc.on.clipboard.fill")
-            }
-            .disabled(viewModel.visionResult == nil)
         }
+        .background(WindowDragHandle())
     }
 
     private var sourcePane: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
+            previewToolbar
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.quaternary.opacity(0.25))
@@ -362,31 +377,86 @@ struct VisionPanelView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
 
-            if let attachment = viewModel.visionImage {
-                HStack(spacing: 8) {
-                    Text(attachment.fileName)
-                        .font(.caption)
-                        .lineLimit(1)
-                    if let sizeLabel = attachment.sizeLabel {
-                        Text(sizeLabel)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+    /// Hand / pen tool switch, annotation tint + clear, and save.
+    private var previewToolbar: some View {
+        HStack(spacing: 8) {
+            toolButton(.pan, icon: "hand.raised", help: "手のひらツール: ドラッグで移動、ピンチで拡大縮小、ダブルクリックで全体表示")
+            toolButton(.annotate, icon: "rectangle.dashed", help: "枠線ツール: ドラッグで囲んで「この部分について」と質問できます")
+
+            if viewModel.previewTool == .annotate {
+                ForEach(ScreenshotAnnotation.Tint.allCases) { tint in
+                    Button {
+                        viewModel.annotationTint = tint
+                    } label: {
+                        Circle()
+                            .fill(tint.color)
+                            .frame(width: 16, height: 16)
+                            .overlay(
+                                Circle().strokeBorder(
+                                    .primary.opacity(viewModel.annotationTint == tint ? 0.8 : 0),
+                                    lineWidth: 2
+                                )
+                                .padding(-3)
+                            )
                     }
-                    Spacer()
+                    .buttonStyle(.plain)
+                    .help(tint == .red ? "赤い枠線" : "青い枠線")
                 }
             }
+
+            if !viewModel.screenshotAnnotations.isEmpty {
+                Button {
+                    viewModel.screenshotAnnotations = []
+                } label: {
+                    Image(systemName: "eraser")
+                        .font(.system(size: 15))
+                }
+                .buttonStyle(.borderless)
+                .help("枠線をすべて消す")
+            }
+
+            Spacer()
+
+            Button {
+                viewModel.saveScreenshotAs()
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 15))
+            }
+            .buttonStyle(.borderless)
+            .disabled(viewModel.visionImage == nil)
+            .help("スクリーンショットを保存")
         }
+    }
+
+    private func toolButton(_ tool: ScreenshotPreviewTool, icon: String, help: String) -> some View {
+        Button {
+            viewModel.previewTool = tool
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 36, height: 28)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(viewModel.previewTool == tool ? Color.accentColor : Color.gray.opacity(0.25))
+        .foregroundStyle(viewModel.previewTool == tool ? .white : .primary)
+        .help(help)
     }
 
     @ViewBuilder
     private var screenshotPreview: some View {
-        if let attachment = viewModel.visionImage,
-           let image = NSImage(contentsOf: attachment.url) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .padding(12)
+        if let attachment = viewModel.visionImage {
+            ZoomableScreenshotView(
+                url: attachment.url,
+                tool: viewModel.previewTool,
+                annotationTint: viewModel.annotationTint,
+                annotations: $viewModel.screenshotAnnotations,
+                highlight: viewModel.navigatorHighlight
+            )
+            .padding(4)
         } else {
             VStack(spacing: 10) {
                 Image(systemName: "photo")
@@ -401,7 +471,9 @@ struct VisionPanelView: View {
 
     @ViewBuilder
     private var resultPane: some View {
-        if viewModel.isInterpretingVision {
+        if viewModel.navigatorSessionActive {
+            navigatorPane
+        } else if viewModel.isInterpretingVision {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("画面を読み取っています…")
@@ -434,13 +506,80 @@ struct VisionPanelView: View {
         }
     }
 
+    /// Navigator conversation: transcript on top, question input at the
+    /// bottom (docs/poc-ga-navigator.md). The auto first turn streams in
+    /// while the input is already focused for the follow-up question.
+    private var navigatorPane: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                // One selectable text view for the whole conversation —
+                // native selection across turns, ⌘A/⌘C behave normally.
+                TranscriptTextView(
+                    turns: viewModel.navigatorTurns,
+                    streamingText: viewModel.navigatorStreamingText.map {
+                        // Markers stripped live so "[[loc:…" never flashes up.
+                        NavigatorLocator.strippingMarkers($0)
+                    }
+                )
+                if viewModel.navigatorTurns.isEmpty, viewModel.navigatorStreamingText == nil {
+                    Text("この画面についてやりたいことを聞いてください")
+                        .foregroundStyle(.tertiary)
+                        .allowsHitTesting(false)
+                }
+                if let streaming = viewModel.navigatorStreamingText,
+                   NavigatorLocator.strippingMarkers(streaming).isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(viewModel.navigatorTurns.isEmpty ? "画面を見ています…" : "考えています…")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(12)
+                    .allowsHitTesting(false)
+                }
+            }
+            .background(EditorFocusBackground(isFocused: false))
+
+            // Same dictation feedback as the compose editor: hold-to-talk is
+            // one experience everywhere (mic while recording, spinner after).
+            if viewModel.isRecording {
+                HStack(spacing: 6) {
+                    Image(systemName: "mic.fill").foregroundStyle(.red)
+                    Text("録音中…").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }
+            } else if viewModel.isTranscribing {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("文字起こし中…").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }
+            }
+
+            HStack(alignment: .bottom, spacing: 8) {
+                SendableTextEditor(
+                    text: $viewModel.navigatorInput,
+                    focusedField: $viewModel.focusedField,
+                    field: .navigator,
+                    onSend: { viewModel.sendNavigatorQuestion() },
+                    onEscape: { viewModel.exitVisionMode() }
+                )
+                .frame(minHeight: 44, maxHeight: 88)
+                .background(EditorFocusBackground(isFocused: viewModel.focusedField == .navigator))
+
+                Button {
+                    viewModel.sendNavigatorQuestion()
+                } label: {
+                    Image(systemName: "paperplane.fill")
+                }
+                .disabled(!viewModel.canSendNavigatorQuestion)
+                .help("質問を送る（Enter）")
+            }
+        }
+    }
+
     private func errorBanner(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle.fill")
-            .font(.callout)
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.red.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
-            .foregroundStyle(.red)
+        ErrorBanner(message: message)
     }
 }
 
