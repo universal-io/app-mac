@@ -13,9 +13,9 @@ extension Notification.Name {
 /// (last-write-wins on `updated_at`, docs/api-contract.md), which is then
 /// applied back locally via `MemoryStore.applyServerState`.
 ///
-/// BYOK / signed-out users have no gateway configured (`GatewayAPI.make()`
-/// returns nil), so sync is simply a no-op for them — memory stays
-/// local-only, same as before M3-B.
+/// BYOK / signed-out users have no gateway configured
+/// (`EngineResolver.gateway()` returns nil), so sync is simply a no-op for
+/// them — memory stays local-only, same as before M3-B.
 actor MemorySyncService {
     static let shared = MemorySyncService()
 
@@ -57,7 +57,7 @@ actor MemorySyncService {
     /// at most one more pending run, so bursts of edits don't queue up an
     /// unbounded number of requests.
     func syncNow() async {
-        guard GatewayAPI.make() != nil else {
+        guard EngineResolver.gateway() != nil else {
             NSLog("BombSquad sync: skipped (gateway not configured or no session)")
             return
         }
@@ -88,24 +88,17 @@ actor MemorySyncService {
     }
 
     private func runSync() async {
-        guard let api = GatewayAPI.make() else { return }
+        guard let client = EngineResolver.gateway() else { return }
         do {
             let localCards = try await MemoryStore.shared.allCardsIncludingDeleted()
 
-            var request = try await api.authorizedRequest("memory/cards")
-            request.httpMethod = "PUT"
+            var request = try await client.authorizedRequest("memory/cards", method: "PUT")
             request.setValue("application/json", forHTTPHeaderField: "content-type")
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .secondsSince1970
             request.httpBody = try encoder.encode(CardsWirePayload(cards: localCards))
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw ProviderError.http(status: -1, body: "no HTTP response")
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                throw GatewayAPI.error(status: http.statusCode, data: data)
-            }
+            let data = try await client.send(request)
 
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .secondsSince1970

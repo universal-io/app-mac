@@ -9,17 +9,14 @@ struct GatewayVisionClient: VisionProvider {
     /// re-encode large PNG screenshots as JPEG before sending.
     private static let maxRawImageBytes = 3_000_000
 
-    private let api: GatewayAPI
-    private let session: URLSession
+    private let client: GatewayClient
 
     static func make() -> GatewayVisionClient? {
-        guard let api = GatewayAPI.make() else { return nil }
-        return GatewayVisionClient(api: api)
+        EngineResolver.gateway().map(GatewayVisionClient.init)
     }
 
-    init(api: GatewayAPI, session: URLSession = .shared) {
-        self.api = api
-        self.session = session
+    init(client: GatewayClient) {
+        self.client = client
     }
 
     func interpret(
@@ -91,34 +88,15 @@ struct GatewayVisionClient: VisionProvider {
         input: [String: Any],
         language: OutputLanguage
     ) async throws -> VisionInterpretationResult {
-        var request = try await api.authorizedRequest("ai/vision")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        let root = try await client.postJSON("ai/vision", body: [
             "request_id": UUID().uuidString,
             "operation": "vision",
             "input": input,
             "preferences": ["output_language": language.rawValue],
-            "client": GatewayAPI.clientPayload(),
+            "client": GatewayClient.clientPayload(),
         ])
 
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ProviderError.http(status: -1, body: "no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw GatewayAPI.error(status: http.statusCode, data: data)
-        }
-
-        guard
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let result = root["result"]
-        else {
+        guard let result = root["result"] else {
             throw ProviderError.decoding("unexpected gateway response shape")
         }
 

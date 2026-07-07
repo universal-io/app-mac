@@ -4,38 +4,22 @@ import Foundation
 /// the single source of truth for plan / status / usage, replacing the legacy
 /// client-side Supabase reads of bs_profiles and bs_entitlements.
 struct GatewayAccountClient {
-    private let api: GatewayAPI
-    private let session: URLSession
+    private let client: GatewayClient
 
     static func make() -> GatewayAccountClient? {
-        guard let api = GatewayAPI.make() else { return nil }
-        return GatewayAccountClient(api: api)
+        EngineResolver.gateway().map(GatewayAccountClient.init)
     }
 
-    init(api: GatewayAPI, session: URLSession = .shared) {
-        self.api = api
-        self.session = session
+    init(client: GatewayClient) {
+        self.client = client
     }
 
     /// Fetches the account summary and publishes the bundled quota envelope to
     /// `GatewayQuotaStore`, so the my-page usage rows show without waiting for
     /// an AI operation to happen first.
     func fetchAccount() async throws -> BombSquadAccountSummary {
-        let request = try await api.authorizedRequest("account", method: "GET")
-
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ProviderError.http(status: -1, body: "no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw GatewayAPI.error(status: http.statusCode, data: data)
-        }
+        let request = try await client.authorizedRequest("account", method: "GET")
+        let data = try await client.send(request)
 
         let envelope: AccountResponse
         do {

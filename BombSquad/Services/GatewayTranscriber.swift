@@ -9,40 +9,25 @@ protocol Transcriber {
 /// ASR via the product gateway (POST /api/ai/transcribe). The server owns the
 /// Groq key and the hallucination filter; usage is metered per tenant.
 struct GatewayTranscriber: Transcriber {
-    private let api: GatewayAPI
-    private let session: URLSession
+    private let client: GatewayClient
 
     static func make() -> GatewayTranscriber? {
-        guard let api = GatewayAPI.make() else { return nil }
-        return GatewayTranscriber(api: api)
+        EngineResolver.gateway().map(GatewayTranscriber.init)
     }
 
-    init(api: GatewayAPI, session: URLSession = .shared) {
-        self.api = api
-        self.session = session
+    init(client: GatewayClient) {
+        self.client = client
     }
 
     func transcribe(fileURL: URL) async throws -> String {
         let audioData = try Data(contentsOf: fileURL)
 
         let boundary = "Boundary-\(UUID().uuidString)"
-        var request = try await api.authorizedRequest("ai/transcribe")
+        var request = try await client.authorizedRequest("ai/transcribe")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = multipartBody(boundary: boundary, audioData: audioData)
 
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ProviderError.http(status: -1, body: "no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw GatewayAPI.error(status: http.statusCode, data: data)
-        }
+        let data = try await client.send(request)
 
         guard
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -61,7 +46,7 @@ struct GatewayTranscriber: Transcriber {
             body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
             body.append("\(value)\r\n".data(using: .utf8)!)
         }
-        let client = GatewayAPI.clientPayload()
+        let client = GatewayClient.clientPayload()
         field("request_id", UUID().uuidString)
         field("platform", client["platform"] as? String ?? "macos")
         field("app_version", client["app_version"] as? String ?? "0")

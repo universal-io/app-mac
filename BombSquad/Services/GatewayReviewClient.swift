@@ -14,18 +14,15 @@ enum ReviewStreamEvent {
 /// The BYOK clients remain as a developer fallback when no gateway URL is
 /// configured.
 struct GatewayReviewClient: ReviewProvider {
-    private let api: GatewayAPI
-    private let session: URLSession
+    private let client: GatewayClient
 
     /// Usable only when the gateway URL is configured and a user is signed in.
     static func make() -> GatewayReviewClient? {
-        guard let api = GatewayAPI.make() else { return nil }
-        return GatewayReviewClient(api: api)
+        EngineResolver.gateway().map(GatewayReviewClient.init)
     }
 
-    init(api: GatewayAPI, session: URLSession = .shared) {
-        self.api = api
-        self.session = session
+    init(client: GatewayClient) {
+        self.client = client
     }
 
     func review(
@@ -38,27 +35,11 @@ struct GatewayReviewClient: ReviewProvider {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProviderError.emptyDraft }
 
-        var request = try await api.authorizedRequest("ai/review")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: requestBody(draft: trimmed, mode: mode, language: language, context: context, memory: memory)
+        let root = try await client.postJSON(
+            "ai/review",
+            body: requestBody(draft: trimmed, mode: mode, language: language, context: context, memory: memory)
         )
-
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ProviderError.http(status: -1, body: "no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw GatewayAPI.error(status: http.statusCode, data: data)
-        }
-
-        return try decodeResult(from: data)
+        return try decodeResult(fromRoot: root)
     }
 
     /// Streaming review over SSE. Yields `delta` events with revised_text
@@ -74,79 +55,24 @@ struct GatewayReviewClient: ReviewProvider {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProviderError.emptyDraft }
 
-        var request = try await api.authorizedRequest("ai/review")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "accept")
         var body = requestBody(draft: trimmed, mode: mode, language: language, context: context, memory: memory)
         body["stream"] = true
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (bytes, response): (URLSession.AsyncBytes, URLResponse)
-        do {
-            (bytes, response) = try await session.bytes(for: request)
-        } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ProviderError.http(status: -1, body: "no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            // Error responses are plain JSON; read a bounded amount for the message.
-            var data = Data()
-            for try await byte in bytes {
-                data.append(byte)
-                if data.count > 4096 { break }
-            }
-            throw GatewayAPI.error(status: http.statusCode, data: data)
-        }
-
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                var eventName = ""
-                do {
-                    // The gateway sends exactly one `data:` line per event, so
-                    // dispatch on the data line (no reliance on blank separators,
-                    // which AsyncLineSequence may swallow).
-                    for try await line in bytes.lines {
-                        if line.hasPrefix("event:") {
-                            eventName = line.dropFirst("event:".count)
-                                .trimmingCharacters(in: .whitespaces)
-                            continue
-                        }
-                        guard line.hasPrefix("data:") else { continue }
-                        let payload = line.dropFirst("data:".count)
-                            .trimmingCharacters(in: .whitespaces)
-                        guard
-                            let data = payload.data(using: .utf8),
-                            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        else { continue }
-
-                        switch eventName {
-                        case "delta":
-                            if let text = root["text"] as? String, !text.isEmpty {
-                                continuation.yield(.delta(text))
-                            }
-                        case "result":
-                            GatewayAPI.captureQuota(fromResponseRoot: root)
-                            guard let result = root["result"] else {
-                                throw ProviderError.decoding("stream result had no payload")
-                            }
-                            let resultData = try JSONSerialization.data(withJSONObject: result)
-                            let parsed = try JSONDecoder().decode(ReviewResult.self, from: resultData)
-                            continuation.yield(.result(parsed))
-                        case "error":
-                            throw GatewayAPI.error(status: 502, data: data)
-                        default:
-                            break
-                        }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
+        return try await client.postSSE("ai/review", body: body) { event in
+            switch event.name {
+            case "delta":
+                guard let text = event.root["text"] as? String, !text.isEmpty else { return nil }
+                return .delta(text)
+            case "result":
+                GatewayClient.captureQuota(fromResponseRoot: event.root)
+                guard let result = event.root["result"] else {
+                    throw ProviderError.decoding("stream result had no payload")
                 }
+                let resultData = try JSONSerialization.data(withJSONObject: result)
+                return .result(try JSONDecoder().decode(ReviewResult.self, from: resultData))
+            default:
+                return nil
             }
-            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -182,20 +108,17 @@ struct GatewayReviewClient: ReviewProvider {
             "preferences": [
                 "output_language": language.rawValue,
             ],
-            "client": GatewayAPI.clientPayload(),
+            "client": GatewayClient.clientPayload(),
         ]
     }
 
     // MARK: - Response
 
-    private func decodeResult(from data: Data) throws -> ReviewResult {
-        guard
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let result = root["result"]
-        else {
+    private func decodeResult(fromRoot root: [String: Any]) throws -> ReviewResult {
+        guard let result = root["result"] else {
             throw ProviderError.decoding("unexpected gateway response shape")
         }
-        GatewayAPI.captureQuota(fromResponseRoot: root)
+        GatewayClient.captureQuota(fromResponseRoot: root)
         do {
             let resultData = try JSONSerialization.data(withJSONObject: result)
             return try JSONDecoder().decode(ReviewResult.self, from: resultData)
