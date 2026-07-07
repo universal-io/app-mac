@@ -161,7 +161,7 @@ enum AppSettings {
     /// Auto first turn of the navigator (scene recognition fired at capture,
     /// before the user asks anything). Kept toggleable on purpose: whether
     /// the one-liner beats "just ask" is an open question to be measured
-    /// (docs/poc-ga-navigator.md §1-b).
+    /// (docs/navigator-copilot-plan.md §9-b).
     static func isNavigatorAutoFirstTurnEnabled() -> Bool {
         if UserDefaults.standard.object(forKey: isNavigatorAutoFirstTurnEnabledKey) == nil {
             return true

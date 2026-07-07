@@ -1,7 +1,7 @@
 import Foundation
 import Vision
 
-/// On-device OCR for navigator screenshots (docs/poc-ga-navigator.md §2).
+/// On-device OCR for navigator screenshots (docs/navigator-copilot-plan.md §9-c).
 /// Extracting the screen text locally lets the client ship a much smaller
 /// image (faster upload, cheaper inference) while the model still reads exact
 /// strings — and keeps raw pixels on the device wherever text suffices.

@@ -1,5 +1,5 @@
-// Tool harness selection for the screen navigator (docs/poc-ga-navigator.md
-// §1-a). The client never picks a harness: it only sends hints (frontmost app
+// Tool harness selection for the screen navigator (docs/navigator-copilot-plan.md
+// §9-a). The client never picks a harness: it only sends hints (frontmost app
 // name, window title, URL) and the gateway decides. No match → the generic
 // navigator prompt alone, which must always work — the harness is an
 // invisible accuracy add-on, not a mode.

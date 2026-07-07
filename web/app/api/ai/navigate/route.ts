@@ -1,5 +1,5 @@
 // AI gateway: POST /api/ai/navigate — the screen navigator
-// (docs/poc-ga-navigator.md). Multi-turn: input.messages carries the
+// (docs/navigator-copilot-plan.md). Multi-turn: input.messages carries the
 // conversation (screenshots + OCR text ride on user turns), input.hints lets
 // the gateway pick a tool harness (the client never selects one). The
 // response is always SSE: `delta` events with plain-text increments, then one

@@ -47,7 +47,7 @@ enum NavigateStreamEvent {
 /// Client for the screen navigator (POST /api/ai/navigate, always SSE).
 /// The gateway owns prompts, model staging (fast first turn / main follow-up),
 /// and harness selection — the client only sends the conversation plus hints
-/// (docs/poc-ga-navigator.md §1-a). Gateway-only: the navigator has no BYOK
+/// (docs/navigator-copilot-plan.md §9-a). Gateway-only: the navigator has no BYOK
 /// fallback.
 struct GatewayNavigateClient {
     /// Navigation reads UI structure, not fine print: a screenshot downscaled

@@ -594,7 +594,7 @@ struct VisionPanelView: View {
     }
 
     /// Navigator conversation: transcript on top, question input at the
-    /// bottom (docs/poc-ga-navigator.md). The auto first turn streams in
+    /// bottom (docs/navigator-copilot-plan.md). The auto first turn streams in
     /// while the input is already focused for the follow-up question.
     private var navigatorPane: some View {
         VStack(spacing: 10) {
@@ -978,7 +978,7 @@ private struct IssueCard: View {
     }
 }
 
-// MARK: - Copilot strip (docs/poc-ga-navigator.md あるべきユーザー体験)
+// MARK: - Copilot strip (docs/navigator-copilot-plan.md 正のユーザー体験)
 
 /// The whole panel while guided navigation runs: a corner strip with the
 /// step counter, the current instruction, and an exit button. The real UI is

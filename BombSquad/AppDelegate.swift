@@ -31,7 +31,7 @@ extension Notification.Name {
     /// ends (`userInfo["active"]: Bool`). While active the panel drops its
     /// modal behavior: it shrinks to a corner strip, survives outside
     /// clicks, and never steals focus from the app being navigated
-    /// (docs/poc-ga-navigator.md あるべきユーザー体験).
+    /// (docs/navigator-copilot-plan.md 正のユーザー体験).
     static let copilotModeChanged = Notification.Name("BombSquad.copilotModeChanged")
 }
 
@@ -170,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Guided navigation inverts the modal rule: clicking the target app
         // is the interaction, so losing active is the NORMAL state, never a
-        // close signal (docs/poc-ga-navigator.md あるべきユーザー体験 §5).
+        // close signal (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
         guard !isCopilotActive else { return }
 
         // Login can legitimately move focus to the browser or Mail. Keep the

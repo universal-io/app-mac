@@ -1,4 +1,4 @@
-// Screen navigator engine (docs/poc-ga-navigator.md). Streaming multimodal
+// Screen navigator engine (docs/navigator-copilot-plan.md). Streaming multimodal
 // chat over OpenAI-compatible chat completions so the same code path serves
 // both vendors: the auto first turn (scene recognition one-liner) prefers the
 // fast vendor (Groq llama-4), follow-up navigation turns use the main model.
@@ -457,7 +457,7 @@ function apiKeyFor(vendor: string): string | null {
   }
 }
 
-// Adaptive first turn (docs/poc-ga-navigator.md §1-b): a tool screen gets one
+// Adaptive first turn (docs/navigator-copilot-plan.md §9-b): a tool screen gets one
 // recognition sentence and nothing else — the user's intent is still unknown
 // and a wall of speculative navigation defeats the point. Only an obviously
 // pending communication (a message awaiting the user's reply) justifies a

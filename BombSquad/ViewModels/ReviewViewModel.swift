@@ -87,7 +87,7 @@ final class ReviewViewModel: ObservableObject {
     @Published var visionResult: VisionInterpretationResult?
     @Published var visionInstruction = ""
     @Published var isInterpretingVision = false
-    /// Navigator conversation shown in the vision panel (docs/poc-ga-navigator.md).
+    /// Navigator conversation shown in the vision panel (docs/navigator-copilot-plan.md).
     @Published private(set) var navigatorTurns: [NavigatorDisplayTurn] = []
     /// Answer accumulating token by token during a navigator stream.
     @Published private(set) var navigatorStreamingText: String?
@@ -506,7 +506,7 @@ final class ReviewViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Navigator (docs/poc-ga-navigator.md)
+    // MARK: - Navigator (docs/navigator-copilot-plan.md)
 
     /// The navigator is gateway-only (server-owned prompts, model staging,
     /// harness selection). Signed-out/BYOK sessions fall back to the legacy
@@ -655,7 +655,7 @@ final class ReviewViewModel: ObservableObject {
         navigatorProposedTask = nil
     }
 
-    // MARK: - Copilot mode (docs/poc-ga-navigator.md あるべきユーザー体験)
+    // MARK: - Copilot mode (docs/navigator-copilot-plan.md 正のユーザー体験)
 
     /// The guided loop: the user clicks the highlighted spot in the TARGET
     /// app, a global monitor notices the click, the screen is re-captured
