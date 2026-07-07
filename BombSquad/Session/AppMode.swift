@@ -17,9 +17,11 @@ enum AppMode {
     /// The screenshot selection overlay is up and the panel is hidden. Holds
     /// the compose session to resume on cancel — suspended, not running.
     case capturing(resume: ComposeSession)
-    /// R1-a bridge: vision / navigator / copilot still run on the legacy
-    /// `ReviewViewModel` until R1-b gives them their own sessions.
-    case legacyVision(ReviewViewModel)
+    /// Screen Q&A over a screenshot (plus the one-shot fallback).
+    case navigator(NavigatorSession)
+    /// Guided navigation: the corner strip + the user's own clicks. Wraps the
+    /// navigator whose conversation it continues (explicit handoff §4-b).
+    case copilot(CopilotSession)
 }
 
 extension AppMode {

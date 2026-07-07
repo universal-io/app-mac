@@ -194,7 +194,7 @@ enum AXActionService {
 
     /// Label-match quality: 0 = exact, 1 = candidate contains the label,
     /// 2 = partial (label contains the candidate). nil = no match. Mirrors
-    /// ReviewViewModel.matchTier — "the AI names WHAT, the device resolves
+    /// NavigatorSession.matchTier — "the AI names WHAT, the device resolves
     /// WHERE" only works when every resolver ranks matches the same way.
     private static func matchTier(needle: String, candidate: String) -> Int? {
         let key = matchKey(candidate)

@@ -34,8 +34,11 @@ struct RootPanelView: View {
                     switch coordinator.mode {
                     case .transform(let session):
                         TransformContentView(session: session)
-                    case .legacyVision(let viewModel):
-                        LegacyVisionRootView(viewModel: viewModel)
+                    case .navigator(let session):
+                        VisionPanelView(session: session)
+                            .frame(minWidth: 900, minHeight: 600)
+                    case .copilot(let session):
+                        CopilotStripView(session: session)
                     default:
                         Color.clear
                     }
@@ -54,23 +57,6 @@ struct RootPanelView: View {
                   !didAutoInterpretAfterLogin else { return }
             didAutoInterpretAfterLogin = true
             session.startInterpretation()
-        }
-    }
-}
-
-/// R1-a bridge: vision / navigator / copilot still run on the legacy view
-/// model; this wrapper observes it so the copilot strip swap re-renders.
-private struct LegacyVisionRootView: View {
-    @ObservedObject var viewModel: ReviewViewModel
-
-    var body: some View {
-        if viewModel.navigatorActiveTask != nil {
-            // Guided navigation: the whole panel becomes the corner strip;
-            // the screen being navigated is the real UI.
-            CopilotStripView(viewModel: viewModel)
-        } else {
-            VisionPanelView(viewModel: viewModel)
-                .frame(minWidth: 900, minHeight: 600)
         }
     }
 }

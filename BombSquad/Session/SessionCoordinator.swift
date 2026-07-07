@@ -27,8 +27,14 @@ protocol SessionCoordinatorHost: AnyObject {
     func applyVisionLayout()
     /// Restore the narrow single-column text layout.
     func applyTextLayout()
+    /// Shrink the panel to the bottom-right copilot strip.
+    func applyCopilotLayout()
     /// Re-front the (hidden) panel after a capture flow ends.
     func restorePanelAfterCapture()
+    /// Panel out of the way while an approved synthetic click runs.
+    func hidePanelForAction()
+    /// Bring the panel back after a failed action (orderFrontRegardless path).
+    func showPanelAfterAction()
 }
 
 /// Owns `AppMode` — the single source of truth for what the app is doing —
@@ -82,10 +88,22 @@ final class SessionCoordinator: ObservableObject {
             }
         case .transform(let session):
             session.startInterpretation()
-        case .legacyVision:
+        case .navigator, .copilot:
             close()
         case .capturing:
             break
+        }
+    }
+
+    /// Whether losing app-active should close the panel. Guided navigation
+    /// and the capture overlay invert the modal rule: focus living in the
+    /// target app IS the normal state there.
+    var shouldCloseOnResignActive: Bool {
+        switch mode {
+        case .copilot, .capturing, .idle:
+            return false
+        case .compose, .transform, .navigator:
+            return true
         }
     }
 
@@ -125,8 +143,13 @@ final class SessionCoordinator: ObservableObject {
             session.willEnd()
         case .capturing(resume: let session):
             session.willEnd()
-        case .legacyVision(let viewModel):
-            viewModel.panelWillClose()
+        case .navigator(let session):
+            session.willEnd()
+        case .copilot(let session):
+            // The copilot wraps the navigator whose conversation it guides:
+            // closing the panel ends both.
+            session.willEnd()
+            session.navigator.willEnd()
         }
         mode = .idle
     }
@@ -195,7 +218,7 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
-    // MARK: - Vision capture (compose → capturing → legacyVision)
+    // MARK: - Vision capture (compose → capturing → navigator)
 
     /// Empty-draft double-tap or the camera button: suspend compose and run
     /// the selection overlay.
@@ -221,9 +244,9 @@ final class SessionCoordinator: ObservableObject {
         switch outcome {
         case .attachment(let attachment):
             session.willEnd()
-            let viewModel = makeLegacyVisionViewModel(contextExcluded: session.isContextExcluded)
-            mode = .legacyVision(viewModel)
-            viewModel.addScreenshotAttachment(attachment)
+            let navigator = makeNavigatorSession(contextExcluded: session.isContextExcluded)
+            mode = .navigator(navigator)
+            navigator.begin(with: attachment)
             host?.applyVisionLayout()
             host?.restorePanelAfterCapture()
         case .cancelled:
@@ -236,43 +259,18 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
-    /// R1-a bridge: vision/navigator/copilot still run on the legacy view
-    /// model. It shares the panel-lifetime deployer (so "承認して送信" pastes
-    /// into the summon-time field) and the L1 capture.
-    private func makeLegacyVisionViewModel(contextExcluded: Bool) -> ReviewViewModel {
+    /// The navigator shares the panel-lifetime deployer (so "承認して送信"
+    /// pastes into the summon-time field) and the L1 capture.
+    private func makeNavigatorSession(contextExcluded: Bool) -> NavigatorSession {
         let deployer = panelContext?.deployer ?? ClipboardDeployer()
-        let viewModel = ReviewViewModel(deployer: deployer, mode: .compose)
-        if let contextTask = panelContext?.contextTask {
-            viewModel.attachContextCapture(contextTask)
-        }
-        if contextExcluded {
-            viewModel.excludeContext()
-        }
-        viewModel.onExitVisionToCompose = { [weak self] carriedDraft in
-            self?.returnToComposeFromVision(carriedDraft: carriedDraft)
-        }
-        return viewModel
-    }
-
-    /// Vision session ended in place (esc from the navigator input, or
-    /// "編集する" carrying a draft): back to a compose session in the same panel.
-    private func returnToComposeFromVision(carriedDraft: String?) {
-        guard case .legacyVision(let viewModel) = mode else { return }
-        let deployer = panelContext?.deployer ?? ClipboardDeployer()
-        let session = ComposeSession(deployer: deployer)
-        session.restorePersistedDraftIfNeeded()
-        if let carriedDraft {
-            session.draft = carriedDraft
-        }
+        let session = NavigatorSession(deployer: deployer, host: self)
         if let contextTask = panelContext?.contextTask {
             session.attachContextCapture(contextTask)
         }
-        if viewModel.isContextExcluded {
+        if contextExcluded {
             session.excludeContext()
         }
-        session.focusedField = .draft
-        mode = .compose(session)
-        host?.applyTextLayout()
+        return session
     }
 
     // MARK: - Dictation (hold-to-talk)
@@ -341,10 +339,75 @@ final class SessionCoordinator: ObservableObject {
         switch mode {
         case .compose(let session):
             return session
-        case .legacyVision(let viewModel):
-            return viewModel.navigatorSessionActive ? viewModel : nil
+        case .navigator(let session):
+            return session.navigatorSessionActive ? session : nil
         default:
             return nil
         }
+    }
+}
+
+// MARK: - NavigatorSessionHost (navigator/copilot mode transitions)
+
+extension SessionCoordinator: NavigatorSessionHost {
+    /// esc from the question input, or "編集する" carrying a draft: swap the
+    /// vision session for a compose session in the same panel.
+    func navigatorRequestsCompose(carriedDraft: String?) {
+        let endedNavigator: NavigatorSession?
+        switch mode {
+        case .navigator(let session):
+            endedNavigator = session
+        case .copilot(let session):
+            session.willEnd()
+            endedNavigator = session.navigator
+        default:
+            return
+        }
+        endedNavigator?.willEnd()
+
+        let deployer = panelContext?.deployer ?? ClipboardDeployer()
+        let session = ComposeSession(deployer: deployer)
+        session.restorePersistedDraftIfNeeded()
+        if let carriedDraft {
+            session.draft = carriedDraft
+        }
+        if let contextTask = panelContext?.contextTask {
+            session.attachContextCapture(contextTask)
+        }
+        if endedNavigator?.isContextExcluded == true {
+            session.excludeContext()
+        }
+        session.focusedField = .draft
+        mode = .compose(session)
+        host?.applyTextLayout()
+    }
+
+    func navigatorRequestsClose() {
+        close()
+    }
+
+    /// Copilot on: wrap the navigator (its conversation continues) and shrink
+    /// the panel to the corner strip. Copilot off (task finished/abandoned):
+    /// unwrap back to the Q&A panel so the final answer is readable.
+    func navigatorCopilotStateChanged(active: Bool) {
+        if active {
+            guard case .navigator(let navigator) = mode else { return }
+            mode = .copilot(CopilotSession(navigator: navigator))
+            host?.applyCopilotLayout()
+        } else {
+            guard case .copilot(let copilot) = mode else { return }
+            copilot.willEnd()
+            mode = .navigator(copilot.navigator)
+            host?.applyVisionLayout()
+            host?.restorePanelAfterCapture()
+        }
+    }
+
+    func navigatorRequestsPanelHiddenForAction() {
+        host?.hidePanelForAction()
+    }
+
+    func navigatorRequestsPanelRestoredAfterAction() {
+        host?.showPanelAfterAction()
     }
 }

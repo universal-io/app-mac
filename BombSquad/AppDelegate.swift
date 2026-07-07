@@ -14,24 +14,8 @@ extension Notification.Name {
     /// overlay opens with the full screen pre-selected (Enter confirms,
     /// dragging picks a region instead).
     static let captureScreenshot = Notification.Name("BombSquad.captureScreenshot")
-    /// Hide the panel while an approved action executes: a synthetic click
-    /// must land on the TARGET app, not on our own floating panel covering
-    /// it. Sessions are single-action for now (the multi-step loop with an
-    /// automatic progress re-capture is parked: restoring the panel after a
-    /// synthetic click proved unreliable); the failure path restores it.
-    static let hidePanelForAction = Notification.Name("BombSquad.hidePanelForAction")
-    static let showPanelAfterAction = Notification.Name("BombSquad.showPanelAfterAction")
-    /// Posted by the legacy view model when a vision session ends and the panel
-    /// should return to the narrow single-column layout.
-    static let visionSessionEnded = Notification.Name("BombSquad.visionSessionEnded")
     /// Posted from the panel when the user wants to grant screen recording.
     static let openScreenCaptureSettings = Notification.Name("BombSquad.openScreenCaptureSettings")
-    /// Posted by the legacy view model when guided navigation (copilot) starts
-    /// or ends (`userInfo["active"]: Bool`). While active the panel drops its
-    /// modal behavior: it shrinks to a corner strip, survives outside
-    /// clicks, and never steals focus from the app being navigated
-    /// (docs/navigator-copilot-plan.md 正のユーザー体験).
-    static let copilotModeChanged = Notification.Name("BombSquad.copilotModeChanged")
 }
 
 /// App lifecycle and window mechanics only (R1-a; redesign plan §7). Gesture
@@ -62,9 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let screenshotSelection = ScreenshotSelectionOverlay()
     /// Guards against overlapping capture flows.
     private var isCapturingScreenshot = false
-    /// True while guided navigation runs: suspends the panel's modal
-    /// close-on-resign behavior (clicking the target app IS the interaction).
-    private var isCopilotActive = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminateOtherRunningCopies()
@@ -131,20 +112,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleCaptureScreenshot), name: .captureScreenshot, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleHidePanelForAction),
-            name: .hidePanelForAction, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleShowPanelAfterAction),
-            name: .showPanelAfterAction, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleVisionSessionEnded), name: .visionSessionEnded, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleCopilotModeChanged), name: .copilotModeChanged, object: nil
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleOpenScreenCaptureSettings),
@@ -218,68 +185,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func handleResignActive() {
         guard !isCapturingScreenshot else { return }
 
-        // Guided navigation inverts the modal rule: clicking the target app
-        // is the interaction, so losing active is the NORMAL state, never a
-        // close signal (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
-        guard !isCopilotActive else { return }
-
         // Login can legitimately move focus to the browser or Mail. Keep the
         // auth gate alive so the user has a visible return point after callback.
         guard authClient.currentSession() != nil else { return }
 
-        // The staging panel is a transient "capture" mode; touching another app's
-        // input releases it. Closing on resign makes it behave modally.
+        // The staging panel is a transient "capture" mode; touching another
+        // app's input releases it (modal). Whether the current mode is modal
+        // is the coordinator's call — copilot and the capture overlay invert
+        // the rule (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
         guard panel != nil else { return }
-        MainActor.assumeIsolated { coordinator.close() }
-    }
-
-    /// Copilot on: shrink to a bottom-right strip that never covers the
-    /// navigated screen. Copilot off (task finished or abandoned while the
-    /// panel is open): restore the wide vision layout and bring the panel
-    /// forward so the final answer is readable.
-    @objc private func handleCopilotModeChanged(_ notification: Notification) {
-        let active = (notification.userInfo?["active"] as? Bool) ?? false
-        isCopilotActive = active
-        guard let panel else { return }
-        if active {
-            panel.setContentSize(Self.copilotPanelSize)
-            positionBottomTrailing(panel)
-        } else {
-            panel.setContentSize(Self.visionPanelSize)
-            centerOnActiveScreen(panel)
-            NSApp.activate(ignoringOtherApps: true)
-            panel.makeKeyAndOrderFront(nil)
+        MainActor.assumeIsolated {
+            guard coordinator.shouldCloseOnResignActive else { return }
+            coordinator.close()
         }
-    }
-
-    /// The approved action is about to run: get the panel out of the way so
-    /// a synthetic click hits the target app (and the user sees it happen).
-    @objc private func handleHidePanelForAction(_ notification: Notification) {
-        panel?.orderOut(nil)
-    }
-
-    /// The action failed (or no capture follows): restore the panel.
-    ///
-    /// After a synthetic click the TARGET app is frontmost, and macOS 14's
-    /// cooperative activation can silently refuse `NSApp.activate` from a
-    /// background app — after which makeKeyAndOrderFront does nothing and
-    /// the panel looks "gone". `orderFrontRegardless` bypasses activation
-    /// and puts the floating panel back on screen unconditionally.
-    @objc private func handleShowPanelAfterAction(_ notification: Notification) {
-        guard let panel else {
-            NSLog("[Action] restore skipped: panel is nil")
-            return
-        }
-        NSLog("[Action] restoring panel (visible=%d)", panel.isVisible ? 1 : 0)
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        panel.orderFrontRegardless()
-    }
-
-    /// Legacy path only (bridge exits go through the coordinator, which calls
-    /// `applyTextLayout()` directly).
-    @objc private func handleVisionSessionEnded() {
-        applyTextLayout()
     }
 
     @objc private func handleOpenScreenCaptureSettings() {
@@ -396,7 +314,6 @@ extension AppDelegate: SessionCoordinatorHost {
     }
 
     func dismissPanel() {
-        isCopilotActive = false
         panel?.orderOut(nil)
         panel = nil
     }
@@ -459,10 +376,41 @@ extension AppDelegate: SessionCoordinatorHost {
         centerOnActiveScreen(panel)
     }
 
+    /// Copilot: a bottom-right strip that never covers the navigated screen.
+    func applyCopilotLayout() {
+        guard let panel else { return }
+        panel.setContentSize(Self.copilotPanelSize)
+        positionBottomTrailing(panel)
+    }
+
     func restorePanelAfterCapture() {
         guard let panel else { return }
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    /// The approved action is about to run: get the panel out of the way so
+    /// a synthetic click hits the target app (and the user sees it happen).
+    func hidePanelForAction() {
+        panel?.orderOut(nil)
+    }
+
+    /// The action failed (or no capture follows): restore the panel.
+    ///
+    /// After a synthetic click the TARGET app is frontmost, and macOS 14's
+    /// cooperative activation can silently refuse `NSApp.activate` from a
+    /// background app — after which makeKeyAndOrderFront does nothing and
+    /// the panel looks "gone". `orderFrontRegardless` bypasses activation
+    /// and puts the floating panel back on screen unconditionally.
+    func showPanelAfterAction() {
+        guard let panel else {
+            NSLog("[Action] restore skipped: panel is nil")
+            return
+        }
+        NSLog("[Action] restoring panel (visible=%d)", panel.isVisible ? 1 : 0)
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
     }
 
     /// Run the selection overlay, then capture what it chose. When
