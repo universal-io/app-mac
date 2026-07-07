@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// Commands a panel view can send back up the spine (no NotificationCenter:
+/// the wiring is explicit closures built by RootPanelView from the
+/// coordinator).
+struct PanelActions {
+    var close: () -> Void
+    var requestCapture: () -> Void
+}
+
 /// Thin router over the coordinator's mode (redesign plan §6): each mode has
 /// its own content view; auth gates everything. No mode logic lives here —
 /// the switch is the whole job.
@@ -8,17 +16,28 @@ struct RootPanelView: View {
     // Shared app-wide auth state, not a per-panel instance — see AuthViewModel.shared.
     @ObservedObject var authViewModel: AuthViewModel
     let config: BombSquadConfig.Snapshot
+    /// Opens the management window at the account section (login CTA).
+    let onOpenManagement: () -> Void
     @State private var didAutoInterpretAfterLogin = false
 
     @MainActor
     init(
         coordinator: SessionCoordinator,
         authViewModel: AuthViewModel = .shared,
-        config: BombSquadConfig.Snapshot = BombSquadConfig.snapshot()
+        config: BombSquadConfig.Snapshot = BombSquadConfig.snapshot(),
+        onOpenManagement: @escaping () -> Void
     ) {
         self.coordinator = coordinator
         self.authViewModel = authViewModel
         self.config = config
+        self.onOpenManagement = onOpenManagement
+    }
+
+    private var panelActions: PanelActions {
+        PanelActions(
+            close: { coordinator.close() },
+            requestCapture: { coordinator.requestVisionCapture() }
+        )
     }
 
     var body: some View {
@@ -29,7 +48,7 @@ struct RootPanelView: View {
                 // an identity change here would reset the editor's first
                 // responder.
                 if let composeSession = coordinator.mode.activeComposeSession {
-                    ComposeContentView(session: composeSession)
+                    ComposeContentView(session: composeSession, actions: panelActions)
                 } else {
                     switch coordinator.mode {
                     case .transform(let session):
@@ -38,13 +57,17 @@ struct RootPanelView: View {
                         VisionPanelView(session: session)
                             .frame(minWidth: 900, minHeight: 600)
                     case .copilot(let session):
-                        CopilotStripView(session: session)
+                        CopilotStripView(session: session, onExit: { coordinator.close() })
                     default:
                         Color.clear
                     }
                 }
             } else {
-                LoginRequiredView(viewModel: authViewModel, config: config)
+                LoginRequiredView(
+                    viewModel: authViewModel,
+                    config: config,
+                    onOpenManagement: onOpenManagement
+                )
             }
         }
         .panelChrome()
@@ -65,6 +88,7 @@ struct RootPanelView: View {
 /// below. Three states only: empty → draft → result (design principle 3.5).
 struct ComposeContentView: View {
     @ObservedObject var session: ComposeSession
+    let actions: PanelActions
 
     /// True once the bottom area holds live content (spinner or result), at
     /// which point the input yields most of the vertical space to it.
@@ -74,7 +98,7 @@ struct ComposeContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            StagingEditorView(session: session, focusedField: $session.focusedField)
+            StagingEditorView(session: session, focusedField: $session.focusedField, actions: actions)
                 .frame(maxHeight: isResultActive ? 190 : .infinity)
             ReviewPanelView(session: session, focusedField: $session.focusedField)
                 .frame(maxHeight: .infinity)

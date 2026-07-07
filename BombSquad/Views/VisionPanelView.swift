@@ -450,11 +450,14 @@ struct CopilotStripView: View {
     /// The wrapped conversation: step cursor, streaming text, and turns all
     /// live there, so the strip observes it directly.
     @ObservedObject var navigator: NavigatorSession
+    /// The strip's exit button ends the whole session (F6 in golden paths).
+    let onExit: () -> Void
 
     @MainActor
-    init(session: CopilotSession) {
+    init(session: CopilotSession, onExit: @escaping () -> Void) {
         self.session = session
         self.navigator = session.navigator
+        self.onExit = onExit
     }
 
     var body: some View {
@@ -472,7 +475,7 @@ struct CopilotStripView: View {
                 }
                 Spacer()
                 Button {
-                    NotificationCenter.default.post(name: .closePanel, object: nil)
+                    onExit()
                 } label: {
                     Image(systemName: "xmark")
                 }

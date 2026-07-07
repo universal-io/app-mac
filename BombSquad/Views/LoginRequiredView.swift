@@ -6,6 +6,8 @@ import SwiftUI
 struct LoginRequiredView: View {
     @ObservedObject var viewModel: AuthViewModel
     let config: BombSquadConfig.Snapshot
+    /// Opens the management window at the account section.
+    let onOpenManagement: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
@@ -21,8 +23,7 @@ struct LoginRequiredView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Button {
-                ManagementNavigator.shared.section = .account
-                NotificationCenter.default.post(name: .showManagement, object: nil)
+                onOpenManagement()
             } label: {
                 Label("ログイン / 新規登録", systemImage: "person.crop.circle")
             }

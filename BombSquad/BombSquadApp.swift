@@ -29,7 +29,7 @@ struct BombSquadApp: App {
             Divider()
 
             Button("入力パネルを開く（⌘J）") {
-                NotificationCenter.default.post(name: .showPanel, object: nil)
+                appDelegate.togglePanelFromMenu()
             }
             Divider()
 
@@ -50,10 +50,8 @@ struct BombSquadApp: App {
         }
     }
 
-    /// Point the (single) management window at a section, then ask the app
-    /// delegate to bring it to front.
+    /// Point the (single) management window at a section and bring it front.
     private func openManagement(_ section: ManagementSection) {
-        ManagementNavigator.shared.section = section
-        NotificationCenter.default.post(name: .showManagement, object: nil)
+        appDelegate.openManagementWindow(section: section)
     }
 }

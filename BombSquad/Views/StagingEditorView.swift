@@ -6,6 +6,7 @@ struct StagingEditorView: View {
     @ObservedObject var session: ComposeSession
     /// Shared focus across both editors (drives the blue highlight).
     @Binding var focusedField: FocusField?
+    let actions: PanelActions
     /// Drives the help popover anchored to the (?) button.
     @State private var showHelp = false
 
@@ -44,7 +45,7 @@ struct StagingEditorView: View {
                 focusedField: $focusedField,
                 field: .draft,
                 onSend: { session.deployDraft() },
-                onEscape: { NotificationCenter.default.post(name: .closePanel, object: nil) }
+                onEscape: { actions.close() }
             )
                 .padding(8)
                 .background(EditorFocusBackground(isFocused: isFocused))
@@ -79,7 +80,7 @@ struct StagingEditorView: View {
                 }
 
                 Button {
-                    NotificationCenter.default.post(name: .captureScreenshot, object: nil)
+                    actions.requestCapture()
                 } label: {
                     Image(systemName: "camera.viewfinder")
                 }
@@ -200,7 +201,7 @@ private struct ScreenCapturePermissionBanner: View {
                 .lineLimit(2)
             Spacer(minLength: 8)
             Button {
-                NotificationCenter.default.post(name: .openScreenCaptureSettings, object: nil)
+                ScreenCapturePermission.openSettings()
             } label: {
                 Label("設定を開く", systemImage: "gearshape")
             }

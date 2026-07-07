@@ -9,32 +9,34 @@ enum ScreenCaptureFlowOutcome {
     case failed(String)
 }
 
-/// Window-side effects the coordinator needs. AppDelegate implements this in
-/// R1-a; R2 replaces it with PanelController + PanelSpec (redesign plan §4-d).
-/// Every method is called on the main thread.
+/// Window-side effects the coordinator needs, implemented by
+/// `PanelController`. Shape and placement are NOT here — they follow the
+/// mode automatically via `PanelSpec` (redesign plan §4-d); these calls only
+/// govern visibility.
+@MainActor
 protocol SessionCoordinatorHost: AnyObject {
     var isPanelVisible: Bool { get }
     /// Create (if needed) and front the floating panel hosting RootPanelView.
     func presentPanel()
     /// Order out and release the panel window.
     func dismissPanel()
+    /// Re-front the (hidden) panel after a capture flow or a copilot exit.
+    func restorePanel()
+    /// Panel out of the way while an approved synthetic click runs.
+    func hidePanelForAction()
+    /// Bring the panel back after a failed action (orderFrontRegardless path).
+    func showPanelAfterAction()
+}
+
+/// The screenshot capture flow (selection overlay + ScreenCaptureKit),
+/// implemented by the app delegate.
+@MainActor
+protocol ScreenCaptureFlowRunning: AnyObject {
     /// Screen-recording permission check (may show the system prompt).
     func canCaptureScreen() -> Bool
     /// Hide the panel, run the selection overlay + capture, then call
     /// `captureFinished(_:)` back with the outcome.
     func beginScreenshotCapture()
-    /// Widen the panel to the two-pane vision layout.
-    func applyVisionLayout()
-    /// Restore the narrow single-column text layout.
-    func applyTextLayout()
-    /// Shrink the panel to the bottom-right copilot strip.
-    func applyCopilotLayout()
-    /// Re-front the (hidden) panel after a capture flow ends.
-    func restorePanelAfterCapture()
-    /// Panel out of the way while an approved synthetic click runs.
-    func hidePanelForAction()
-    /// Bring the panel back after a failed action (orderFrontRegardless path).
-    func showPanelAfterAction()
 }
 
 /// Owns `AppMode` — the single source of truth for what the app is doing —
@@ -45,7 +47,11 @@ protocol SessionCoordinatorHost: AnyObject {
 final class SessionCoordinator: ObservableObject {
     @Published private(set) var mode: AppMode = .idle
 
-    private weak var host: SessionCoordinatorHost?
+    /// Window mechanics (PanelController) and the capture flow (app
+    /// delegate), wired after construction — the three objects form the
+    /// app's spine and are created together at launch.
+    weak var host: SessionCoordinatorHost?
+    weak var captureRunner: ScreenCaptureFlowRunning?
     private let authClient = BombSquadAuthClient.shared
     private let recorder = AudioRecorder()
     /// Resolved per dictation because gateway availability follows sign-in state.
@@ -61,10 +67,6 @@ final class SessionCoordinator: ObservableObject {
         let contextTask: Task<SituationalContext?, Never>
     }
     private var panelContext: PanelContext?
-
-    init(host: SessionCoordinatorHost) {
-        self.host = host
-    }
 
     func warmUpRecorder() {
         recorder.warmUp()
@@ -95,16 +97,10 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
-    /// Whether losing app-active should close the panel. Guided navigation
-    /// and the capture overlay invert the modal rule: focus living in the
-    /// target app IS the normal state there.
+    /// Whether losing app-active should close the panel — the mode's
+    /// PanelSpec owns the modality contract.
     var shouldCloseOnResignActive: Bool {
-        switch mode {
-        case .copilot, .capturing, .idle:
-            return false
-        case .compose, .transform, .navigator:
-            return true
-        }
+        mode.panelSpec?.isModal ?? false
     }
 
     /// Right-Shift single tap: draft ↔ revision focus (compose only).
@@ -224,7 +220,7 @@ final class SessionCoordinator: ObservableObject {
     /// the selection overlay.
     func requestVisionCapture() {
         guard case .compose(let session) = mode else { return }
-        guard host?.canCaptureScreen() == true else {
+        guard captureRunner?.canCaptureScreen() == true else {
             session.needsScreenCapturePermission = true
             session.errorMessage = "スクリーンショットには画面収録の許可が必要です。"
             return
@@ -233,7 +229,7 @@ final class SessionCoordinator: ObservableObject {
         session.errorMessage = nil
         session.isCapturingScreenshot = true
         mode = .capturing(resume: session)
-        host?.beginScreenshotCapture()
+        captureRunner?.beginScreenshotCapture()
     }
 
     /// Capture flow ended. When the mode has already moved on (double-tap
@@ -247,15 +243,14 @@ final class SessionCoordinator: ObservableObject {
             let navigator = makeNavigatorSession(contextExcluded: session.isContextExcluded)
             mode = .navigator(navigator)
             navigator.begin(with: attachment)
-            host?.applyVisionLayout()
-            host?.restorePanelAfterCapture()
+            host?.restorePanel()
         case .cancelled:
             mode = .compose(session)
-            host?.restorePanelAfterCapture()
+            host?.restorePanel()
         case .failed(let message):
             session.errorMessage = message
             mode = .compose(session)
-            host?.restorePanelAfterCapture()
+            host?.restorePanel()
         }
     }
 
@@ -379,27 +374,25 @@ extension SessionCoordinator: NavigatorSessionHost {
         }
         session.focusedField = .draft
         mode = .compose(session)
-        host?.applyTextLayout()
     }
 
     func navigatorRequestsClose() {
         close()
     }
 
-    /// Copilot on: wrap the navigator (its conversation continues) and shrink
-    /// the panel to the corner strip. Copilot off (task finished/abandoned):
-    /// unwrap back to the Q&A panel so the final answer is readable.
+    /// Copilot on: wrap the navigator (its conversation continues); the mode
+    /// change itself shrinks the panel to the corner strip (PanelSpec).
+    /// Copilot off (task finished/abandoned): unwrap back to the Q&A panel
+    /// and re-front it so the final answer is readable.
     func navigatorCopilotStateChanged(active: Bool) {
         if active {
             guard case .navigator(let navigator) = mode else { return }
             mode = .copilot(CopilotSession(navigator: navigator))
-            host?.applyCopilotLayout()
         } else {
             guard case .copilot(let copilot) = mode else { return }
             copilot.willEnd()
             mode = .navigator(copilot.navigator)
-            host?.applyVisionLayout()
-            host?.restorePanelAfterCapture()
+            host?.restorePanel()
         }
     }
 

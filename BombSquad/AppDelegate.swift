@@ -1,36 +1,12 @@
 import AppKit
 import SwiftUI
 
-extension Notification.Name {
-    /// Posted by the menu-bar item to summon the panel.
-    static let showPanel = Notification.Name("BombSquad.showPanel")
-    /// Posted from the panel (Esc) to cancel/close it.
-    static let closePanel = Notification.Name("BombSquad.closePanel")
-    /// Posted by the menu bar (or the panel's login CTA) to open the on-demand
-    /// management window. The target section is set on `ManagementNavigator.shared`
-    /// before posting.
-    static let showManagement = Notification.Name("BombSquad.showManagement")
-    /// Posted from the panel to start a screenshot capture: the selection
-    /// overlay opens with the full screen pre-selected (Enter confirms,
-    /// dragging picks a region instead).
-    static let captureScreenshot = Notification.Name("BombSquad.captureScreenshot")
-    /// Posted from the panel when the user wants to grant screen recording.
-    static let openScreenCaptureSettings = Notification.Name("BombSquad.openScreenCaptureSettings")
-}
-
-/// App lifecycle and window mechanics only (R1-a; redesign plan §7). Gesture
-/// semantics, sessions, and mode transitions live in `SessionCoordinator` —
-/// this class hosts its window-side effects (`SessionCoordinatorHost`) and
-/// still owns the legacy capture overlay plumbing until R1-b.
+/// App lifecycle and the pieces that are genuinely app-global: launch
+/// housekeeping, permissions, the management/permissions windows, gesture
+/// wiring, and the screenshot capture flow (`ScreenCaptureFlowRunning`).
+/// Modes live in `SessionCoordinator`, the panel window in `PanelController`
+/// (redesign plan §7 R2) — the three objects form the app's spine.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Text mode is a single Spotlight-style column; vision needs two panes.
-    private static let textPanelSize = NSSize(width: 680, height: 660)
-    private static let visionPanelSize = NSSize(width: 960, height: 640)
-    /// Guided navigation shrinks the panel to a corner strip so the screen
-    /// being navigated stays visible and clickable.
-    private static let copilotPanelSize = NSSize(width: 460, height: 240)
-
-    private var panel: NSPanel?
     /// The single on-demand management window (account/settings/history/pricing).
     /// Created lazily and reused; never always-on.
     private var managementWindow: NSWindow?
@@ -39,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // applicationDidFinishLaunching), not in a nonisolated property default.
     private lazy var permissions = PermissionsCoordinator()
     private var coordinator: SessionCoordinator!
+    private var panelController: PanelController!
     private let authClient = BombSquadAuthClient.shared
     private let gesture = ShiftGestureMonitor()
     private let screenshotCapture = ScreenshotCaptureService()
@@ -62,7 +39,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SoundFeedback.prepare()
 
         MainActor.assumeIsolated {
-            coordinator = SessionCoordinator(host: self)
+            coordinator = SessionCoordinator()
+            panelController = PanelController()
+            panelController.bind(to: coordinator)
+            // Presenting the panel must never drag the management window to
+            // the front (NSApp.activate raises every window): hide it first.
+            panelController.willPresentPanel = { [weak self] in
+                self?.hideManagementWindowForPanel()
+            }
+            panelController.openManagement = { [weak self] in
+                self?.openManagementWindow(section: .account)
+            }
+            coordinator.host = panelController
+            coordinator.captureRunner = self
         }
 
         // Permissions: one focused setup window that requests Accessibility,
@@ -101,23 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         gesture.start()
 
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleShowPanel), name: .showPanel, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleClosePanel), name: .closePanel, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleShowManagement), name: .showManagement, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleCaptureScreenshot), name: .captureScreenshot, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleOpenScreenCaptureSettings),
-            name: .openScreenCaptureSettings, object: nil
-        )
-        // Modal-like: if focus leaves to another app/form, exit the mode (close).
+        // The one system notification we still observe; every app-internal
+        // command travels as a direct call or closure since R2.
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleResignActive),
             name: NSApplication.didResignActiveNotification, object: nil
@@ -151,68 +125,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Gestures that involve the capture overlay (R1-a: owned here)
+    // MARK: - Menu-bar entry points
 
-    /// Double-tap while the capture overlay is up abandons the vision session
-    /// entirely: back to the pre-panel standby state. The pending capture task
-    /// sees the mode has moved on and stays quiet. Everything else goes to the
-    /// coordinator's transition table.
-    private func handleDoubleTapGesture() {
-        MainActor.assumeIsolated {
-            if screenshotSelection.isPresenting {
-                screenshotSelection.cancel()
-                coordinator.close()
-                return
-            }
-            coordinator.handleDoubleTap()
-        }
-    }
-
-    // MARK: - Notification handlers (forwarders; NotificationCenter dies in R2)
-
-    @objc private func handleShowPanel() {
+    func togglePanelFromMenu() {
         MainActor.assumeIsolated { coordinator.togglePanel() }
     }
 
-    @objc private func handleClosePanel() {
-        MainActor.assumeIsolated { coordinator.close() }
-    }
-
-    @objc private func handleCaptureScreenshot(_ notification: Notification) {
-        MainActor.assumeIsolated { coordinator.requestVisionCapture() }
-    }
-
-    @objc private func handleResignActive() {
-        guard !isCapturingScreenshot else { return }
-
-        // Login can legitimately move focus to the browser or Mail. Keep the
-        // auth gate alive so the user has a visible return point after callback.
-        guard authClient.currentSession() != nil else { return }
-
-        // The staging panel is a transient "capture" mode; touching another
-        // app's input releases it (modal). Whether the current mode is modal
-        // is the coordinator's call — copilot and the capture overlay invert
-        // the rule (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
-        guard panel != nil else { return }
-        MainActor.assumeIsolated {
-            guard coordinator.shouldCloseOnResignActive else { return }
-            coordinator.close()
-        }
-    }
-
-    @objc private func handleOpenScreenCaptureSettings() {
-        ScreenCapturePermission.openSettings()
-    }
-
-    /// Open (or bring to front) the single management window. The desired section
-    /// has already been set on `ManagementNavigator.shared` by the caller.
+    /// Open (or bring to front) the single management window at a section.
     ///
-    /// The capture panel is an always-on-top floating panel, so any normal window
-    /// would open behind it. The panel is transient anyway, so we close it and let
-    /// the management window take over (e.g. login → the account/login screen).
-    @objc private func handleShowManagement() {
-        if panel != nil {
-            MainActor.assumeIsolated { coordinator.close() }
+    /// The capture panel is an always-on-top floating panel, so any normal
+    /// window would open behind it. The panel is transient anyway, so we
+    /// close it and let the management window take over (e.g. login → the
+    /// account/login screen).
+    func openManagementWindow(section: ManagementSection) {
+        MainActor.assumeIsolated {
+            ManagementNavigator.shared.section = section
+            if panelController.isPanelVisible { coordinator.close() }
         }
 
         if let managementWindow {
@@ -238,6 +166,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// Summoning the panel hides a visible management window instead of
+    /// dragging it forward with the activation (README: "入力補助のたびに管理
+    /// ウィンドウへ勝手にフォーカスを移さない"; the 2026-07-04 bug). The menu
+    /// bar reopens it in one click.
+    private func hideManagementWindowForPanel() {
+        guard let managementWindow, managementWindow.isVisible else { return }
+        managementWindow.orderOut(nil)
+    }
+
+    // MARK: - Gestures that involve the capture overlay
+
+    /// Double-tap while the capture overlay is up abandons the vision session
+    /// entirely: back to the pre-panel standby state. The pending capture task
+    /// sees the mode has moved on and stays quiet. Everything else goes to the
+    /// coordinator's transition table.
+    private func handleDoubleTapGesture() {
+        MainActor.assumeIsolated {
+            if screenshotSelection.isPresenting {
+                screenshotSelection.cancel()
+                coordinator.close()
+                return
+            }
+            coordinator.handleDoubleTap()
+        }
+    }
+
+    @objc private func handleResignActive() {
+        guard !isCapturingScreenshot else { return }
+
+        // Login can legitimately move focus to the browser or Mail. Keep the
+        // auth gate alive so the user has a visible return point after callback.
+        guard authClient.currentSession() != nil else { return }
+
+        // The staging panel is a transient "capture" mode; touching another
+        // app's input releases it (modal). Whether the current mode is modal
+        // is the PanelSpec's contract — copilot and the capture overlay
+        // invert the rule (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
+        MainActor.assumeIsolated {
+            guard panelController.isPanelVisible else { return }
+            guard coordinator.shouldCloseOnResignActive else { return }
+            coordinator.close()
+        }
+    }
+
+    // MARK: - Permissions window
+
     /// First-run permission setup. A real key window (unlike the menu-bar
     /// accessory alone) keeps the system permission prompts on the active
     /// screen instead of scattering them across displays.
@@ -262,63 +236,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         // Put the window on the display the user is actually looking at, so the
         // system permission dialogs land on the same screen.
-        centerOnActiveScreen(window)
+        PanelController.centerOnActiveScreen(window)
 
         permissionsWindow = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
-
-    // MARK: - Screen geometry helpers
-
-    /// Bottom-right corner of the screen the cursor is on, with a margin.
-    private func positionBottomTrailing(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let margin: CGFloat = 24
-        let size = window.frame.size
-        window.setFrameOrigin(NSPoint(
-            x: visible.maxX - size.width - margin,
-            y: visible.minY + margin
-        ))
-    }
-
-    /// Center the panel on whichever screen the cursor is on, so it never spills
-    /// off-screen (e.g. Gmail's right-side compose box).
-    private func centerOnActiveScreen(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let size = window.frame.size
-        let origin = NSPoint(x: visible.midX - size.width / 2,
-                             y: visible.midY - size.height / 2)
-        window.setFrameOrigin(origin)
-    }
 }
 
-// MARK: - SessionCoordinatorHost (window-side effects; all on the main thread)
+// MARK: - ScreenCaptureFlowRunning (selection overlay + ScreenCaptureKit)
 
-extension AppDelegate: SessionCoordinatorHost {
-    var isPanelVisible: Bool {
-        panel?.isVisible ?? false
-    }
-
-    func presentPanel() {
-        if panel == nil {
-            panel = makePanel()
-        }
-        guard let panel else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-    }
-
-    func dismissPanel() {
-        panel?.orderOut(nil)
-        panel = nil
-    }
-
-    func canCaptureScreen() -> Bool {
+extension AppDelegate: ScreenCaptureFlowRunning {
+    @MainActor func canCaptureScreen() -> Bool {
         ScreenCapturePermission.isGranted || ScreenCapturePermission.request()
     }
 
@@ -326,13 +255,13 @@ extension AppDelegate: SessionCoordinatorHost {
     /// pre-selected — Enter keeps it, a drag narrows it to a region, Esc
     /// returns to the panel, and a right-Shift double-tap (handled in
     /// `handleDoubleTapGesture`) abandons the session.
-    func beginScreenshotCapture() {
-        guard !isCapturingScreenshot, let panel else {
-            MainActor.assumeIsolated { coordinator.captureFinished(.cancelled) }
+    @MainActor func beginScreenshotCapture() {
+        guard !isCapturingScreenshot, panelController.isPanelVisible else {
+            coordinator.captureFinished(.cancelled)
             return
         }
         isCapturingScreenshot = true
-        panel.orderOut(nil)
+        panelController.hidePanelForCapture()
 
         // Resolve "the screen the user is looking at" on the main thread,
         // before hopping into the capture task.
@@ -364,55 +293,6 @@ extension AppDelegate: SessionCoordinatorHost {
         }
     }
 
-    func applyVisionLayout() {
-        guard let panel, panel.frame.size.width < Self.visionPanelSize.width else { return }
-        panel.setContentSize(Self.visionPanelSize)
-        centerOnActiveScreen(panel)
-    }
-
-    func applyTextLayout() {
-        guard let panel, panel.frame.size.width > Self.textPanelSize.width else { return }
-        panel.setContentSize(Self.textPanelSize)
-        centerOnActiveScreen(panel)
-    }
-
-    /// Copilot: a bottom-right strip that never covers the navigated screen.
-    func applyCopilotLayout() {
-        guard let panel else { return }
-        panel.setContentSize(Self.copilotPanelSize)
-        positionBottomTrailing(panel)
-    }
-
-    func restorePanelAfterCapture() {
-        guard let panel else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-    }
-
-    /// The approved action is about to run: get the panel out of the way so
-    /// a synthetic click hits the target app (and the user sees it happen).
-    func hidePanelForAction() {
-        panel?.orderOut(nil)
-    }
-
-    /// The action failed (or no capture follows): restore the panel.
-    ///
-    /// After a synthetic click the TARGET app is frontmost, and macOS 14's
-    /// cooperative activation can silently refuse `NSApp.activate` from a
-    /// background app — after which makeKeyAndOrderFront does nothing and
-    /// the panel looks "gone". `orderFrontRegardless` bypasses activation
-    /// and puts the floating panel back on screen unconditionally.
-    func showPanelAfterAction() {
-        guard let panel else {
-            NSLog("[Action] restore skipped: panel is nil")
-            return
-        }
-        NSLog("[Action] restoring panel (visible=%d)", panel.isVisible ? 1 : 0)
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        panel.orderFrontRegardless()
-    }
-
     /// Run the selection overlay, then capture what it chose. When
     /// ScreenCaptureKit fails (permission edge cases), fall back to the
     /// system range-selection UI rather than dead-ending the flow.
@@ -440,40 +320,5 @@ extension AppDelegate: SessionCoordinatorHost {
             await screenshotCaptureCue.showBriefly()
             return try await screenshotCapture.captureInteractive()
         }
-    }
-
-    /// Spotlight-style chrome: borderless transparent window; the SwiftUI
-    /// glass shape (PanelChrome) is the visible panel.
-    private func makePanel() -> NSPanel {
-        let panel = KeyablePanel(
-            contentRect: NSRect(
-                x: 0, y: 0,
-                width: Self.textPanelSize.width, height: Self.textPanelSize.height
-            ),
-            styleMask: [.borderless],
-            backing: .buffered, defer: false
-        )
-        panel.title = "Universal I/O"
-        panel.isReleasedWhenClosed = false
-        panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        // Never move the window from arbitrary drags: dragging must belong to
-        // the content (text selection, image pan, annotation rectangles). The
-        // header rows expose an explicit drag handle (WindowDragHandle),
-        // matching standard macOS/iOS behavior of "grab the title area".
-        panel.isMovableByWindowBackground = false
-        panel.contentViewController = NSHostingController(
-            rootView: MainActor.assumeIsolated { RootPanelView(coordinator: coordinator) }
-        )
-        // Enforce a fixed size so SwiftUI can't resize the window out from under
-        // the centering math; then center exactly.
-        panel.setContentSize(Self.textPanelSize)
-        centerOnActiveScreen(panel)
-        return panel
     }
 }
