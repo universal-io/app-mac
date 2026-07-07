@@ -111,7 +111,9 @@ export async function* runNavigateStream(
     throw new ProviderCallError(`No provider key configured for vendor "${vendor}".`);
   }
 
-  const harness = selectHarness(input.hints);
+  // Data-driven packs with the in-code seed as fallback (foundation-redesign
+  // §5-b); matching semantics are unchanged, loading is now async + cached.
+  const harness = await selectHarness(input.hints);
 
   // Planner (docs/navigator-copilot-plan.md §3-a): a question turn on a
   // harness-known tool with no active task gets one concurrent structured

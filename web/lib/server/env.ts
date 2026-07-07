@@ -17,6 +17,8 @@ export type ServerEnv = {
   navigateFastModelVendor: string;
   navigateFastModelId: string;
   freeMonthlyReviewLimit: number;
+  /** Lowercased emails allowed into /admin (docs/admin-dashboard-plan.md §2). */
+  adminEmails: string[];
 };
 
 export function getServerEnv(): ServerEnv {
@@ -66,7 +68,17 @@ export function getServerEnv(): ServerEnv {
       process.env.BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT,
       500,
     ),
+    // Comma-separated allowlist for the admin console (v0 authorization;
+    // admin-dashboard-plan §2). Empty list means nobody is an admin.
+    adminEmails: parseEmailList(process.env.ADMIN_EMAILS),
   };
+}
+
+function parseEmailList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 function normalize(value: string | undefined): string | null {

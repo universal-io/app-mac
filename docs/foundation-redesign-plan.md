@@ -331,8 +331,18 @@ CREATE TABLE bs_harness_packs (
 
 ### R1: 状態機械の導入（挙動不変のリファクタ・2段階）
 
-ステータス: R1-a 実装済み・ビルド成功（2026-07-07、`feature/foundation-redesign`）。
-**ゴールデンパス表 A〜D（+ E の入口/出口）の実機確認待ち**。実装メモ:
+ステータス: R1-a・R1-b とも実装済み・ビルド成功（2026-07-07、`feature/foundation-redesign`）。
+**ゴールデンパス表 全セクションの実機確認待ち**。
+
+R1-b 実装メモ（コミット `cc97e9a`）:
+- `NavigatorSession`（画面Q&A・精度ラダー・承認AXアクション・ワンショットフォールバック）と
+  `CopilotSession`（クリック監視・デバウンス再キャプチャ・帯UI）を新設。
+  CopilotSession はガイド対象の会話を持つ NavigatorSession を**コンストラクタで受け取って包む**
+  （`CopilotSession(navigator:)` — §4-b の明示的ハンドオフ）。
+- `ReviewViewModel` / `InputSessionKind` は削除。legacyVision ブリッジ廃止。
+- モーダル性の判断（外クリックで閉じるか）は coordinator の mode 由来に一本化。
+
+R1-a 実装メモ（コミット `bb407c5`）:
 - `Session/` に AppMode / SessionSupport（SessionLifecycle・DictationTarget・SessionMemory）/
   ComposeSession / TransformSession / SessionCoordinator を新設。
 - Vision/Navigator/Copilot は `AppMode.legacyVision(ReviewViewModel)` ブリッジで旧実装のまま
@@ -356,21 +366,57 @@ CREATE TABLE bs_harness_packs (
   （挙動が変わらないことが検証条件）。
 
 ### R2: 配線の刷新（構造が可能にする修正）
+
+ステータス: 実装済み・ビルド成功（2026-07-07、コミット `0529338`）。実装メモ:
+- `PanelSpec`（サイズ・配置・モーダル性 = AppMode の純関数）＋ `PanelController`
+  （NSPanel の唯一のオーナー。mode 変化を購読して**ビュー切替より先に**窓形状を適用、
+  パネル向けの `NSApp.activate` はここにしか無い）。
+- アプリ内 NotificationCenter は全廃（メニュー→AppDelegate 直呼び、パネル内は
+  `PanelActions` クロージャ、Esc は `KeyablePanel.onCancel`）。残る観測は
+  システム通知 `didResignActiveNotification` のみ。
+- **G2 修正**: パネル召喚時に管理ウィンドウが見えていれば orderOut（activate が
+  道連れに前面化させる事故を遮断）。メニューから1クリックで再表示可能。
+- 1セッション1アクション制約は**解除せず維持**（navigator-copilot-plan がコパイロット
+  実装後に「将来の任意課題」へ格下げ済みのため。承認実行ループの再挑戦は必要になった時）。
+
 - NotificationCenter 全廃 → PanelController + PanelSpec。
 - ここで初めて既知バグを直す: 管理ウィンドウ前面化、transform 暗黙突入の可視化強化、
   そして**1セッション1アクション制約の解除**（パネル復帰問題は activate 作法の一元化で
   再挑戦できる。だめでも copilot 経路が既に迂回路）。
 
 ### R3: API 層の統合
-- クライアント `GatewayClient` 一本化・`EngineResolver` 集約。
-- サーバー interpret エンジン統合（vision/navigate/transform）。api-contract.md 更新。
-- 挙動互換を保つため、旧エンドポイントは互換レイヤとして残して段階削除。
+
+ステータス: クライアント側完了・ビルド成功（2026-07-07、コミット `1e5a0bd`）。**サーバー側
+interpret エンジン統合は今回スコープ外**（挙動不変を優先し独立フェーズへ後送り）。
+- クライアント `GatewayClient` 一本化・`EngineResolver` 集約（完了）。可用性判定6→1、
+  transport/エラー変換7→1、SSE解析2→1、JSON POST 3→1。呼び出しAPIは無変更。
+- サーバー interpret エンジン統合（vision/navigate/transform）は**未着手**。旧3エンジンは
+  現状のまま。統合は挙動退行リスクがあり、intent別プロンプト分離（§5-a）の設計を
+  先に固めてから別フェーズで行う。
+- 旧エンドポイントの互換レイヤ段階削除も同上（サーバー統合とセット）。
 
 ### R4: 事業要件の実装
-- `bs_harness_packs`（シード= 現 harness.ts）＋ Gateway の DB 読み込み。
-- Entitlements の operation ゲート＋ `/api/account` へ features 追加＋クライアント表示ゲート。
-- Admin v0（既存設計のまま）→ v1 でパック管理・プラン設定・ロール昇格。
-- Stripe 課金（M3 残タスク）はこのフェーズの entitlements と同時に接続するのが最小工数。
+
+ステータス: web/ ビルド成功・型チェック通過（2026-07-07）。3本柱のうち **admin v0 と
+パックDB化は完了、entitlements は足場のみ**（強制は未接続）。
+- `bs_harness_packs`（マイグレーション `0003_bs_harness_packs.sql`。**未適用＝SQLファイルのみ**）
+  ＋ Gateway の DB 読み込み（`selectHarness` が global パックを service-role で読み、
+  60秒キャッシュ、空/失敗時は現 harness.ts のシードにフォールバック）。完了。
+  tenant スコープパックは列だけ用意し selection 未接続（コード内 TODO）。
+- Entitlements: `entitlements.ts`（plan→features、当面は全プラン=全機能）＋ `/api/account`
+  に `features` 追加。**operation ゲート（強制）は未実装＝足場のみ**。プラン×機能の割当は
+  オーナー決定事項として保留（§5-c 表はドラフト）。クライアント表示ゲートも未実装。
+- Admin v0（`/admin` = Client Component + `/api/admin/overview`、`assertAdmin` は
+  ADMIN_EMAILS 許可制）: 実効モデル設定・利用統計・操作/モデル別内訳・日次推移・
+  外部リンク。完了。**Web セッションが localStorage 保持のため、設計書の「Server
+  Component 直呼び」ではなく Client+fetch(Bearer) 方式を採用**（既存アーキ準拠）。
+  v1 でパック管理・プラン設定・ロール昇格（`bs_profiles.role`）。
+- Stripe 課金（M3 残タスク）は未着手。entitlements の強制と同時接続が最小工数。
+
+**R4 の残・オーナー確認事項**:
+1. `0003_bs_harness_packs.sql` の Supabase 適用（未実施）。
+2. Vercel 環境変数に `ADMIN_EMAILS` を設定（未設定だと誰も admin に入れない）。
+3. プラン×機能マトリクスの確定（entitlements の強制を入れる前提）。
 
 ### 見積もりの目安
 R0+R1 が本丸で全体の半分。R2 以降は独立性が高く、事業都合（ベータフィードバック・営業）で

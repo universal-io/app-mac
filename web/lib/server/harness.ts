@@ -4,9 +4,14 @@
 // navigator prompt alone, which must always work — the harness is an
 // invisible accuracy add-on, not a mode.
 //
-// v0 harnesses are prompt packs written inline. Later they become updatable
-// packages (docs RAG + UI map + task recipes) so a UI change ships as a data
-// update, never a model change.
+// Packs are data (docs/foundation-redesign-plan.md §5-b): enabled global rows
+// of `bs_harness_packs` are loaded through the service-role client behind a
+// short in-memory cache, so adding tool support is a row insert — no deploy.
+// The inline harnesses below stay as seed data and as the fallback whenever
+// the table is empty or the query fails; selection semantics are identical
+// either way.
+
+import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 
 export type NavigateHints = {
   app_name?: string;
@@ -38,7 +43,13 @@ export type Harness = {
   recipes?: Recipe[];
 };
 
-export function selectHarness(hints?: NavigateHints): Harness | null {
+/** A harness plus the matching rule `selectHarness` evaluates. */
+type MatchableHarness = Harness & {
+  /** Lowercased substrings; any one occurring in the joined hints matches. */
+  matchTerms: string[];
+};
+
+export async function selectHarness(hints?: NavigateHints): Promise<Harness | null> {
   if (!hints) return null;
   const haystack = [hints.url, hints.window_title, hints.app_name]
     .filter(Boolean)
@@ -46,29 +57,149 @@ export function selectHarness(hints?: NavigateHints): Harness | null {
     .toLowerCase();
   if (!haystack) return null;
 
-  // Chrome's window title for GA4 is just the tab title — "アナリティクス"
-  // without "Google" — and the client sends no URL hint yet, so the bare
-  // title must match too (the 2026-07-06 harness miss: no recipes, no
-  // planner, no GA4 knowledge, silently generic).
-  if (
-    haystack.includes("analytics.google.com") ||
-    haystack.includes("google analytics") ||
-    haystack.includes("google アナリティクス") ||
-    haystack.includes("アナリティクス")
-  ) {
-    return GA4_HARNESS;
+  const packs = await loadGlobalPacks();
+  for (const pack of packs) {
+    if (pack.matchTerms.some((term) => haystack.includes(term))) {
+      return { id: pack.id, promptBlock: pack.promptBlock, recipes: pack.recipes };
+    }
   }
   return null;
 }
 
-// --- GA4 (Google Analytics 4) pack v0 -------------------------------------
+// --- Pack loading (bs_harness_packs) ---------------------------------------
+
+const PACK_CACHE_TTL_MS = 60_000;
+
+let packCache: { packs: MatchableHarness[]; expiresAt: number } | null = null;
+
+/**
+ * Enabled global packs, newest read at most every PACK_CACHE_TTL_MS. Any
+ * failure (missing table, network, malformed rows) falls back to the in-code
+ * seed packs — harness selection must never take the navigator down.
+ *
+ * TODO(foundation-redesign-plan §5-b): tenant-scoped packs. The table already
+ * carries scope='tenant' + tenant_id, but wiring them into selection needs
+ * the authenticated tenant id threaded down to selectHarness, and min_plan
+ * needs the entitlements feature gate (§5-c). Global packs only for now.
+ */
+async function loadGlobalPacks(): Promise<MatchableHarness[]> {
+  const now = Date.now();
+  if (packCache && now < packCache.expiresAt) {
+    return packCache.packs;
+  }
+
+  let packs = SEED_HARNESSES;
+  try {
+    const admin = getSupabaseAdminClient();
+    const { data, error } = await admin
+      .from("bs_harness_packs")
+      .select("tool_id, match_hints, ui_map, recipes, prompt")
+      .eq("scope", "global")
+      .eq("enabled", true);
+    if (error) {
+      throw new Error(error.message);
+    }
+    const rows = (data ?? [])
+      .map(packFromRow)
+      .filter((pack): pack is MatchableHarness => pack !== null);
+    if (rows.length > 0) {
+      packs = rows;
+    }
+  } catch (error) {
+    console.error(
+      "[harness] pack load failed, using built-in fallback:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+  packCache = { packs, expiresAt: now + PACK_CACHE_TTL_MS };
+  return packs;
+}
+
+type PackRow = {
+  tool_id: string | null;
+  match_hints: unknown;
+  ui_map: string | null;
+  recipes: unknown;
+  prompt: string | null;
+};
+
+/** Maps a DB row to the in-memory shape. Returns null (row skipped) rather
+ * than throwing: one bad row must not disable every pack. */
+function packFromRow(row: PackRow): MatchableHarness | null {
+  const id = row.tool_id?.trim();
+  if (!id) return null;
+
+  // match_hints contract: {"contains": ["analytics.google.com", ...]} —
+  // case-insensitive substring match, mirroring the historical inline checks.
+  const matchTerms = parseMatchTerms(row.match_hints);
+  if (matchTerms.length === 0) return null;
+
+  const promptBlock = [row.prompt?.trim(), row.ui_map?.trim()]
+    .filter((part): part is string => Boolean(part))
+    .join("\n\n");
+  if (!promptBlock) return null;
+
+  return { id, promptBlock, matchTerms, recipes: parseRecipes(row.recipes) };
+}
+
+function parseMatchTerms(value: unknown): string[] {
+  if (typeof value !== "object" || value === null) return [];
+  const contains = (value as { contains?: unknown }).contains;
+  if (!Array.isArray(contains)) return [];
+  return contains
+    .filter((term): term is string => typeof term === "string" && Boolean(term.trim()))
+    .map((term) => term.trim().toLowerCase());
+}
+
+/** Strict validation: a malformed recipe list degrades to "no recipes"
+ * (the pack still ships its prompt) instead of failing the pack. */
+function parseRecipes(value: unknown): Recipe[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const recipes: Recipe[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "object" || raw === null) return undefined;
+    const recipe = raw as { goal?: unknown; steps?: unknown };
+    if (typeof recipe.goal !== "string" || !recipe.goal.trim()) return undefined;
+    if (!Array.isArray(recipe.steps) || recipe.steps.length === 0) return undefined;
+    const steps: RecipeStep[] = [];
+    for (const rawStep of recipe.steps) {
+      if (typeof rawStep !== "object" || rawStep === null) return undefined;
+      const step = rawStep as { verbal?: unknown; target?: unknown; fill?: unknown };
+      if (typeof step.verbal !== "string" || !step.verbal.trim()) return undefined;
+      steps.push({
+        verbal: step.verbal.trim(),
+        target: typeof step.target === "string" && step.target.trim() ? step.target.trim() : undefined,
+        fill: typeof step.fill === "string" && step.fill ? step.fill : undefined,
+      });
+    }
+    recipes.push({ goal: recipe.goal.trim(), steps });
+  }
+  return recipes;
+}
+
+// --- Seed / fallback packs -------------------------------------------------
+// These are the rows to seed `bs_harness_packs` from, and the fallback when
+// the table is empty or unreachable. Keep them in sync with the seeded data
+// until the admin console owns pack editing (admin-dashboard-plan v1).
+
+// GA4 (Google Analytics 4) pack v0.
 // UI map + task recipes for the demo scenario ("あるページの直帰率を見たい").
 // Kept compact on purpose: the navigator must stay terse, the pack only has
 // to prevent the classic wrong turns (bounce rate is absent from default
 // reports; user acquisition vs traffic acquisition; editor-only customize).
 
-const GA4_HARNESS: Harness = {
+const GA4_HARNESS: MatchableHarness = {
   id: "ga4",
+  // Chrome's window title for GA4 is just the tab title — "アナリティクス"
+  // without "Google" — and the client sends no URL hint yet, so the bare
+  // title must match too (the 2026-07-06 harness miss: no recipes, no
+  // planner, no GA4 knowledge, silently generic).
+  matchTerms: [
+    "analytics.google.com",
+    "google analytics",
+    "google アナリティクス",
+    "アナリティクス",
+  ],
   promptBlock: `# ツール知識: Google Analytics 4（GA4）
 この画面は GA4 の可能性が高い。以下の UI マップとレシピを正として案内する。実際の画面と食い違う場合は画面を優先し、その旨を一言添える。
 
@@ -155,3 +286,5 @@ const GA4_HARNESS: Harness = {
     },
   ],
 };
+
+const SEED_HARNESSES: MatchableHarness[] = [GA4_HARNESS];
