@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Left pane: the staging area where the user drafts/pastes the message
-/// before it is reviewed. Nothing here is "live" yet.
+/// Top pane of the compose layout: the staging area where the user drafts or
+/// pastes the message before it is reviewed. Nothing here is "live" yet.
 struct StagingEditorView: View {
-    @ObservedObject var viewModel: ReviewViewModel
+    @ObservedObject var session: ComposeSession
     /// Shared focus across both editors (drives the blue highlight).
     @Binding var focusedField: FocusField?
     /// Drives the help popover anchored to the (?) button.
@@ -12,7 +12,7 @@ struct StagingEditorView: View {
     /// The blue focus ring appears only once there are two candidates
     /// (original vs revision) and it answers "which side will Enter send?".
     /// A lone draft editor with a ring is visual noise (owner call, 2026-07-03).
-    private var isFocused: Bool { focusedField == .draft && viewModel.canFocusRevision }
+    private var isFocused: Bool { focusedField == .draft && session.canFocusRevision }
 
     /// Hotkeys shown in the help popover. Kept terse: keys only.
     private let shortcuts: [(String, String)] = [
@@ -23,129 +23,101 @@ struct StagingEditorView: View {
         ("Esc", "閉じる"),
     ]
 
-    private var isTransform: Bool { viewModel.mode == .transform }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Chrome kept to a minimum (owner call, 2026-07-03): no pane title,
             // no character count — the L1 context chip is the only header
             // content, and the whole row disappears with it.
-            if let context = viewModel.situationalContext, !viewModel.isContextExcluded {
+            if let context = session.situationalContext, !session.isContextExcluded {
                 HStack(spacing: 8) {
                     SituationalContextChip(context: context) {
-                        viewModel.excludeContext()
+                        session.excludeContext()
                     }
                     Spacer()
                 }
             }
 
-            if isTransform {
-                // The received message is read-only reference material: an
-                // editable field here invites confusion about what gets sent.
-                ScrollView {
-                    Text(viewModel.draft)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(13)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(EditorFocusBackground(isFocused: false))
-            } else {
-                // Enter sends the original text as-is (after the IME confirms any
-                // in-progress conversion); Shift+Enter inserts a newline.
-                SendableTextEditor(
-                    text: $viewModel.draft,
-                    focusedField: $focusedField,
-                    field: .draft,
-                    onSend: { viewModel.deployDraft() },
-                    onEscape: { NotificationCenter.default.post(name: .closePanel, object: nil) }
-                )
-                    .padding(8)
-                    .background(EditorFocusBackground(isFocused: isFocused))
-            }
+            // Enter sends the original text as-is (after the IME confirms any
+            // in-progress conversion); Shift+Enter inserts a newline.
+            SendableTextEditor(
+                text: $session.draft,
+                focusedField: $focusedField,
+                field: .draft,
+                onSend: { session.deployDraft() },
+                onEscape: { NotificationCenter.default.post(name: .closePanel, object: nil) }
+            )
+                .padding(8)
+                .background(EditorFocusBackground(isFocused: isFocused))
 
-            if viewModel.needsScreenCapturePermission {
+            if session.needsScreenCapturePermission {
                 ScreenCapturePermissionBanner()
             }
 
             HStack(spacing: 8) {
-                // The hotkey cheat sheet describes compose interactions
-                // (send/review/dictate), none of which exist on the read-only
-                // receiving side — so the (?) button is compose-only too.
-                if !isTransform {
-                    Button {
-                        showHelp.toggle()
-                    } label: {
-                        Image(systemName: "questionmark.circle")
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .help("使い方を表示します")
-                    .accessibilityLabel("使い方")
-                    .popover(isPresented: $showHelp, arrowEdge: .bottom) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("使い方").font(.headline)
-                            ForEach(shortcuts, id: \.0) { key, action in
-                                HStack(spacing: 8) {
-                                    Text(key)
-                                        .font(.caption.monospaced())
-                                        .frame(width: 96, alignment: .leading)
-                                    Text(action).font(.caption)
-                                }
+                Button {
+                    showHelp.toggle()
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("使い方を表示します")
+                .accessibilityLabel("使い方")
+                .popover(isPresented: $showHelp, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("使い方").font(.headline)
+                        ForEach(shortcuts, id: \.0) { key, action in
+                            HStack(spacing: 8) {
+                                Text(key)
+                                    .font(.caption.monospaced())
+                                    .frame(width: 96, alignment: .leading)
+                                Text(action).font(.caption)
                             }
                         }
-                        .padding(12)
                     }
+                    .padding(12)
                 }
 
-                if !isTransform {
-                    Button {
-                        NotificationCenter.default.post(name: .captureScreenshot, object: nil)
-                    } label: {
-                        Image(systemName: "camera.viewfinder")
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .disabled(viewModel.isCapturingScreenshot)
-                    .help("ビジョン入力としてスクリーンショットを撮影します")
-                    .accessibilityLabel("画面を撮影して読み取る")
+                Button {
+                    NotificationCenter.default.post(name: .captureScreenshot, object: nil)
+                } label: {
+                    Image(systemName: "camera.viewfinder")
                 }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .disabled(session.isCapturingScreenshot)
+                .help("ビジョン入力としてスクリーンショットを撮影します")
+                .accessibilityLabel("画面を撮影して読み取る")
 
-                if viewModel.isRecording {
+                if session.isRecording {
                     Image(systemName: "mic.fill").foregroundStyle(.red)
                     Text("録音中…").font(.caption).foregroundStyle(.secondary)
-                } else if viewModel.isTranscribing {
+                } else if session.isTranscribing {
                     ProgressView().controlSize(.small)
                     Text("文字起こし中…").font(.caption).foregroundStyle(.secondary)
-                } else if viewModel.isCapturingScreenshot {
+                } else if session.isCapturingScreenshot {
                     ProgressView().controlSize(.small)
                     Text("スクショ中…").font(.caption).foregroundStyle(.secondary)
-                } else if viewModel.isLoading {
+                } else if session.isLoading {
                     ProgressView().controlSize(.small)
                 }
                 Spacer()
-                // Reading a received message needs no actions on this side:
-                // interpretation runs automatically and the useful exits (copy
-                // the readable version / approve a reply draft) live on the
-                // result pane. Review/send/copy-source buttons are compose-only.
-                if !isTransform {
-                    Button {
-                        Task { await viewModel.runReview() }
-                    } label: {
-                        Label("レビュー", systemImage: "checkmark.shield")
-                    }
-                    .disabled(!viewModel.canReview)
-                    .help("原文をレビューします")
-
-                    Button {
-                        viewModel.deployDraft()
-                    } label: {
-                        Label("確定", systemImage: "paperplane.fill")
-                    }
-                    .disabled(!viewModel.canDeployDraft)
-                    .buttonStyle(.borderedProminent)
-                    .help("レビューを使わず、原文のまま入力先へ確定します")
+                Button {
+                    session.startReview()
+                } label: {
+                    Label("レビュー", systemImage: "checkmark.shield")
                 }
+                .disabled(!session.canReview)
+                .help("原文をレビューします")
+
+                Button {
+                    session.deployDraft()
+                } label: {
+                    Label("確定", systemImage: "paperplane.fill")
+                }
+                .disabled(!session.canDeployDraft)
+                .buttonStyle(.borderedProminent)
+                .help("レビューを使わず、原文のまま入力先へ確定します")
             }
         }
         .padding()
@@ -155,8 +127,8 @@ struct StagingEditorView: View {
 /// L1 context chip: shows which screen the review will reference. Click to
 /// inspect exactly what was captured; ✕ excludes it for this session. Making
 /// the captured text inspectable/removable is a privacy commitment, not a
-/// nicety.
-private struct SituationalContextChip: View {
+/// nicety. Shared by the compose and transform layouts.
+struct SituationalContextChip: View {
     let context: SituationalContext
     let onExclude: () -> Void
     @State private var showDetail = false

@@ -37,6 +37,9 @@ targets:
     dependencies:
       - package: Supabase
         product: Supabase
+    # Shared scheme so CLI builds (xcodebuild -scheme BombSquad) survive
+    # project regeneration — the auto-generated per-user scheme does not.
+    scheme: {}
     sources:
       - BombSquad
       # Bundle the gitignored local auth config so the app reads it regardless of

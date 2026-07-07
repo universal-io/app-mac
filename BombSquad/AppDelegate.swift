@@ -1,5 +1,4 @@
 import AppKit
-import AVFoundation
 import SwiftUI
 
 extension Notification.Name {
@@ -22,22 +21,23 @@ extension Notification.Name {
     /// synthetic click proved unreliable); the failure path restores it.
     static let hidePanelForAction = Notification.Name("BombSquad.hidePanelForAction")
     static let showPanelAfterAction = Notification.Name("BombSquad.showPanelAfterAction")
-    /// Posted by the view model when a vision session ends and the panel
+    /// Posted by the legacy view model when a vision session ends and the panel
     /// should return to the narrow single-column layout.
     static let visionSessionEnded = Notification.Name("BombSquad.visionSessionEnded")
     /// Posted from the panel when the user wants to grant screen recording.
     static let openScreenCaptureSettings = Notification.Name("BombSquad.openScreenCaptureSettings")
-    /// Posted by the view model when guided navigation (copilot) starts or
-    /// ends (`userInfo["active"]: Bool`). While active the panel drops its
+    /// Posted by the legacy view model when guided navigation (copilot) starts
+    /// or ends (`userInfo["active"]: Bool`). While active the panel drops its
     /// modal behavior: it shrinks to a corner strip, survives outside
     /// clicks, and never steals focus from the app being navigated
     /// (docs/navigator-copilot-plan.md 正のユーザー体験).
     static let copilotModeChanged = Notification.Name("BombSquad.copilotModeChanged")
 }
 
-/// Owns the global hotkey and the floating review panel summoned by ⌘J.
-/// On hotkey: capture the frontmost app (the paste target), then show a floating
-/// panel hosting the staging/review UI wired to a `PasteDeployer`.
+/// App lifecycle and window mechanics only (R1-a; redesign plan §7). Gesture
+/// semantics, sessions, and mode transitions live in `SessionCoordinator` —
+/// this class hosts its window-side effects (`SessionCoordinatorHost`) and
+/// still owns the legacy capture overlay plumbing until R1-b.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Text mode is a single Spotlight-style column; vision needs two panes.
     private static let textPanelSize = NSSize(width: 680, height: 660)
@@ -54,17 +54,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Lazy so the @MainActor initializer runs on first use (in
     // applicationDidFinishLaunching), not in a nonisolated property default.
     private lazy var permissions = PermissionsCoordinator()
-    private var currentViewModel: ReviewViewModel?
+    private var coordinator: SessionCoordinator!
     private let authClient = BombSquadAuthClient.shared
     private let gesture = ShiftGestureMonitor()
-    private let recorder = AudioRecorder()
-    /// Resolved per dictation because gateway availability follows sign-in state.
-    private var transcriber: any Transcriber { GatewayTranscriber.make() ?? GroqTranscriber() }
     private let screenshotCapture = ScreenshotCaptureService()
     private let screenshotCaptureCue = ScreenshotCaptureCuePresenter()
     private let screenshotSelection = ScreenshotSelectionOverlay()
-    /// Guards against duplicate begin/end callbacks so the cues fire exactly once.
-    private var isDictating = false
+    /// Guards against overlapping capture flows.
     private var isCapturingScreenshot = false
     /// True while guided navigation runs: suspends the panel's modal
     /// close-on-resign behavior (clicking the target app IS the interaction).
@@ -83,24 +79,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await MemorySyncService.shared.start() }
         // Pre-register sound cues so the first one is instant.
         SoundFeedback.prepare()
+
+        MainActor.assumeIsolated {
+            coordinator = SessionCoordinator(host: self)
+        }
+
         // Permissions: one focused setup window that requests Accessibility,
         // Screen Recording, and Microphone deliberately (and registers Screen
         // Recording in the TCC list so it can be toggled after a reset). Shown
         // only when something is missing; otherwise we just warm up audio.
-        permissions.onMicrophoneGranted = { [weak self] in self?.recorder.warmUp() }
+        permissions.onMicrophoneGranted = { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.coordinator.warmUpRecorder() }
+        }
         permissions.refresh()
         if permissions.needsAny {
             presentPermissionsSetup()
         }
+
         // Right Shift double-tap = summon → review, or empty text → vision → close.
         // Right Shift long-press = hold-to-talk dictation. ⌘J toggles the panel.
-        HotKeyCenter.shared.onHotKey = { [weak self] in self?.togglePanel() }
+        // All semantics live in the coordinator's transition table.
+        HotKeyCenter.shared.onHotKey = { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.coordinator.togglePanel() }
+        }
         HotKeyCenter.shared.register()
-        gesture.onSingleTap = { [weak self] in self?.toggleEditorFocus() }
-        gesture.onDoubleTap = { [weak self] in self?.advance() }
-        gesture.onLongPressBegan = { [weak self] in self?.startDictation() }
-        gesture.onLongPressEnded = { [weak self] in self?.stopDictationAndTranscribe() }
+        gesture.onSingleTap = { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.coordinator.handleSingleTap() }
+        }
+        gesture.onDoubleTap = { [weak self] in self?.handleDoubleTapGesture() }
+        gesture.onLongPressBegan = { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.coordinator.handleHoldBegan() }
+        }
+        gesture.onLongPressEnded = { [weak self] in
+            guard let self else { return }
+            MainActor.assumeIsolated { self.coordinator.handleHoldEnded() }
+        }
         gesture.start()
+
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleShowPanel), name: .showPanel, object: nil
         )
@@ -165,6 +184,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Gestures that involve the capture overlay (R1-a: owned here)
+
+    /// Double-tap while the capture overlay is up abandons the vision session
+    /// entirely: back to the pre-panel standby state. The pending capture task
+    /// sees the mode has moved on and stays quiet. Everything else goes to the
+    /// coordinator's transition table.
+    private func handleDoubleTapGesture() {
+        MainActor.assumeIsolated {
+            if screenshotSelection.isPresenting {
+                screenshotSelection.cancel()
+                coordinator.close()
+                return
+            }
+            coordinator.handleDoubleTap()
+        }
+    }
+
+    // MARK: - Notification handlers (forwarders; NotificationCenter dies in R2)
+
+    @objc private func handleShowPanel() {
+        MainActor.assumeIsolated { coordinator.togglePanel() }
+    }
+
+    @objc private func handleClosePanel() {
+        MainActor.assumeIsolated { coordinator.close() }
+    }
+
+    @objc private func handleCaptureScreenshot(_ notification: Notification) {
+        MainActor.assumeIsolated { coordinator.requestVisionCapture() }
+    }
+
     @objc private func handleResignActive() {
         guard !isCapturingScreenshot else { return }
 
@@ -179,7 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // The staging panel is a transient "capture" mode; touching another app's
         // input releases it. Closing on resign makes it behave modally.
-        if panel != nil { closePanel() }
+        guard panel != nil else { return }
+        MainActor.assumeIsolated { coordinator.close() }
     }
 
     /// Copilot on: shrink to a bottom-right strip that never covers the
@@ -201,146 +252,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Bottom-right corner of the screen the cursor is on, with a margin.
-    private func positionBottomTrailing(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let margin: CGFloat = 24
-        let size = window.frame.size
-        window.setFrameOrigin(NSPoint(
-            x: visible.maxX - size.width - margin,
-            y: visible.minY + margin
-        ))
+    /// The approved action is about to run: get the panel out of the way so
+    /// a synthetic click hits the target app (and the user sees it happen).
+    @objc private func handleHidePanelForAction(_ notification: Notification) {
+        panel?.orderOut(nil)
     }
 
-    /// Right Shift double-tap: closed summons text mode; empty text mode enters
-    /// vision capture; vision mode closes; non-empty draft mode reviews.
-    /// Invoked from the key-event monitor, which delivers on the main thread.
-    private func advance() {
-        // Double-tap while the capture overlay is up abandons the vision
-        // session entirely: back to the pre-panel standby state. The pending
-        // capture task sees the panel is gone and stays quiet.
-        let isSelecting = MainActor.assumeIsolated { screenshotSelection.isPresenting }
-        if isSelecting {
-            MainActor.assumeIsolated { screenshotSelection.cancel() }
-            closePanel()
+    /// The action failed (or no capture follows): restore the panel.
+    ///
+    /// After a synthetic click the TARGET app is frontmost, and macOS 14's
+    /// cooperative activation can silently refuse `NSApp.activate` from a
+    /// background app — after which makeKeyAndOrderFront does nothing and
+    /// the panel looks "gone". `orderFrontRegardless` bypasses activation
+    /// and puts the floating panel back on screen unconditionally.
+    @objc private func handleShowPanelAfterAction(_ notification: Notification) {
+        guard let panel else {
+            NSLog("[Action] restore skipped: panel is nil")
             return
         }
-        if panel == nil {
-            summon()
-            return
-        }
-        MainActor.assumeIsolated {
-            guard let viewModel = currentViewModel else {
-                closePanel()
-                return
-            }
-
-            if viewModel.sessionKind == .vision {
-                closePanel()
-                return
-            }
-
-            guard viewModel.focusedField == .draft else { return }
-            if viewModel.isEmptyDraft {
-                startScreenshotCapture()
-            } else {
-                viewModel.requestReviewFromHotkey()
-            }
-        }
+        NSLog("[Action] restoring panel (visible=%d)", panel.isVisible ? 1 : 0)
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
     }
 
-    private func toggleEditorFocus() {
-        guard panel != nil else { return }
-        MainActor.assumeIsolated {
-            guard currentViewModel?.sessionKind == .text else { return }
-            currentViewModel?.toggleFocusedField()
-        }
+    /// Legacy path only (bridge exits go through the coordinator, which calls
+    /// `applyTextLayout()` directly).
+    @objc private func handleVisionSessionEnded() {
+        applyTextLayout()
     }
 
-    /// Summon the panel. If the frontmost app has a current selection, pull it in
-    /// as a received message to transform (receiving side); otherwise open the
-    /// empty compose pane (sending side). The selection grab must happen before
-    /// our panel steals focus, so it runs here while the target is still front.
-    private func summon() {
-        SelectionGrabber.grab { [weak self] selection in
-            if let selection {
-                self?.showPanel(prefill: selection, mode: .transform)
-            } else {
-                self?.showPanel(mode: .compose)
-            }
-        }
-    }
-
-    /// Right Shift long-press begins: give immediate feedback (sound + red mic) the instant
-    /// the gesture is recognized, then start the recorder. The mic's warm-up adds
-    /// ~0.5s, but firing the cue first makes it feel snappy; the tiny head clip is
-    /// negligible in practice.
-    private func startDictation() {
-        guard !isDictating else { return }
-        if panel == nil { showPanel() }
-        let vm = currentViewModel
-        // Dictation is available wherever there is an editable field: the text
-        // compose/review session, and the navigator's question input. The bare
-        // (pre-navigator) vision one-shot has no input to dictate into.
-        guard MainActor.assumeIsolated({
-            vm?.sessionKind == .text || vm?.navigatorSessionActive == true
-        }) else { return }
-        isDictating = true
-        SoundFeedback.recordingStarted()
-        MainActor.assumeIsolated {
-            vm?.errorMessage = nil
-            vm?.isRecording = true
-        }
-        do {
-            try recorder.start()
-        } catch {
-            MainActor.assumeIsolated {
-                vm?.isRecording = false
-                vm?.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            }
-        }
-    }
-
-    /// Right Shift released: stop recording, transcribe, and append the text to the draft.
-    private func stopDictationAndTranscribe() {
-        guard isDictating else { return }
-        isDictating = false
-        let vm = currentViewModel
-        recorder.onFinish = { SoundFeedback.recordingStopped() }
-        guard let url = recorder.stop() else { return }
-        MainActor.assumeIsolated {
-            vm?.isRecording = false
-            vm?.isTranscribing = true
-        }
-        Task {
-            defer { try? FileManager.default.removeItem(at: url) }
-            // Silence gate: drop near-silent or ultra-short clips before the API,
-            // since Whisper hallucinates filler on silence. Thresholds are tunable;
-            // if the file can't be inspected we fail open and transcribe anyway.
-            if let clip = AudioRecorder.inspect(url: url),
-               clip.duration < 0.4 || clip.averagePower < -45 {
-                await MainActor.run { vm?.isTranscribing = false }
-                return
-            }
-            do {
-                let text = try await transcriber.transcribe(fileURL: url)
-                await MainActor.run {
-                    vm?.appendTranscription(text)
-                    vm?.isTranscribing = false
-                }
-            } catch {
-                await MainActor.run {
-                    vm?.isTranscribing = false
-                    vm?.errorMessage = "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
-                }
-            }
-        }
-    }
-
-    @objc private func handleShowPanel() {
-        togglePanel()
+    @objc private func handleOpenScreenCaptureSettings() {
+        ScreenCapturePermission.openSettings()
     }
 
     /// Open (or bring to front) the single management window. The desired section
@@ -350,7 +293,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// would open behind it. The panel is transient anyway, so we close it and let
     /// the management window take over (e.g. login → the account/login screen).
     @objc private func handleShowManagement() {
-        if panel != nil { closePanel() }
+        if panel != nil {
+            MainActor.assumeIsolated { coordinator.close() }
+        }
 
         if let managementWindow {
             NSApp.activate(ignoringOtherApps: true)
@@ -406,163 +351,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    @objc private func handleClosePanel() {
-        closePanel()
+    // MARK: - Screen geometry helpers
+
+    /// Bottom-right corner of the screen the cursor is on, with a margin.
+    private func positionBottomTrailing(_ window: NSWindow) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+        let margin: CGFloat = 24
+        let size = window.frame.size
+        window.setFrameOrigin(NSPoint(
+            x: visible.maxX - size.width - margin,
+            y: visible.minY + margin
+        ))
     }
 
-    @objc private func handleCaptureScreenshot(_ notification: Notification) {
-        startScreenshotCapture()
+    /// Center the panel on whichever screen the cursor is on, so it never spills
+    /// off-screen (e.g. Gmail's right-side compose box).
+    private func centerOnActiveScreen(_ window: NSWindow) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+        let size = window.frame.size
+        let origin = NSPoint(x: visible.midX - size.width / 2,
+                             y: visible.midY - size.height / 2)
+        window.setFrameOrigin(origin)
+    }
+}
+
+// MARK: - SessionCoordinatorHost (window-side effects; all on the main thread)
+
+extension AppDelegate: SessionCoordinatorHost {
+    var isPanelVisible: Bool {
+        panel?.isVisible ?? false
     }
 
-    /// The approved action is about to run: get the panel out of the way so
-    /// a synthetic click hits the target app (and the user sees it happen).
-    @objc private func handleHidePanelForAction(_ notification: Notification) {
-        panel?.orderOut(nil)
-    }
-
-    /// The action failed (or no capture follows): restore the panel.
-    ///
-    /// After a synthetic click the TARGET app is frontmost, and macOS 14's
-    /// cooperative activation can silently refuse `NSApp.activate` from a
-    /// background app — after which makeKeyAndOrderFront does nothing and
-    /// the panel looks "gone". `orderFrontRegardless` bypasses activation
-    /// and puts the floating panel back on screen unconditionally.
-    @objc private func handleShowPanelAfterAction(_ notification: Notification) {
-        guard let panel else {
-            NSLog("[Action] restore skipped: panel is nil")
-            return
+    func presentPanel() {
+        if panel == nil {
+            panel = makePanel()
         }
-        NSLog("[Action] restoring panel (visible=%d)", panel.isVisible ? 1 : 0)
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        panel.orderFrontRegardless()
-    }
-
-    /// Vision's two-pane session ended (e.g. an action draft was carried into
-    /// the compose editor): restore the narrow Spotlight-style layout.
-    @objc private func handleVisionSessionEnded() {
-        guard let panel, panel.frame.size.width > Self.textPanelSize.width else { return }
-        panel.setContentSize(Self.textPanelSize)
-        centerOnActiveScreen(panel)
-    }
-
-    @objc private func handleOpenScreenCaptureSettings() {
-        ScreenCapturePermission.openSettings()
-    }
-
-    private func togglePanel() {
-        if let panel, panel.isVisible {
-            closePanel()
-        } else {
-            showPanel()
-        }
-    }
-
-    private func showPanel(prefill: String? = nil, mode: ReviewMode = .compose) {
-        // Capture the target BEFORE our panel activates and steals focus.
-        let target = NSWorkspace.shared.frontmostApplication
-        // Same timing constraint: identify the context source app now; the AX
-        // tree walk itself continues in the background against that pid.
-        let contextTask = SituationalContextService.captureTask()
-        let deployer: Deployer
-        switch mode {
-        case .compose:
-            deployer = PasteDeployer(targetApp: target) { [weak self] in self?.closePanel() }
-        case .transform:
-            // Received message: never write back into the sender's field. The
-            // readable version is for reading, so "send" only copies to clipboard.
-            deployer = ClipboardDeployer()
-        }
-        let viewModel = MainActor.assumeIsolated {
-            ReviewViewModel(deployer: deployer, mode: mode)
-        }
-        currentViewModel = viewModel
-        MainActor.assumeIsolated {
-            viewModel.restorePersistedDraftIfNeeded()
-            viewModel.attachContextCapture(contextTask)
-        }
-        if let prefill {
-            MainActor.assumeIsolated {
-                viewModel.draft = prefill
-                // Receiving side: the selection is already captured, so run the
-                // transform immediately — the panel opens with the readable
-                // result already showing on the right (one stop, no second tap).
-                if mode == .transform, authClient.currentSession() != nil {
-                    Task { await viewModel.runReview() }
-                }
-            }
-        }
-
-        // Spotlight-style chrome: borderless transparent window; the SwiftUI
-        // glass shape (PanelChrome) is the visible panel.
-        let panel = KeyablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: Self.textPanelSize.width, height: Self.textPanelSize.height),
-            styleMask: [.borderless],
-            backing: .buffered, defer: false
-        )
-        panel.title = "Universal I/O"
-        panel.isReleasedWhenClosed = false
-        panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        // Never move the window from arbitrary drags: dragging must belong to
-        // the content (text selection, image pan, annotation rectangles). The
-        // header rows expose an explicit drag handle (WindowDragHandle),
-        // matching standard macOS/iOS behavior of "grab the title area".
-        panel.isMovableByWindowBackground = false
-        panel.contentViewController = NSHostingController(
-            rootView: MainActor.assumeIsolated { RootPanelView(reviewViewModel: viewModel) }
-        )
-        // Enforce a fixed size so SwiftUI can't resize the window out from under
-        // the centering math; then center exactly.
-        panel.setContentSize(Self.textPanelSize)
-        centerOnActiveScreen(panel)
-
-        self.panel = panel
+        guard let panel else { return }
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
     }
 
-    private func closePanel() {
-        // Whatever closes the panel, the view model is about to be
-        // discarded: save the conversation, stop the copilot click monitor,
-        // and take the highlight ring down with it.
-        MainActor.assumeIsolated {
-            currentViewModel?.panelWillClose()
-        }
+    func dismissPanel() {
         isCopilotActive = false
         panel?.orderOut(nil)
         panel = nil
-        currentViewModel = nil
     }
 
-    /// M4 (owner spec): summoning on an empty draft opens the selection
-    /// overlay with the whole screen pre-selected — Enter keeps it, a drag
-    /// narrows it to a region, Esc returns to the panel, and a right-Shift
-    /// double-tap (handled in `advance()`) abandons the session.
-    private func startScreenshotCapture() {
-        guard !isCapturingScreenshot else { return }
-        guard let panel, let viewModel = currentViewModel else { return }
+    func canCaptureScreen() -> Bool {
+        ScreenCapturePermission.isGranted || ScreenCapturePermission.request()
+    }
 
-        guard ScreenCapturePermission.isGranted || ScreenCapturePermission.request() else {
-            MainActor.assumeIsolated {
-                viewModel.needsScreenCapturePermission = true
-                viewModel.errorMessage = "スクリーンショットには画面収録の許可が必要です。"
-            }
+    /// M4 (owner spec): the selection overlay opens with the whole screen
+    /// pre-selected — Enter keeps it, a drag narrows it to a region, Esc
+    /// returns to the panel, and a right-Shift double-tap (handled in
+    /// `handleDoubleTapGesture`) abandons the session.
+    func beginScreenshotCapture() {
+        guard !isCapturingScreenshot, let panel else {
+            MainActor.assumeIsolated { coordinator.captureFinished(.cancelled) }
             return
         }
-
         isCapturingScreenshot = true
-        MainActor.assumeIsolated {
-            viewModel.isCapturingScreenshot = true
-            viewModel.needsScreenCapturePermission = false
-            viewModel.errorMessage = nil
-        }
-
         panel.orderOut(nil)
 
         // Resolve "the screen the user is looking at" on the main thread,
@@ -574,35 +426,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ] as? CGDirectDisplayID
 
         Task {
+            let outcome: ScreenCaptureFlowOutcome
             do {
                 let attachment = try await captureAttachment(on: screen, displayID: displayID)
-                await MainActor.run {
-                    viewModel.addScreenshotAttachment(attachment)
-                }
+                outcome = .attachment(attachment)
             } catch ScreenshotCaptureError.cancelled {
                 // Expected: Esc from the selection overlay, an abandoned
                 // session, or the system capture UI's cancel.
+                outcome = .cancelled
             } catch {
-                await MainActor.run {
-                    viewModel.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                }
+                outcome = .failed(
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                )
             }
 
             await MainActor.run {
-                viewModel.isCapturingScreenshot = false
                 self.isCapturingScreenshot = false
-                guard self.panel === panel else { return }
-                // Vision shows two panes (screenshot / interpretation), so give
-                // the panel the wide layout before it reappears.
-                if viewModel.sessionKind == .vision,
-                   panel.frame.size.width < Self.visionPanelSize.width {
-                    panel.setContentSize(Self.visionPanelSize)
-                    self.centerOnActiveScreen(panel)
-                }
-                NSApp.activate(ignoringOtherApps: true)
-                panel.makeKeyAndOrderFront(nil)
+                self.coordinator.captureFinished(outcome)
             }
         }
+    }
+
+    func applyVisionLayout() {
+        guard let panel, panel.frame.size.width < Self.visionPanelSize.width else { return }
+        panel.setContentSize(Self.visionPanelSize)
+        centerOnActiveScreen(panel)
+    }
+
+    func applyTextLayout() {
+        guard let panel, panel.frame.size.width > Self.textPanelSize.width else { return }
+        panel.setContentSize(Self.textPanelSize)
+        centerOnActiveScreen(panel)
+    }
+
+    func restorePanelAfterCapture() {
+        guard let panel else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
     }
 
     /// Run the selection overlay, then capture what it chose. When
@@ -634,15 +494,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Center the panel on whichever screen the cursor is on, so it never spills
-    /// off-screen (e.g. Gmail's right-side compose box).
-    private func centerOnActiveScreen(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let size = window.frame.size
-        let origin = NSPoint(x: visible.midX - size.width / 2,
-                             y: visible.midY - size.height / 2)
-        window.setFrameOrigin(origin)
+    /// Spotlight-style chrome: borderless transparent window; the SwiftUI
+    /// glass shape (PanelChrome) is the visible panel.
+    private func makePanel() -> NSPanel {
+        let panel = KeyablePanel(
+            contentRect: NSRect(
+                x: 0, y: 0,
+                width: Self.textPanelSize.width, height: Self.textPanelSize.height
+            ),
+            styleMask: [.borderless],
+            backing: .buffered, defer: false
+        )
+        panel.title = "Universal I/O"
+        panel.isReleasedWhenClosed = false
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        // Never move the window from arbitrary drags: dragging must belong to
+        // the content (text selection, image pan, annotation rectangles). The
+        // header rows expose an explicit drag handle (WindowDragHandle),
+        // matching standard macOS/iOS behavior of "grab the title area".
+        panel.isMovableByWindowBackground = false
+        panel.contentViewController = NSHostingController(
+            rootView: MainActor.assumeIsolated { RootPanelView(coordinator: coordinator) }
+        )
+        // Enforce a fixed size so SwiftUI can't resize the window out from under
+        // the centering math; then center exactly.
+        panel.setContentSize(Self.textPanelSize)
+        centerOnActiveScreen(panel)
+        return panel
     }
 }

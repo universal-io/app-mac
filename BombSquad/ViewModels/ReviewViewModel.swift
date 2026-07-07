@@ -2,26 +2,12 @@ import AppKit
 import Foundation
 import SwiftUI
 
-private enum ComposeDraftStore {
-    private static let key = "ReviewViewModel.composeDraft"
-
-    static func load() -> String {
-        UserDefaults.standard.string(forKey: key) ?? ""
-    }
-
-    static func save(_ draft: String) {
-        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            UserDefaults.standard.removeObject(forKey: key)
-        } else {
-            UserDefaults.standard.set(draft, forKey: key)
-        }
-    }
-
-    static func clear() {
-        UserDefaults.standard.removeObject(forKey: key)
-    }
-}
+// R1-a NOTE (docs/foundation-redesign-plan.md §7): compose and transform now
+// run on their own sessions (ComposeSession / TransformSession); this view
+// model keeps serving ONLY the vision / navigator / copilot paths until R1-b
+// ports them too. The compose/transform code below is retained because the
+// vision paths still reference it; do not extend it.
+// ComposeDraftStore moved to Session/ComposeSession.swift (shared).
 
 /// One turn of the navigator conversation as shown in the panel transcript.
 struct NavigatorDisplayTurn: Identifiable {
@@ -156,6 +142,12 @@ final class ReviewViewModel: ObservableObject {
     /// Direction of this session: composing an outgoing draft (review/soften)
     /// or transforming a received message (make it readable). Drives the prompt.
     let mode: ReviewMode
+
+    /// R1-a bridge: when set, leaving the vision session hands control back to
+    /// the SessionCoordinator (which swaps in a ComposeSession) instead of
+    /// flipping this view model into its own text mode. Carries the action
+    /// draft for "編集する", nil for a plain exit.
+    var onExitVisionToCompose: (@MainActor (String?) -> Void)?
 
     /// Optional fixed provider (used by tests/previews). When nil, the provider
     /// is built from the user's selection at review time.
@@ -464,6 +456,14 @@ final class ReviewViewModel: ObservableObject {
     }
 
     func exitVisionMode() {
+        // R1-a bridge: the coordinator owns the text mode now. Tear the
+        // navigator down (saves the session, stops monitors and the ring),
+        // then hand off; this view model is about to be discarded.
+        if let handoff = onExitVisionToCompose {
+            resetNavigatorSession()
+            handoff(nil)
+            return
+        }
         sessionKind = .text
         visionImage = nil
         visionResult = nil
@@ -1137,6 +1137,11 @@ final class ReviewViewModel: ObservableObject {
     /// "編集する": carry the action draft into the compose editor so the user
     /// can adjust it (and optionally re-review) before deploying.
     func editSuggestedAction(_ action: VisionSuggestedAction) {
+        if let handoff = onExitVisionToCompose {
+            resetNavigatorSession()
+            handoff(action.draft)
+            return
+        }
         exitVisionMode()
         draft = action.draft
         result = nil
@@ -1259,3 +1264,7 @@ final class ReviewViewModel: ObservableObject {
         }
     }
 }
+
+/// R1-a bridge: the coordinator routes hold-to-talk into the navigator's
+/// question input through the same protocol the new sessions use.
+extension ReviewViewModel: DictationTarget {}
