@@ -32,7 +32,7 @@ export async function GET(request: Request): Promise<Response> {
         monthly_review_limit: quota.limit,
         // Additive feature flags (foundation-redesign-plan §5-c). Display
         // gating only on the client; server-side enforcement lands later.
-        features: featuresForPlan(entitlement.plan),
+        features: await featuresForPlan(entitlement.plan),
       },
       quota,
     });

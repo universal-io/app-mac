@@ -4,6 +4,7 @@
 
 import { getServerEnv } from "@/lib/server/env";
 import { authenticate, GatewayError } from "@/lib/server/gateway";
+import { getPlanConfig } from "@/lib/server/plans";
 
 /**
  * Verifies the Supabase JWT (reusing the gateway's authenticate helper) and
@@ -40,15 +41,20 @@ export type ModelConfigRow = {
 
 export type EffectiveConfig = {
   models: ModelConfigRow[];
-  freeMonthlyLimit: { value: number; source: ConfigSource };
+  /** Free-tier monthly cap, sourced from the plan catalog (bs_plans, §5-c).
+   * `value: null` means unlimited. `source` is always "plan" now that the
+   * catalog is the single knob — kept as a field so the UI can label it. */
+  freeMonthlyLimit: { value: number | null; source: "plan" };
   /** Presence only — key values must never leave the server. */
   apiKeys: { groq: boolean; openai: boolean; gemini: boolean; anthropic: boolean };
 };
 
-/** Resolves the same way the engines do (getServerEnv) and tags each value
- * with its origin. Never includes secret values, only booleans for keys. */
-export function effectiveConfig(): EffectiveConfig {
+/** Resolves the same way the engines do (getServerEnv for models, the plan
+ * catalog for the free quota) and tags each value with its origin. Never
+ * includes secret values, only booleans for keys. */
+export async function effectiveConfig(): Promise<EffectiveConfig> {
   const env = getServerEnv();
+  const freePlan = await getPlanConfig("free");
   return {
     models: [
       {
@@ -83,8 +89,8 @@ export function effectiveConfig(): EffectiveConfig {
       },
     ],
     freeMonthlyLimit: {
-      value: env.freeMonthlyReviewLimit,
-      source: sourceOf("BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT"),
+      value: freePlan?.monthlyUsageLimit ?? null,
+      source: "plan",
     },
     apiKeys: {
       groq: Boolean(env.groqApiKey),

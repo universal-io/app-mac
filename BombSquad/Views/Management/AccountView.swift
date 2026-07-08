@@ -42,11 +42,15 @@ struct AccountView: View {
                         Divider()
                         infoRow("契約状態", summary.state.label)
                         Divider()
-                        infoRow("月間利用枠", "\(summary.monthlyReviewLimit) 回")
+                        infoRow("月間利用枠", summary.monthlyReviewLimit.map { "\($0) 回" } ?? "無制限")
                     }
                     if let quota = quotaStore.latest {
                         Divider()
-                        infoRow("今月の利用", "\(quota.used) / \(quota.limit) 回（残り \(quota.remaining) 回）")
+                        if let limit = quota.limit, let remaining = quota.remaining {
+                            infoRow("今月の利用", "\(quota.used) / \(limit) 回（残り \(remaining) 回）")
+                        } else {
+                            infoRow("今月の利用", "\(quota.used) 回（無制限）")
+                        }
                         Divider()
                         infoRow("次回リセット", formatResetDate(quota.resetsAt))
                     }

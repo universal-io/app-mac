@@ -262,6 +262,31 @@ App Store を通さず、公証済み DMG を Web から直接配布する。202
 `com.heywatchme.bombsquad` に統一済み。Bundle ID と Keychain service が変わったため、
 リネーム後の初回起動ではアクセシビリティ／マイク権限の再許可と API キーの再登録が必要。
 
+## プラン制限とクォータ（`bs_plans` 一元管理）
+
+「どのプランに、いくらのクォータ／どの機能を許すか」は **プラン定義テーブル `bs_plans`
+1箇所**が正本（migration `0004_plan_catalog.sql`）。プロビジョニングコードや各アカウント行に
+制限値をコピーで持たせない。
+
+```
+bs_plans:  plan | monthly_usage_limit (NULL=無制限) | features (["*"]=全許可)
+```
+
+- 実効クォータ = `bs_entitlements.monthly_review_limit`（個別override・通常NULL） ?? `bs_plans[plan].monthly_usage_limit`。env は不使用。
+- 回数変更は **`UPDATE bs_plans` の1箇所・デプロイ不要**（Gateway が60秒キャッシュ）。特定ユーザーだけの例外は `bs_entitlements.monthly_review_limit` に override。
+
+```sql
+-- 例: 無料枠の月間上限を変える（全 free ユーザーに反映）
+UPDATE public.bs_plans SET monthly_usage_limit = 1000 WHERE plan = 'free';
+```
+
+ベータ中の方針（オーナー決定 2026-07-08）: **機能ゲートなしで全機能開放**（`bs_plans.features`
+は全プラン `["*"]`）、実クォータは free=500・他=無制限。リリース前に設計・強制する残タスク
+（正本: [docs/foundation-redesign-plan.md](docs/foundation-redesign-plan.md) §5-c / R4）:
+- プラン×機能マトリクスの確定 → `bs_plans` の各行を埋める。
+- 各 AI ルートへ operation ゲート接続（サーバー強制。`featuresForPlan` は `bs_plans.features` を読む実装済み）。Stripe 課金と同時が最小工数。
+- クライアント側の表示ゲート（features でボタンを隠す/ロック）。admin「プラン設定」での GUI 編集（admin v1）。
+
 ## ロードマップ（MVP の先）
 
 - グローバルホットキー＋前面オーバーレイ（押している間だけ擬似入力欄）

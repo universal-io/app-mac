@@ -270,6 +270,10 @@ Rules:
   - `high`
 - `quota` is returned on success so clients can show remaining allowance
   without a separate request.
+- `quota.limit` and `quota.remaining` are `null` when the plan carries no cap
+  (unlimited — `bs_plans.monthly_usage_limit` is null; foundation-redesign-plan
+  §5-c). Clients render this as "無制限". Capped plans (e.g. free = 500) send
+  numbers as before. `account.monthly_review_limit` follows the same rule.
 
 ## Error Contract
 

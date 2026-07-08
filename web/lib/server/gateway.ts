@@ -3,7 +3,7 @@
 // envelope (docs/api-contract.md). Route handlers own their own request
 // validation and quota policy.
 
-import { getServerEnv } from "@/lib/server/env";
+import { getPlanConfig } from "@/lib/server/plans";
 import {
   getSupabaseAdminClient,
   getSupabaseUserClient,
@@ -190,31 +190,43 @@ export function gatewayErrorResponse(
 export type QuotaInfo = {
   plan: string;
   used: number;
-  limit: number;
-  remaining: number;
+  /** null = unlimited (plan carries no cap). */
+  limit: number | null;
+  /** null = unlimited. */
+  remaining: number | null;
   resets_at: string;
 };
 
 /**
- * Effective monthly usage limit: plan override or the free-tier default.
- * Historically named "review limit" (the DB column keeps that name), but
- * since 2026-07-06 it caps ALL AI operations, one request = one unit.
+ * Effective monthly usage limit (caps ALL AI operations, one request = one
+ * unit). Resolution order: per-tenant override (bs_entitlements.
+ * monthly_review_limit, normally null) then the plan catalog
+ * (bs_plans.monthly_usage_limit). null = unlimited — including when the plan
+ * is unknown, so a config gap fails open rather than blocking the user
+ * (availability principle, master-plan §3.3).
  */
-export function monthlyReviewLimit(entitlement: Entitlement): number {
-  return entitlement.monthly_review_limit ?? getServerEnv().freeMonthlyReviewLimit;
+export async function effectiveMonthlyLimit(
+  entitlement: Entitlement,
+): Promise<number | null> {
+  if (entitlement.monthly_review_limit != null) {
+    return entitlement.monthly_review_limit;
+  }
+  const plan = await getPlanConfig(entitlement.plan);
+  return plan ? plan.monthlyUsageLimit : null;
 }
 
-/** Builds the quota envelope for a given usage count (no I/O). */
+/** Builds the quota envelope for a given usage count and resolved limit
+ * (no I/O). `limit === null` means unlimited. */
 export function quotaInfo(
   entitlement: Entitlement,
   used: number,
-  limit: number,
+  limit: number | null,
 ): QuotaInfo {
   return {
     plan: entitlement.plan,
     used,
     limit,
-    remaining: Math.max(0, limit - used),
+    remaining: limit === null ? null : Math.max(0, limit - used),
     resets_at: nextMonthStartUTC().toISOString(),
   };
 }
@@ -245,7 +257,8 @@ export async function enforceQuota(
   tenantId: string,
   entitlement: Entitlement,
 ): Promise<void> {
-  const limit = monthlyReviewLimit(entitlement);
+  const limit = await effectiveMonthlyLimit(entitlement);
+  if (limit === null) return; // unlimited plan
   const used = await countMonthlyUsage(tenantId);
   if (used >= limit) {
     throw new GatewayError(429, "QUOTA_EXCEEDED", "Monthly usage limit reached.");
@@ -262,8 +275,9 @@ export async function buildQuota(
   entitlement: Entitlement,
   usedOffset = 0,
 ): Promise<QuotaInfo> {
+  const limit = await effectiveMonthlyLimit(entitlement);
   const used = (await countMonthlyUsage(tenantId)) + usedOffset;
-  return quotaInfo(entitlement, used, monthlyReviewLimit(entitlement));
+  return quotaInfo(entitlement, used, limit);
 }
 
 export function currentMonthStartUTC(): Date {

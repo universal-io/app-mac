@@ -267,7 +267,30 @@ CREATE TABLE bs_harness_packs (
 - **強制は必ずサーバー**。Gateway の `authenticate` 済みコンテキストに
   `entitlements: { plan, features: string[], quotas: {...} }` を載せ、各エンジンが operation 単位で
   検査する（既存の月次クォータ機構の拡張）。
-- プラン × 機能マトリクス（初期案。**数値・割当はオーナー決定事項**）:
+- **オーナー決定（2026-07-08）: リリースまで機能ゲート（feature gating）はかけない。**
+  全プランに全機能（Copilot 含む）を開放したまま（実コードは `featuresForPlan` が全機能を返す）。
+  下表は据え置きの**ドラフト**で、確定・強制は**リリース前の残タスク**（§7 R4 残 #3）。
+  理由: 完成前に機能を分けると検証がややこしくなるため、まず全員が全部使える状態で固める。
+  表の「Free の Copilot ×」も未実装の案にすぎない。
+- **プラン定義の単一正本テーブル `bs_plans`（2026-07-08 新設、migration `0004_plan_catalog.sql`）**:
+  「どのプランに、いくらのクォータ／どの機能を許すか」をここ1箇所で持つ。
+  ```
+  bs_plans:  plan (PK) | monthly_usage_limit (NULL=無制限) | features (["*"]=全許可)
+  ```
+  - `bs_entitlements.plan` は `bs_plans.plan` への FK（plan の値域もここが正本。`standard` 追加済み）。
+  - `bs_entitlements.monthly_review_limit` は **個別override（NULL=プラン定義に従う）に格下げ**。
+    B2B の特別枠など「意図的な例外」専用。プロビジョニング（`bs_provision_user`）は
+    **プラン名を割り当てるだけで制限値リテラルを持たない**（従来の 50 ハードコードを撤去）。
+  - Gateway の実効解決（[`effectiveMonthlyLimit`](../web/lib/server/gateway.ts)）:
+    `override ?? bs_plans[plan].monthly_usage_limit`（NULL=無制限）。プラン行が引けない異常時は
+    フェイルオープン（無制限）でユーザーを止めない（§3.3）。**env フォールバックは撤去**
+    （`BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT` 廃止。読み込みは [`plans.ts`](../web/lib/server/plans.ts)
+    が service-role で 60 秒キャッシュ、空/失敗時は in-code seed）。
+  - 回数変更は `UPDATE bs_plans`（または個別に `bs_entitlements.monthly_review_limit`）の1箇所・
+    デプロイ不要。admin コンソール表示も bs_plans を映す。GUI 編集（admin「プラン設定」）は admin v1。
+  - **これが 2026-07-08 に見つけた既定値三者不整合（新規=50 / 既存=500 / admin表示=500）の
+    構造的解消**。対症療法（値を揃えるだけ）ではなくプラン定義の置き場を作った。
+- プラン × 機能マトリクス（初期案。**数値・割当はオーナー決定事項。リリース前に確定**）:
 
 | 機能 | Free/Trial | Standard ¥1,980 | Pro ¥4,980 | Team/Enterprise（B2B） |
 |---|---|---|---|---|
@@ -414,9 +437,24 @@ interpret エンジン統合は今回スコープ外**（挙動不変を優先�
 - Stripe 課金（M3 残タスク）は未着手。entitlements の強制と同時接続が最小工数。
 
 **R4 の残・オーナー確認事項**:
-1. `0003_bs_harness_packs.sql` の Supabase 適用（未実施）。
-2. Vercel 環境変数に `ADMIN_EMAILS` を設定（未設定だと誰も admin に入れない）。
-3. プラン×機能マトリクスの確定（entitlements の強制を入れる前提）。
+1. ~~`0003_bs_harness_packs.sql` の Supabase 適用~~ → **適用済み（2026-07-08）**。
+2. ~~Vercel 環境変数に `ADMIN_EMAILS` を設定~~ → **設定済み（2026-07-08、`whatifepxyz@gmail.com`）**。
+3. プラン×機能マトリクスの確定（entitlements の強制を入れる前提）→ **オーナー決定で
+   リリース前へ後送り**（§5-c）。それまでは全プラン全機能で運用（機能ゲートなし）。
+4. **`0004_plan_catalog.sql` の Supabase 適用（要実行）**: プラン定義の単一正本
+   `bs_plans` を新設し、`bs_entitlements.plan` を FK 化・`monthly_review_limit` を
+   override 化、プロビジョニングから制限値リテラルを撤去（§5-c）。適用後、既定回数の
+   三者不整合が構造的に解消され、free=500・他=無制限が bs_plans 1箇所で決まる。
+   ※クライアント（web/Swift）は適用前でも動く: web は seed フォールバック、Swift は
+   free=500 の数値のみ受信するため。適用で正本が DB へ移る。
+
+**リリース前の残タスク（プラン制限の設計・強制）**:
+- プラン×機能マトリクスを確定（§5-c ドラフトを叩く）→ `bs_plans` の各行
+  （monthly_usage_limit / features）を埋めるだけ。当面は全プラン全許可のシード。
+- 各 AI ルートに operation ゲート（サーバー強制。`featuresForPlan` は `bs_plans.features`
+  を読む実装済み。ゲート接続は未）。Stripe 課金（M3 残）と同時実装が最小工数。
+- クライアント側の表示ゲート（features でボタンを隠す/ロック表示）を実装。
+- admin「プラン設定」で `bs_plans` を GUI 編集（admin v1。現状は SQL で編集）。
 
 ### 見積もりの目安
 R0+R1 が本丸で全体の半分。R2 以降は独立性が高く、事業都合（ベータフィードバック・営業）で

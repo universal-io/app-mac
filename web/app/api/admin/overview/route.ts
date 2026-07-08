@@ -18,7 +18,7 @@ export async function GET(request: Request): Promise<Response> {
   try {
     await assertAdmin(request);
     const [config, stats] = await Promise.all([
-      Promise.resolve(effectiveConfig()),
+      effectiveConfig(),
       overviewStats(),
     ]);
     return Response.json({ config, stats });

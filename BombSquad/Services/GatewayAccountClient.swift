@@ -47,7 +47,8 @@ private struct AccountResponse: Decodable {
         let tenantID: UUID
         let plan: String
         let status: String
-        let monthlyReviewLimit: Int
+        // null when the plan has no cap (unlimited); foundation-redesign-plan §5-c.
+        let monthlyReviewLimit: Int?
 
         private enum CodingKeys: String, CodingKey {
             case email, plan, status

@@ -54,5 +54,6 @@ struct BombSquadAccountSummary: Equatable {
     let tenantID: UUID
     let tier: BombSquadAccountTier
     let state: BombSquadAccountState
-    let monthlyReviewLimit: Int
+    // nil = unlimited (plan carries no monthly cap; foundation-redesign-plan §5-c).
+    let monthlyReviewLimit: Int?
 }

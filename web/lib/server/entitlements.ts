@@ -1,11 +1,13 @@
-// Plan -> feature flags (docs/foundation-redesign-plan.md §5-c). Minimal
-// scaffolding: this module is the single place the plan × feature matrix
-// lives, so both the future server-side gates (operation checks in the AI
-// routes) and GET /api/account read from one source.
+// Plan -> feature flags (docs/foundation-redesign-plan.md §5-c). The plan ×
+// feature matrix lives in the plan catalog (bs_plans.features), so both the
+// future server-side gates (operation checks in the AI routes) and
+// GET /api/account read from that one source via plans.ts.
 //
 // Enforcement is NOT wired yet — no AI endpoint consults this. Clients may
 // use the `features` list from /api/account for display gating only
 // (hide/lock buttons); the server stays the authority once gating lands.
+
+import { getPlanConfig } from "@/lib/server/plans";
 
 /** Feature identifiers, matching the five product modes plus pack tiers. */
 export const ALL_FEATURES = [
@@ -19,14 +21,20 @@ export const ALL_FEATURES = [
 export type Feature = (typeof ALL_FEATURES)[number];
 
 /**
- * Features available to a plan.
+ * Features available to a plan, read from the catalog (bs_plans.features).
+ * `["*"]` (the current beta policy for every plan) expands to all features.
+ * An unknown plan / config gap also grants everything — display gating must
+ * fail open, never hide a feature the user actually has.
  *
- * NOTE: the actual plan × feature matrix (which plan loses copilot, where
- * tenant packs sit, etc.) is an OWNER DECISION (foundation-redesign-plan
- * §5-c table is a draft). Until it is decided, every existing plan maps to
- * every feature, so shipping this field changes nothing user-visible.
+ * NOTE: which plan loses copilot, where tenant packs sit, etc. is an OWNER
+ * DECISION (foundation-redesign-plan §5-c table is a draft). Today every plan
+ * is seeded with ["*"], so this changes nothing user-visible yet.
  */
-export function featuresForPlan(plan: string): Feature[] {
-  void plan; // Intentionally unused until the matrix is decided.
-  return [...ALL_FEATURES];
+export async function featuresForPlan(plan: string): Promise<Feature[]> {
+  const config = await getPlanConfig(plan);
+  const allowed = config?.features ?? ["*"];
+  if (allowed.includes("*")) {
+    return [...ALL_FEATURES];
+  }
+  return ALL_FEATURES.filter((feature) => allowed.includes(feature));
 }

@@ -5,8 +5,10 @@ import Foundation
 struct GatewayQuota: Codable, Equatable {
     let plan: String
     let used: Int
-    let limit: Int
-    let remaining: Int
+    // null on the wire for plans with no cap (bs_plans.monthly_usage_limit is
+    // null = unlimited; foundation-redesign-plan §5-c). Free-tier stays a number.
+    let limit: Int?
+    let remaining: Int?
     let resetsAt: String
 
     enum CodingKeys: String, CodingKey {

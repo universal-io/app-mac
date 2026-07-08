@@ -141,10 +141,11 @@ function EffectiveConfigSection({ config }: { config: EffectiveConfig }) {
 
       <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
         <span className="text-slate">
-          無料枠 / 月: <span className="text-ink">{config.freeMonthlyLimit.value}</span>
-          {config.freeMonthlyLimit.source === "env" ? (
-            <span className="ml-1 text-iris">(env)</span>
-          ) : null}
+          無料枠 / 月:{" "}
+          <span className="text-ink">
+            {config.freeMonthlyLimit.value ?? "無制限"}
+          </span>
+          <span className="ml-1 text-iris">(bs_plans)</span>
         </span>
         <span className="text-slate">APIキー:</span>
         {Object.entries(config.apiKeys).map(([name, present]) => (
