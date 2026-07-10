@@ -541,7 +541,7 @@ struct VisionPanelView: View {
                 tool: viewModel.previewTool,
                 annotationTint: viewModel.annotationTint,
                 annotations: $viewModel.screenshotAnnotations,
-                highlight: viewModel.navigatorHighlight
+                highlight: viewModel.panelNavigatorHighlight
             )
             .padding(4)
         } else {
@@ -716,7 +716,7 @@ struct VisionPanelView: View {
                     focusedField: $viewModel.focusedField,
                     field: .navigator,
                     onSend: { viewModel.sendNavigatorQuestion() },
-                    onEscape: { viewModel.exitVisionMode() }
+                    onEscape: { NotificationCenter.default.post(name: .closePanel, object: nil) }
                 )
                 .frame(minHeight: 44, maxHeight: 88)
                 .background(EditorFocusBackground(isFocused: viewModel.focusedField == .navigator))
@@ -839,10 +839,14 @@ private struct VisionInterpretationView: View {
     }
 }
 
-/// One proposed action. Drafted actions (reply / fill_form) close the loop
-/// with two buttons: approve = deploy the draft as-is into the summon-time
-/// field; edit = carry it into the compose editor. Everything else is
-/// presented as guidance only — I//O never executes actions itself.
+/// One proposed action. These cards expose the "future reply/fill loop"
+/// earlier than the rest of the screenshot UX: today's primary vision path is
+/// still summary/questioning/navigation, while drafted reply/fill actions are
+/// partially surfaced here for incremental rollout.
+/// Approve = deploy the draft as-is into the summon-time field.
+/// Edit = carry it into the compose editor.
+/// Everything else is presented as guidance only — I//O never executes
+/// actions itself.
 private struct SuggestedActionCard: View {
     let action: VisionSuggestedAction
     var isTransform: Bool = false
@@ -981,9 +985,10 @@ private struct IssueCard: View {
 // MARK: - Copilot strip (docs/navigator-copilot-plan.md 正のユーザー体験)
 
 /// The whole panel while guided navigation runs: a corner strip with the
-/// step counter, the current instruction, and an exit button. The real UI is
-/// the navigated screen itself — the user clicks the highlighted spot there,
-/// a global monitor notices, and the progress check runs automatically.
+/// step counter, the current instruction, and an explicit finish button. The
+/// real UI is the navigated screen itself — the user clicks the highlighted
+/// spot there, a global monitor notices, and the progress check runs
+/// automatically.
 struct CopilotStripView: View {
     @ObservedObject var viewModel: ReviewViewModel
 
@@ -1004,9 +1009,10 @@ struct CopilotStripView: View {
                 Button {
                     NotificationCenter.default.post(name: .closePanel, object: nil)
                 } label: {
-                    Image(systemName: "xmark")
+                    Label("終了", systemImage: "checkmark.circle")
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .help("ナビゲーションを終了")
             }
 
@@ -1028,7 +1034,7 @@ struct CopilotStripView: View {
                 } else {
                     Image(systemName: "cursorarrow.click.2")
                         .foregroundStyle(.secondary)
-                    Text("赤い枠の場所をクリックしてください。クリック後、自動で進捗を確認します")
+                    Text(statusMessage)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -1040,6 +1046,12 @@ struct CopilotStripView: View {
                 .controlSize(.small)
                 .disabled(viewModel.isNavigating || viewModel.isCopilotChecking)
                 .help("いま手動で進捗を確認する")
+                Button("終了") {
+                    NotificationCenter.default.post(name: .closePanel, object: nil)
+                }
+                .controlSize(.small)
+                .disabled(viewModel.isNavigating || viewModel.isCopilotChecking)
+                .help("案内をここで終了する")
             }
         }
         .padding(14)
@@ -1054,5 +1066,12 @@ struct CopilotStripView: View {
         }
         return viewModel.navigatorTurns.last(where: { $0.role == .assistant })?.text
             ?? "案内を待っています…"
+    }
+
+    private var statusMessage: String {
+        if viewModel.panelNavigatorHighlight != nil {
+            return "赤い枠の場所をクリックしてください。クリック後、自動で進捗を確認します"
+        }
+        return "この案内で十分なら「終了」を押してください。必要なら「撮り直す」で再確認できます"
     }
 }

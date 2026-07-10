@@ -39,13 +39,6 @@ extension Notification.Name {
 /// On hotkey: capture the frontmost app (the paste target), then show a floating
 /// panel hosting the staging/review UI wired to a `PasteDeployer`.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Text mode is a single Spotlight-style column; vision needs two panes.
-    private static let textPanelSize = NSSize(width: 680, height: 660)
-    private static let visionPanelSize = NSSize(width: 960, height: 640)
-    /// Guided navigation shrinks the panel to a corner strip so the screen
-    /// being navigated stays visible and clickable.
-    private static let copilotPanelSize = NSSize(width: 460, height: 240)
-
     private var panel: NSPanel?
     /// The single on-demand management window (account/settings/history/pricing).
     /// Created lazily and reused; never always-on.
@@ -54,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Lazy so the @MainActor initializer runs on first use (in
     // applicationDidFinishLaunching), not in a nonisolated property default.
     private lazy var permissions = PermissionsCoordinator()
-    private var currentViewModel: ReviewViewModel?
+    private var currentSession: PanelSession?
     private let authClient = BombSquadAuthClient.shared
     private let gesture = ShiftGestureMonitor()
     private let recorder = AudioRecorder()
@@ -65,12 +58,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let screenshotSelection = ScreenshotSelectionOverlay()
     /// Guards against duplicate begin/end callbacks so the cues fire exactly once.
     private var isDictating = false
-    private var isCapturingScreenshot = false
-    /// True while guided navigation runs: suspends the panel's modal
-    /// close-on-resign behavior (clicking the target app IS the interaction).
-    private var isCopilotActive = false
+    private var isCapturingScreenshot: Bool {
+        MainActor.assumeIsolated { currentSession?.viewModel.isCapturingScreenshot == true }
+    }
+
+    private func trace(_ name: String, details: [String: CustomStringConvertible?] = [:]) {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.trace(name, details: details)
+            }
+            return
+        }
+        MainActor.assumeIsolated {
+            SessionTrace.event(
+                name,
+                mode: InferredAppMode.infer(
+                    hasPanel: panel != nil,
+                    session: currentSession,
+                    isCapturingScreenshot: isCapturingScreenshot,
+                    isSelectionOverlayPresenting: screenshotSelection.isPresenting
+                ),
+                details: details
+            )
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        trace("app.didFinishLaunching")
         terminateOtherRunningCopies()
         // Menu-bar accessory: no Dock icon, no window until summoned.
         NSApp.setActivationPolicy(.accessory)
@@ -122,12 +136,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .showPanelAfterAction, object: nil
         )
         NotificationCenter.default.addObserver(
-            self, selector: #selector(handleVisionSessionEnded), name: .visionSessionEnded, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleCopilotModeChanged), name: .copilotModeChanged, object: nil
-        )
-        NotificationCenter.default.addObserver(
             self, selector: #selector(handleOpenScreenCaptureSettings),
             name: .openScreenCaptureSettings, object: nil
         )
@@ -166,20 +174,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleResignActive() {
-        guard !isCapturingScreenshot else { return }
+        trace("app.resignActive")
+        guard !isCapturingScreenshot else {
+            trace("app.resignActive.skip", details: ["reason": "capturing"])
+            return
+        }
 
         // Guided navigation inverts the modal rule: clicking the target app
         // is the interaction, so losing active is the NORMAL state, never a
         // close signal (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
-        guard !isCopilotActive else { return }
+        guard MainActor.assumeIsolated({ currentSession?.flowState }) != .copilot else {
+            trace("app.resignActive.skip", details: ["reason": "copilot"])
+            return
+        }
 
         // Login can legitimately move focus to the browser or Mail. Keep the
         // auth gate alive so the user has a visible return point after callback.
-        guard authClient.currentSession() != nil else { return }
+        guard authClient.currentSession() != nil else {
+            trace("app.resignActive.skip", details: ["reason": "auth"])
+            return
+        }
 
         // The staging panel is a transient "capture" mode; touching another app's
         // input releases it. Closing on resign makes it behave modally.
-        if panel != nil { closePanel() }
+        if panel != nil {
+            trace("app.resignActive.closePanel")
+            closePanel()
+        }
     }
 
     /// Copilot on: shrink to a bottom-right strip that never covers the
@@ -188,14 +209,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// forward so the final answer is readable.
     @objc private func handleCopilotModeChanged(_ notification: Notification) {
         let active = (notification.userInfo?["active"] as? Bool) ?? false
-        isCopilotActive = active
-        guard let panel else { return }
-        if active {
-            panel.setContentSize(Self.copilotPanelSize)
-            positionBottomTrailing(panel)
-        } else {
-            panel.setContentSize(Self.visionPanelSize)
-            centerOnActiveScreen(panel)
+        trace("copilot.changed", details: ["active": active])
+        guard let panel, let session = currentSession else { return }
+        let layout = MainActor.assumeIsolated { session.panelLayout }
+        applyPanelLayout(layout, to: panel)
+        if !active {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
         }
@@ -218,44 +236,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// vision capture; vision mode closes; non-empty draft mode reviews.
     /// Invoked from the key-event monitor, which delivers on the main thread.
     private func advance() {
+        trace("gesture.doubleTap")
         // Double-tap while the capture overlay is up abandons the vision
         // session entirely: back to the pre-panel standby state. The pending
         // capture task sees the panel is gone and stays quiet.
         let isSelecting = MainActor.assumeIsolated { screenshotSelection.isPresenting }
         if isSelecting {
+            trace("gesture.doubleTap.cancelSelection")
             MainActor.assumeIsolated { screenshotSelection.cancel() }
             closePanel()
             return
         }
         if panel == nil {
+            trace("gesture.doubleTap.summon")
             summon()
             return
         }
         MainActor.assumeIsolated {
-            guard let viewModel = currentViewModel else {
+            guard let session = currentSession else {
+                trace("gesture.doubleTap.closeNoSession")
                 closePanel()
                 return
             }
 
-            if viewModel.sessionKind == .vision {
+            if session.shouldClosePanelOnHotkeyDoubleTap {
+                trace("gesture.doubleTap.closeVision")
                 closePanel()
                 return
             }
 
-            guard viewModel.focusedField == .draft else { return }
-            if viewModel.isEmptyDraft {
+            guard session.viewModel.focusedField == .draft else {
+                trace("gesture.doubleTap.ignore", details: ["reason": "focusNotDraft"])
+                return
+            }
+            if session.canStartScreenshotCaptureFromHotkey {
+                trace("gesture.doubleTap.startCapture")
                 startScreenshotCapture()
             } else {
-                viewModel.requestReviewFromHotkey()
+                trace("gesture.doubleTap.review")
+                session.requestReviewFromHotkey()
             }
         }
     }
 
     private func toggleEditorFocus() {
-        guard panel != nil else { return }
+        trace("gesture.singleTap")
+        guard panel != nil else {
+            trace("gesture.singleTap.ignore", details: ["reason": "noPanel"])
+            return
+        }
         MainActor.assumeIsolated {
-            guard currentViewModel?.sessionKind == .text else { return }
-            currentViewModel?.toggleFocusedField()
+            guard currentSession?.canToggleEditorFocus == true else {
+                trace("gesture.singleTap.ignore", details: ["reason": "notText"])
+                return
+            }
+            currentSession?.toggleEditorFocus()
+            trace("gesture.singleTap.toggled", details: ["focused": String(describing: currentSession?.viewModel.focusedField)])
         }
     }
 
@@ -264,10 +300,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// empty compose pane (sending side). The selection grab must happen before
     /// our panel steals focus, so it runs here while the target is still front.
     private func summon() {
+        trace("summon.begin")
         SelectionGrabber.grab { [weak self] selection in
             if let selection {
+                self?.trace("summon.selection", details: ["characters": selection.count])
                 self?.showPanel(prefill: selection, mode: .transform)
             } else {
+                self?.trace("summon.noSelection")
                 self?.showPanel(mode: .compose)
             }
         }
@@ -278,41 +317,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ~0.5s, but firing the cue first makes it feel snappy; the tiny head clip is
     /// negligible in practice.
     private func startDictation() {
+        trace("dictation.begin")
         guard !isDictating else { return }
-        if panel == nil { showPanel() }
-        let vm = currentViewModel
+        if panel == nil {
+            trace("dictation.showPanel")
+            showPanel()
+        }
         // Dictation is available wherever there is an editable field: the text
         // compose/review session, and the navigator's question input. The bare
         // (pre-navigator) vision one-shot has no input to dictate into.
         guard MainActor.assumeIsolated({
-            vm?.sessionKind == .text || vm?.navigatorSessionActive == true
-        }) else { return }
+            currentSession?.canAcceptDictation == true
+        }) else {
+            trace("dictation.begin.ignore", details: ["reason": "noEditableTarget"])
+            return
+        }
         isDictating = true
         SoundFeedback.recordingStarted()
         MainActor.assumeIsolated {
-            vm?.errorMessage = nil
-            vm?.isRecording = true
+            currentSession?.viewModel.errorMessage = nil
+            currentSession?.viewModel.isRecording = true
         }
         do {
             try recorder.start()
+            trace("dictation.recordingStarted")
         } catch {
             MainActor.assumeIsolated {
-                vm?.isRecording = false
-                vm?.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                currentSession?.viewModel.isRecording = false
+                currentSession?.viewModel.errorMessage =
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
+            trace("dictation.recordingFailed", details: ["error": error.localizedDescription])
         }
     }
 
     /// Right Shift released: stop recording, transcribe, and append the text to the draft.
     private func stopDictationAndTranscribe() {
+        trace("dictation.end")
         guard isDictating else { return }
         isDictating = false
-        let vm = currentViewModel
         recorder.onFinish = { SoundFeedback.recordingStopped() }
-        guard let url = recorder.stop() else { return }
+        guard let url = recorder.stop() else {
+            trace("dictation.end.noFile")
+            return
+        }
         MainActor.assumeIsolated {
-            vm?.isRecording = false
-            vm?.isTranscribing = true
+            currentSession?.viewModel.isRecording = false
+            currentSession?.viewModel.isTranscribing = true
         }
         Task {
             defer { try? FileManager.default.removeItem(at: url) }
@@ -321,25 +372,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // if the file can't be inspected we fail open and transcribe anyway.
             if let clip = AudioRecorder.inspect(url: url),
                clip.duration < 0.4 || clip.averagePower < -45 {
-                await MainActor.run { vm?.isTranscribing = false }
+                await MainActor.run { self.currentSession?.viewModel.isTranscribing = false }
+                await MainActor.run {
+                    trace("dictation.droppedSilence", details: [
+                        "duration": String(format: "%.2f", clip.duration),
+                        "power": String(format: "%.1f", clip.averagePower)
+                    ])
+                }
                 return
             }
             do {
                 let text = try await transcriber.transcribe(fileURL: url)
                 await MainActor.run {
-                    vm?.appendTranscription(text)
-                    vm?.isTranscribing = false
+                    self.currentSession?.viewModel.appendTranscription(text)
+                    self.currentSession?.viewModel.isTranscribing = false
+                    trace("dictation.transcribed", details: ["characters": text.count])
                 }
             } catch {
                 await MainActor.run {
-                    vm?.isTranscribing = false
-                    vm?.errorMessage = "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                    self.currentSession?.viewModel.isTranscribing = false
+                    self.currentSession?.viewModel.errorMessage =
+                        "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                    trace("dictation.transcribeFailed", details: ["error": error.localizedDescription])
                 }
             }
         }
     }
 
     @objc private func handleShowPanel() {
+        trace("notification.showPanel")
         togglePanel()
     }
 
@@ -350,6 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// would open behind it. The panel is transient anyway, so we close it and let
     /// the management window take over (e.g. login → the account/login screen).
     @objc private func handleShowManagement() {
+        trace("notification.showManagement")
         if panel != nil { closePanel() }
 
         if let managementWindow {
@@ -407,16 +469,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleClosePanel() {
+        trace("notification.closePanel")
         closePanel()
     }
 
     @objc private func handleCaptureScreenshot(_ notification: Notification) {
+        trace("notification.captureScreenshot")
         startScreenshotCapture()
     }
 
     /// The approved action is about to run: get the panel out of the way so
     /// a synthetic click hits the target app (and the user sees it happen).
     @objc private func handleHidePanelForAction(_ notification: Notification) {
+        trace("notification.hidePanelForAction")
         panel?.orderOut(nil)
     }
 
@@ -428,6 +493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the panel looks "gone". `orderFrontRegardless` bypasses activation
     /// and puts the floating panel back on screen unconditionally.
     @objc private func handleShowPanelAfterAction(_ notification: Notification) {
+        trace("notification.showPanelAfterAction")
         guard let panel else {
             NSLog("[Action] restore skipped: panel is nil")
             return
@@ -441,16 +507,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Vision's two-pane session ended (e.g. an action draft was carried into
     /// the compose editor): restore the narrow Spotlight-style layout.
     @objc private func handleVisionSessionEnded() {
-        guard let panel, panel.frame.size.width > Self.textPanelSize.width else { return }
-        panel.setContentSize(Self.textPanelSize)
-        centerOnActiveScreen(panel)
+        trace("notification.visionSessionEnded")
+        guard let panel, let session = currentSession else { return }
+        let layout = MainActor.assumeIsolated { session.panelLayout }
+        guard panel.frame.size != NSSize(width: layout.size.width, height: layout.size.height)
+            || layout.placement != .centered else { return }
+        applyPanelLayout(layout, to: panel)
     }
 
     @objc private func handleOpenScreenCaptureSettings() {
+        trace("notification.openScreenCaptureSettings")
         ScreenCapturePermission.openSettings()
     }
 
     private func togglePanel() {
+        trace("panel.toggle", details: ["visible": panel?.isVisible == true])
         if let panel, panel.isVisible {
             closePanel()
         } else {
@@ -459,6 +530,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showPanel(prefill: String? = nil, mode: ReviewMode = .compose) {
+        trace("panel.show.begin", details: [
+            "requestedMode": String(describing: mode),
+            "prefillCharacters": prefill?.count
+        ])
         // Capture the target BEFORE our panel activates and steals focus.
         let target = NSWorkspace.shared.frontmostApplication
         // Same timing constraint: identify the context source app now; the AX
@@ -476,27 +551,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewModel = MainActor.assumeIsolated {
             ReviewViewModel(deployer: deployer, mode: mode)
         }
-        currentViewModel = viewModel
+        currentSession = MainActor.assumeIsolated {
+            PanelSession(viewModel: viewModel)
+        }
         MainActor.assumeIsolated {
-            viewModel.restorePersistedDraftIfNeeded()
-            viewModel.attachContextCapture(contextTask)
+            currentSession?.configurePanelCallbacks(
+                onVisionModeExited: { [weak self] in
+                    self?.handleVisionSessionEnded()
+                },
+                onHidePanelForAction: { [weak self] in
+                    self?.handleHidePanelForAction(Notification(name: .hidePanelForAction))
+                },
+                onShowPanelAfterAction: { [weak self] in
+                    self?.handleShowPanelAfterAction(Notification(name: .showPanelAfterAction))
+                },
+                onClosePanelRequested: { [weak self] in
+                    self?.handleClosePanel()
+                },
+                onCopilotModeChanged: { [weak self] active in
+                    self?.handleCopilotModeChanged(
+                        Notification(name: .copilotModeChanged, userInfo: ["active": active])
+                    )
+                }
+            )
+            currentSession?.prepareForPresentation(contextTask: contextTask)
         }
         if let prefill {
             MainActor.assumeIsolated {
-                viewModel.draft = prefill
                 // Receiving side: the selection is already captured, so run the
                 // transform immediately — the panel opens with the readable
                 // result already showing on the right (one stop, no second tap).
-                if mode == .transform, authClient.currentSession() != nil {
-                    Task { await viewModel.runReview() }
-                }
+                currentSession?.applyPrefill(prefill, autoReviewIfAuthenticated: authClient.currentSession() != nil)
             }
         }
 
         // Spotlight-style chrome: borderless transparent window; the SwiftUI
         // glass shape (PanelChrome) is the visible panel.
+        let initialLayout = MainActor.assumeIsolated {
+            currentSession?.panelLayout ?? PanelLayoutSpec(
+                size: PanelSession.textPanelSize,
+                placement: .centered
+            )
+        }
+
         let panel = KeyablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: Self.textPanelSize.width, height: Self.textPanelSize.height),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: initialLayout.size.width,
+                height: initialLayout.size.height
+            ),
             styleMask: [.borderless],
             backing: .buffered, defer: false
         )
@@ -515,52 +619,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // matching standard macOS/iOS behavior of "grab the title area".
         panel.isMovableByWindowBackground = false
         panel.contentViewController = NSHostingController(
-            rootView: MainActor.assumeIsolated { RootPanelView(reviewViewModel: viewModel) }
+            rootView: MainActor.assumeIsolated { RootPanelView(session: currentSession!) }
         )
         // Enforce a fixed size so SwiftUI can't resize the window out from under
-        // the centering math; then center exactly.
-        panel.setContentSize(Self.textPanelSize)
-        centerOnActiveScreen(panel)
+        // the placement math; the session decides which layout is correct.
+        applyPanelLayout(initialLayout, to: panel)
 
         self.panel = panel
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        trace("panel.show.end", details: ["requestedMode": String(describing: mode)])
     }
 
     private func closePanel() {
+        trace("panel.close.begin")
         // Whatever closes the panel, the view model is about to be
         // discarded: save the conversation, stop the copilot click monitor,
         // and take the highlight ring down with it.
         MainActor.assumeIsolated {
-            currentViewModel?.panelWillClose()
+            currentSession?.handlePanelWillClose()
         }
-        isCopilotActive = false
         panel?.orderOut(nil)
         panel = nil
-        currentViewModel = nil
+        currentSession = nil
+        trace("panel.close.end")
     }
 
     /// M4 (owner spec): summoning on an empty draft opens the selection
     /// overlay with the whole screen pre-selected — Enter keeps it, a drag
-    /// narrows it to a region, Esc returns to the panel, and a right-Shift
+    /// narrows it to a region, Esc closes the session, and a right-Shift
     /// double-tap (handled in `advance()`) abandons the session.
     private func startScreenshotCapture() {
+        trace("capture.begin")
         guard !isCapturingScreenshot else { return }
-        guard let panel, let viewModel = currentViewModel else { return }
-
-        guard ScreenCapturePermission.isGranted || ScreenCapturePermission.request() else {
-            MainActor.assumeIsolated {
-                viewModel.needsScreenCapturePermission = true
-                viewModel.errorMessage = "スクリーンショットには画面収録の許可が必要です。"
-            }
+        guard let panel, let session = currentSession else {
+            trace("capture.begin.ignore", details: ["reason": "missingPanelOrViewModel"])
             return
         }
 
-        isCapturingScreenshot = true
+        guard ScreenCapturePermission.isGranted || ScreenCapturePermission.request() else {
+            MainActor.assumeIsolated {
+                session.markScreenCapturePermissionRequired(true)
+                session.failScreenshotCapture(message: "スクリーンショットには画面収録の許可が必要です。")
+            }
+            trace("capture.permissionDenied")
+            return
+        }
+
         MainActor.assumeIsolated {
-            viewModel.isCapturingScreenshot = true
-            viewModel.needsScreenCapturePermission = false
-            viewModel.errorMessage = nil
+            session.beginScreenshotCapture()
         }
 
         panel.orderOut(nil)
@@ -574,33 +681,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ] as? CGDirectDisplayID
 
         Task {
+            enum CaptureCompletion {
+                case attachment(ScreenshotAttachment)
+                case cancelled
+                case failed(String)
+            }
+
+            let completion: CaptureCompletion
             do {
                 let attachment = try await captureAttachment(on: screen, displayID: displayID)
-                await MainActor.run {
-                    viewModel.addScreenshotAttachment(attachment)
-                }
+                completion = .attachment(attachment)
             } catch ScreenshotCaptureError.cancelled {
                 // Expected: Esc from the selection overlay, an abandoned
                 // session, or the system capture UI's cancel.
+                completion = .cancelled
             } catch {
-                await MainActor.run {
-                    viewModel.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                }
+                completion = .failed(
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                )
             }
 
             await MainActor.run {
-                viewModel.isCapturingScreenshot = false
-                self.isCapturingScreenshot = false
-                guard self.panel === panel else { return }
-                // Vision shows two panes (screenshot / interpretation), so give
-                // the panel the wide layout before it reappears.
-                if viewModel.sessionKind == .vision,
-                   panel.frame.size.width < Self.visionPanelSize.width {
-                    panel.setContentSize(Self.visionPanelSize)
-                    self.centerOnActiveScreen(panel)
+                switch completion {
+                case .attachment(let attachment):
+                    session.handleCapturedScreenshot(attachment)
+                    trace("capture.attachmentAdded", details: [
+                        "width": attachment.pixelWidth,
+                        "height": attachment.pixelHeight
+                    ])
+                    session.finishScreenshotCapture()
+                    guard self.panel === panel else { return }
+                    self.applyPanelLayout(session.panelLayout, to: panel)
+                    NSApp.activate(ignoringOtherApps: true)
+                    panel.makeKeyAndOrderFront(nil)
+                    trace("capture.end")
+                case .cancelled:
+                    trace("capture.cancelled")
+                    session.finishScreenshotCapture()
+                    guard self.panel === panel else { return }
+                    self.closePanel()
+                case .failed(let message):
+                    session.failScreenshotCapture(message: message)
+                    trace("capture.failed", details: ["error": message])
+                    session.finishScreenshotCapture()
+                    guard self.panel === panel else { return }
+                    NSApp.activate(ignoringOtherApps: true)
+                    panel.makeKeyAndOrderFront(nil)
+                    trace("capture.end")
                 }
-                NSApp.activate(ignoringOtherApps: true)
-                panel.makeKeyAndOrderFront(nil)
             }
         }
     }
@@ -644,5 +772,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let origin = NSPoint(x: visible.midX - size.width / 2,
                              y: visible.midY - size.height / 2)
         window.setFrameOrigin(origin)
+    }
+
+    private func applyPanelLayout(_ layout: PanelLayoutSpec, to window: NSWindow) {
+        window.setContentSize(NSSize(width: layout.size.width, height: layout.size.height))
+        switch layout.placement {
+        case .centered:
+            centerOnActiveScreen(window)
+        case .bottomTrailing:
+            positionBottomTrailing(window)
+        }
     }
 }

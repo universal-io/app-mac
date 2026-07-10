@@ -3,7 +3,7 @@ import AppKit
 /// Vision capture entry (owner spec, 2026-07-03): summoning on an empty draft
 /// opens this overlay with the whole screen pre-selected. Enter confirms the
 /// full screen, dragging captures a region instead (the pre-M4 behavior),
-/// Esc returns to the panel. A right-Shift double-tap is detected outside
+/// Esc closes the session. A right-Shift double-tap is detected outside
 /// (AppDelegate) and abandons the whole session back to standby.
 final class ScreenshotSelectionOverlay {
     enum Outcome {
@@ -102,7 +102,7 @@ private final class SelectionOverlayView: NSView {
         switch event.keyCode {
         case 36, 76: // Return / keypad Enter: confirm the full-screen selection
             onOutcome?(.fullScreen)
-        case 53: // Esc: back to the panel
+        case 53: // Esc: close the session
             onOutcome?(.cancelled)
         default:
             super.keyDown(with: event)
@@ -191,7 +191,7 @@ private final class SelectionOverlayView: NSView {
     private func drawInstructionPill() {
         let title = "全画面が選択されています"
         let line1 = "Enter でこのまま読み取り ／ ドラッグで範囲を選択"
-        let line2 = "esc で戻る ・ 右Shift 2回で閉じる"
+        let line2 = "esc で閉じる ・ 右Shift 2回で閉じる"
         let maxWidth = min(bounds.width - 80, 460)
         let pillRect = NSRect(
             x: bounds.midX - maxWidth / 2,

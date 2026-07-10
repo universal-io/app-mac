@@ -56,6 +56,12 @@ struct NavigatorAction: Equatable {
 /// Owns the staging → review → deploy flow and all UI state.
 @MainActor
 final class ReviewViewModel: ObservableObject {
+    var onVisionModeExited: (() -> Void)?
+    var onHidePanelForAction: (() -> Void)?
+    var onShowPanelAfterAction: (() -> Void)?
+    var onClosePanelRequested: (() -> Void)?
+    var onCopilotModeChanged: ((Bool) -> Void)?
+
     /// Staging draft the user is editing.
     @Published var draft: String = "" {
         didSet {
@@ -99,8 +105,10 @@ final class ReviewViewModel: ObservableObject {
     @Published var annotationTint: ScreenshotAnnotation.Tint = .red
     /// User-drawn rectangles; burned into the next question's image.
     @Published var screenshotAnnotations: [ScreenshotAnnotation] = []
-    /// Box the AI pointed at in its latest answer (normalized image coords).
-    @Published private(set) var navigatorHighlight: CGRect?
+    /// Box shown inside the panel's screenshot preview (normalized image
+    /// coords). This is distinct from the live on-screen ring so the two
+    /// highlight channels can evolve independently.
+    @Published private(set) var panelNavigatorHighlight: CGRect?
     /// Executable proposal from the latest answer (press a button / fill a
     /// field). Nothing runs until the user presses the approve button —
     /// approval-driven by product principle (master plan §1.2).
@@ -146,6 +154,10 @@ final class ReviewViewModel: ObservableObject {
     /// in the navigated app triggers the automatic progress check.
     private var copilotClickMonitor: Any?
     private var copilotRecaptureTask: Task<Void, Never>?
+    /// Live on-screen ring target for the external app. Kept separate from
+    /// `panelNavigatorHighlight` because the panel preview and the real UI do
+    /// not share the same rendering or lifecycle constraints.
+    private var liveNavigatorHighlight: CGRect?
     /// Guards a superseded stream (re-capture cancels the previous one) from
     /// clearing the state of the stream that replaced it.
     private var navigatorStreamGeneration = 0
@@ -162,6 +174,16 @@ final class ReviewViewModel: ObservableObject {
     private let overrideProvider: ReviewProvider?
     private let overrideVisionProvider: VisionProvider?
     private let deployer: Deployer
+
+    var flowState: PanelFlowState {
+        if isCopilotActive {
+            return .copilot
+        }
+        if sessionKind == .vision {
+            return navigatorSessionActive ? .navigator : .vision
+        }
+        return .text
+    }
 
     init(
         provider: ReviewProvider? = nil,
@@ -197,7 +219,7 @@ final class ReviewViewModel: ObservableObject {
     }
 
     var canReview: Bool {
-        sessionKind == .text && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLoading
+        flowState == .text && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLoading
     }
 
     /// Hand over the background context capture started at summon time. The
@@ -344,7 +366,7 @@ final class ReviewViewModel: ObservableObject {
     }
 
     var canDeployDraft: Bool {
-        sessionKind == .text && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        flowState == .text && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// True when there is nothing to act on — used so a Right-Shift double-tap on an empty draft
@@ -354,7 +376,7 @@ final class ReviewViewModel: ObservableObject {
     }
 
     var canFocusRevision: Bool {
-        sessionKind == .text && result != nil
+        flowState == .text && result != nil
     }
 
     /// Restore the last in-progress compose draft after reopening the panel.
@@ -414,8 +436,13 @@ final class ReviewViewModel: ObservableObject {
     /// The field dictation should land in. Inside a navigator session the
     /// question input is the only editable field; otherwise follow focus.
     private var activeTranscriptionTarget: FocusField {
-        if sessionKind == .vision {
-            return navigatorSessionActive ? .navigator : .draft
+        switch flowState {
+        case .vision:
+            return .draft
+        case .navigator, .copilot:
+            return .navigator
+        case .text:
+            break
         }
         if focusedField == .revision, canFocusRevision { return .revision }
         return .draft
@@ -425,6 +452,48 @@ final class ReviewViewModel: ObservableObject {
         if base.isEmpty { return piece }
         let needsSpace = !(base.hasSuffix(" ") || base.hasSuffix("\n"))
         return base + (needsSpace ? " " : "") + piece
+    }
+
+    private func clearReviewState() {
+        result = nil
+        revisedDraft = ""
+    }
+
+    private func focusDraftEditor() {
+        focusedField = .draft
+    }
+
+    private func focusNavigatorInput() {
+        focusedField = .navigator
+    }
+
+    private func clearNavigatorHighlights() {
+        panelNavigatorHighlight = nil
+        liveNavigatorHighlight = nil
+        HighlightOverlayPresenter.shared.hide()
+    }
+
+    private func latestNavigatorOCRText() -> String? {
+        navigatorWireTurns.reversed().first {
+            $0.role == .user && $0.imageBase64 != nil
+        }?.ocrText
+    }
+
+    private func enterVisionShell(with attachment: ScreenshotAttachment) {
+        sessionKind = .vision
+        visionImage = attachment
+        visionResult = nil
+        clearReviewState()
+        focusedField = nil
+    }
+
+    private func restoreTextShellAfterVision() {
+        sessionKind = .text
+        visionImage = nil
+        visionResult = nil
+        isInterpretingVision = false
+        resetNavigatorSession()
+        focusDraftEditor()
     }
 
     func addScreenshotAttachment(_ attachment: ScreenshotAttachment) {
@@ -441,15 +510,11 @@ final class ReviewViewModel: ObservableObject {
     }
 
     func enterVisionMode(with attachment: ScreenshotAttachment) {
-        // A capture while a navigator conversation is open is a re-capture
-        // ("did I get to the right place?"), not a new session.
-        let isRecapture = sessionKind == .vision && navigatorSessionActive
-        sessionKind = .vision
-        visionImage = attachment
-        visionResult = nil
-        revisedDraft = ""
-        result = nil
-        focusedField = nil
+        // Any capture while a navigator session is already alive — plain Q&A
+        // or copilot guidance — is a re-capture ("did I get to the right
+        // place?"), not a fresh screenshot session.
+        let isRecapture = navigatorSessionActive
+        enterVisionShell(with: attachment)
         if isNavigatorAvailable {
             if isRecapture {
                 appendNavigatorCapture(attachment)
@@ -464,15 +529,20 @@ final class ReviewViewModel: ObservableObject {
     }
 
     func exitVisionMode() {
-        sessionKind = .text
-        visionImage = nil
-        visionResult = nil
-        isInterpretingVision = false
-        resetNavigatorSession()
-        focusedField = .draft
-        // The panel window is owned by AppDelegate; let it restore the narrow
-        // single-column layout when vision's two-pane session ends.
-        NotificationCenter.default.post(name: .visionSessionEnded, object: nil)
+        restoreTextShellAfterVision()
+        // Current product behavior:
+        // - If the user dismisses vision with Esc / panel close, AppDelegate
+        //   closes the entire panel. We do NOT return to a compose panel.
+        // Future latent branch:
+        // - Some vision actions may carry a generated draft back into the
+        //   compose editor while keeping the same panel alive. In that case
+        //   AppDelegate should collapse the window from the wide vision layout
+        //   back to the narrow text layout. This callback exists for that path.
+        if let onVisionModeExited {
+            onVisionModeExited()
+        } else {
+            NotificationCenter.default.post(name: .visionSessionEnded, object: nil)
+        }
     }
 
     func runVisionInterpretation() async {
@@ -521,6 +591,14 @@ final class ReviewViewModel: ObservableObject {
         !navigatorWireTurns.isEmpty || navigatorPendingCapture != nil
     }
 
+    private var isCopilotActive: Bool {
+        navigatorActiveTask != nil
+    }
+
+    private var isNavigatorQASession: Bool {
+        navigatorSessionActive && !isCopilotActive
+    }
+
     var canSendNavigatorQuestion: Bool {
         !navigatorInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isNavigating
     }
@@ -536,7 +614,7 @@ final class ReviewViewModel: ObservableObject {
         lastModelName = nil
         // The input is ready immediately: the user can type the follow-up
         // question while the auto first turn is still streaming.
-        focusedField = .navigator
+        focusNavigatorInput()
         prepareNavigatorCapture(attachment, autoRun: AppSettings.isNavigatorAutoFirstTurnEnabled())
     }
 
@@ -546,7 +624,7 @@ final class ReviewViewModel: ObservableObject {
         // Annotations, highlights, and pending proposals are anchored to the
         // previous image.
         screenshotAnnotations = []
-        navigatorHighlight = nil
+        clearNavigatorHighlights()
         navigatorProposedAction = nil
         navigatorTurns.append(NavigatorDisplayTurn(role: .user, text: "（画面を撮り直しました）"))
         prepareNavigatorCapture(attachment, autoRun: true)
@@ -589,7 +667,7 @@ final class ReviewViewModel: ObservableObject {
         let question = navigatorInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isNavigating else { return }
         navigatorInput = ""
-        navigatorHighlight = nil
+        clearNavigatorHighlights()
         navigatorProposedAction = nil
         navigatorTurns.append(NavigatorDisplayTurn(role: .user, text: question))
 
@@ -634,7 +712,7 @@ final class ReviewViewModel: ObservableObject {
         guard let task = navigatorProposedTask, !isNavigating else { return }
         navigatorProposedTask = nil
         navigatorActiveTask = task
-        navigatorHighlight = nil
+        clearNavigatorHighlights()
         navigatorProposedAction = nil
         navigatorTurns.append(NavigatorDisplayTurn(
             role: .user,
@@ -672,9 +750,13 @@ final class ReviewViewModel: ObservableObject {
                 self?.scheduleCopilotProgressCheck()
             }
         }
-        NotificationCenter.default.post(
-            name: .copilotModeChanged, object: nil, userInfo: ["active": true]
-        )
+        if let onCopilotModeChanged {
+            onCopilotModeChanged(true)
+        } else {
+            NotificationCenter.default.post(
+                name: .copilotModeChanged, object: nil, userInfo: ["active": true]
+            )
+        }
     }
 
     /// Tears the copilot apparatus down (monitor, pending check, ring).
@@ -688,18 +770,22 @@ final class ReviewViewModel: ObservableObject {
         copilotRecaptureTask?.cancel()
         copilotRecaptureTask = nil
         isCopilotChecking = false
-        HighlightOverlayPresenter.shared.hide()
+        clearNavigatorHighlights()
         if notifyPanel {
-            NotificationCenter.default.post(
-                name: .copilotModeChanged, object: nil, userInfo: ["active": false]
-            )
+            if let onCopilotModeChanged {
+                onCopilotModeChanged(false)
+            } else {
+                NotificationCenter.default.post(
+                    name: .copilotModeChanged, object: nil, userInfo: ["active": false]
+                )
+            }
         }
     }
 
     /// Debounced: rapid clicks (double-click, mis-click corrections) collapse
     /// into one check, and the target app gets a beat to react first.
     private func scheduleCopilotProgressCheck() {
-        guard navigatorActiveTask != nil, !isExecutingNavigatorAction else { return }
+        guard isCopilotActive, !isExecutingNavigatorAction else { return }
         copilotRecaptureTask?.cancel()
         copilotRecaptureTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
@@ -710,7 +796,7 @@ final class ReviewViewModel: ObservableObject {
 
     /// Manual fallback on the copilot strip: check progress right now.
     func requestCopilotProgressCheck() {
-        guard navigatorActiveTask != nil else { return }
+        guard isCopilotActive else { return }
         copilotRecaptureTask?.cancel()
         copilotRecaptureTask = Task { [weak self] in
             await self?.performCopilotProgressCapture()
@@ -718,19 +804,50 @@ final class ReviewViewModel: ObservableObject {
     }
 
     private func performCopilotProgressCapture() async {
-        guard navigatorActiveTask != nil, !isCopilotChecking, !isNavigating else { return }
+        guard isCopilotActive, !isCopilotChecking, !isNavigating else { return }
         isCopilotChecking = true
         defer { isCopilotChecking = false }
         do {
-            let attachment = try await ScreenshotCaptureService()
-                .captureFullScreen(displayID: copilotCaptureDisplayID())
-            guard navigatorActiveTask != nil else { return }
+            // Keep the previous live ring out of the next screenshot so the
+            // panel preview never stacks a baked-in ring with its own overlay.
+            liveNavigatorHighlight = nil
+            HighlightOverlayPresenter.shared.hide()
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            let attachment = try await captureCopilotProgressAttachment()
+            guard isCopilotActive else { return }
             // Same path as a manual re-capture: appends the capture turn and
             // streams the verification answer.
             enterVisionMode(with: attachment)
         } catch {
             NSLog("[Copilot] auto progress capture failed: %@", String(describing: error))
         }
+    }
+
+    /// Copilot re-capture needs a small settle window after the user's click;
+    /// otherwise we often read the pre-transition screen and repeat the same
+    /// instruction. For now we use OCR-text sameness as a cheap proxy for
+    /// "the screen hasn't materially changed yet" and retry once. A richer
+    /// visual-diff based detector is a follow-up tuning task.
+    private func captureCopilotProgressAttachment() async throws -> ScreenshotAttachment {
+        let displayID = copilotCaptureDisplayID()
+        let captureService = ScreenshotCaptureService()
+        let previousOCR = latestNavigatorOCRText()
+
+        let first = try await captureService.captureFullScreen(displayID: displayID)
+        guard let previousOCR else { return first }
+
+        let firstOCR = await ScreenTextRecognizer.recognize(at: first.url)?.joinedText
+        guard
+            let firstOCR,
+            !firstOCR.isEmpty,
+            firstOCR == previousOCR
+        else {
+            return first
+        }
+
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let second = try await captureService.captureFullScreen(displayID: displayID)
+        return second
     }
 
     /// The display the session is happening on: where the last capture was
@@ -766,6 +883,7 @@ final class ReviewViewModel: ObservableObject {
         isNavigating = true
         navigatorStreamingText = ""
         errorMessage = nil
+        navigatorProposedAction = nil
         navigatorStreamGeneration += 1
         let generation = navigatorStreamGeneration
         let started = Date()
@@ -790,6 +908,7 @@ final class ReviewViewModel: ObservableObject {
             var modelID: String?
             var plannedTask: NavigatorTask?
             for try await event in stream {
+                guard generation == navigatorStreamGeneration, !Task.isCancelled else { return }
                 switch event {
                 case .delta(let text):
                     if firstTokenMs == nil {
@@ -811,13 +930,14 @@ final class ReviewViewModel: ObservableObject {
             guard let finalText else {
                 throw ProviderError.decoding("stream ended without a result")
             }
+            guard generation == navigatorStreamGeneration, !Task.isCancelled else { return }
             // The wire history keeps the raw text (marker included) so the
             // model sees its own past answers verbatim; the display and the
             // highlight take the parsed halves.
             let (displayText, vlmBox, target, fill, stepDone) = NavigatorLocator.extract(from: finalText)
             navigatorWireTurns.append(NavigateTurn(role: .assistant, text: finalText))
             navigatorTurns.append(NavigatorDisplayTurn(role: .assistant, text: displayText))
-            let copilotTurn = navigatorActiveTask != nil
+            let copilotTurn = isCopilotActive
             // Copilot progress: the step advance is client-owned data, moved
             // only by the model's explicit [[step:done]] signal.
             if stepDone, var active = navigatorActiveTask {
@@ -844,16 +964,20 @@ final class ReviewViewModel: ObservableObject {
             // Precision ladder: an OCR-measured rect for the named target
             // wins over the model's estimated box (which stays as fallback).
             let box = resolveHighlightRect(target: target, vlmBox: vlmBox)
-            navigatorHighlight = box
-            let copilotStillActive = navigatorActiveTask != nil
-            if copilotStillActive || !copilotTurn {
+            panelNavigatorHighlight = box
+            liveNavigatorHighlight = box
+            let copilotStillActive = isCopilotActive
+            if let box, copilotStillActive || !copilotTurn {
                 // While guiding, the ring stays up until the step advances —
                 // a highlight nobody can find again is no highlight at all.
                 showLiveHighlight(for: box, persistent: copilotStillActive)
+            } else {
+                liveNavigatorHighlight = nil
+                HighlightOverlayPresenter.shared.hide()
             }
             // The approve/execute button belongs to Q&A sessions only; the
             // copilot has exactly one interaction (click the highlight).
-            if let target, !copilotTurn {
+            if let target, isNavigatorQASession {
                 navigatorProposedAction = NavigatorAction(
                     kind: fill.map { .fill(text: $0) } ?? .press,
                     targetLabel: target,
@@ -1009,7 +1133,11 @@ final class ReviewViewModel: ObservableObject {
             // target app — hide it for the whole execute-and-verify beat
             // (the progress capture brings it back with the new turn).
             NSLog("[Action] approving: %@", action.buttonTitle)
-            NotificationCenter.default.post(name: .hidePanelForAction, object: nil)
+            if let onHidePanelForAction {
+                onHidePanelForAction()
+            } else {
+                NotificationCenter.default.post(name: .hidePanelForAction, object: nil)
+            }
             try? await Task.sleep(nanoseconds: 150_000_000)
             do {
                 switch action.kind {
@@ -1054,9 +1182,17 @@ final class ReviewViewModel: ObservableObject {
                 self.saveNavigatorSessionIfNeeded()
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 HighlightOverlayPresenter.shared.hide()
-                NotificationCenter.default.post(name: .closePanel, object: nil)
+                if let onClosePanelRequested {
+                    onClosePanelRequested()
+                } else {
+                    NotificationCenter.default.post(name: .closePanel, object: nil)
+                }
             } catch {
-                NotificationCenter.default.post(name: .showPanelAfterAction, object: nil)
+                if let onShowPanelAfterAction {
+                    onShowPanelAfterAction()
+                } else {
+                    NotificationCenter.default.post(name: .showPanelAfterAction, object: nil)
+                }
                 self.errorMessage = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
             }
@@ -1094,13 +1230,14 @@ final class ReviewViewModel: ObservableObject {
         navigatorInput = ""
         isNavigating = false
         screenshotAnnotations = []
-        navigatorHighlight = nil
+        panelNavigatorHighlight = nil
         navigatorOCRFragments = []
         navigatorProposedAction = nil
         navigatorProposedTask = nil
         navigatorActiveTask = nil
         isExecutingNavigatorAction = false
         previewTool = .pan
+        liveNavigatorHighlight = nil
         HighlightOverlayPresenter.shared.hide()
     }
 
@@ -1119,8 +1256,14 @@ final class ReviewViewModel: ObservableObject {
     }
 
     /// "承認して送信": deploy a prepared action draft as-is into the field the
-    /// panel was summoned from. The user's approval is the only input — this
-    /// is the North Star loop closing for reply actions.
+    /// panel was summoned from.
+    ///
+    /// This is NOT the dominant vision UX today. Today's main screenshot flow is:
+    /// summary -> user question -> answer / navigation.
+    ///
+    /// This method exists for a future branch where vision can propose a draft
+    /// reply or form-fill text, and the user can send it directly from the
+    /// vision session.
     func approveSuggestedAction(_ action: VisionSuggestedAction) {
         guard action.hasDraft else { return }
         deploy(text: action.draft, historyInput: .init(
@@ -1136,12 +1279,17 @@ final class ReviewViewModel: ObservableObject {
 
     /// "編集する": carry the action draft into the compose editor so the user
     /// can adjust it (and optionally re-review) before deploying.
+    ///
+    /// This is the branch that DOES return from the wide vision layout to the
+    /// narrow text layout inside the same panel. It is forward-looking and not
+    /// the primary screenshot UX today, but it is kept in code because the
+    /// intended product direction includes "vision suggests text -> user edits
+    /// -> user deploys".
     func editSuggestedAction(_ action: VisionSuggestedAction) {
         exitVisionMode()
         draft = action.draft
-        result = nil
-        revisedDraft = ""
-        focusedField = .draft
+        clearReviewState()
+        focusDraftEditor()
     }
 
     /// True when a review exists but the draft has changed since it was made.

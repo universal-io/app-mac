@@ -1,8 +1,10 @@
 import Foundation
 
-/// One action the model proposes after reading the screen. `reply` actions
-/// carry a ready-to-send draft (persona/relationship aware); the other kinds
-/// stop at describing what to do — I//O never executes anything itself.
+/// One action the model proposes after reading the screen. The current
+/// user-facing vision flow is still "summary -> follow-up question ->
+/// optional navigator hand-off"; draft-carrying actions are a forward-looking
+/// hook for reply/fill assistance that exists in code before that UX is fully
+/// adopted in the panel.
 struct VisionSuggestedAction: Identifiable, Codable, Hashable {
     enum Kind: String, Codable {
         case reply
@@ -23,8 +25,9 @@ struct VisionSuggestedAction: Identifiable, Codable, Hashable {
     var id = UUID()
     let title: String
     let kind: Kind
-    /// Deployable text for `reply` (and prefill guidance for `fill_form`);
-    /// empty for actions that are descriptions only.
+    /// Deployable text for `reply` (and prefill guidance for `fill_form`).
+    /// Today this mostly acts as latent capability; the mainstream screenshot
+    /// flow does not yet revolve around returning this text into another form.
     let draft: String
 
     private enum CodingKeys: String, CodingKey {

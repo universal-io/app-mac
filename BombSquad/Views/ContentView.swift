@@ -8,9 +8,9 @@ enum FocusField: Hashable {
     case navigator // vision panel: navigator question input
 }
 
-/// Root layout: a single Spotlight-style column — input on top, result below.
-/// Three states only: empty → draft → result (design principle 3.5). The
-/// right-Shift single tap moves focus between the two editors (top ↔ bottom).
+/// Root text layout: a single Spotlight-style column — input on top, result
+/// below. Three states only: empty → draft → result (design principle 3.5).
+/// The right-Shift single tap moves focus between the two editors (top ↔ bottom).
 struct ContentView: View {
     @StateObject private var viewModel: ReviewViewModel
 
@@ -39,26 +39,19 @@ struct ContentView: View {
         // small GatewayOverrideBadge in each header's model-info row, not as
         // a full-width banner here.
         Group {
-            if viewModel.sessionKind == .vision {
-                VisionPanelView(viewModel: viewModel)
-                    .frame(minWidth: 900, minHeight: 600)
-            } else {
-                VStack(spacing: 0) {
-                    StagingEditorView(viewModel: viewModel, focusedField: $viewModel.focusedField)
-                        .frame(maxHeight: isResultActive ? 190 : .infinity)
-                    ReviewPanelView(viewModel: viewModel, focusedField: $viewModel.focusedField)
-                        .frame(maxHeight: .infinity)
-                }
-                .animation(.spring(duration: 0.35), value: isResultActive)
-                .frame(minWidth: 620, minHeight: 640)
+            VStack(spacing: 0) {
+                StagingEditorView(session: nil, viewModel: viewModel, focusedField: $viewModel.focusedField)
+                    .frame(maxHeight: isResultActive ? 190 : .infinity)
+                ReviewPanelView(viewModel: viewModel, focusedField: $viewModel.focusedField)
+                    .frame(maxHeight: .infinity)
             }
+            .animation(.spring(duration: 0.35), value: isResultActive)
+            .frame(minWidth: 620, minHeight: 640)
         }
         .onAppear {
             // Defer so the panel is key before focusing the original editor.
             DispatchQueue.main.async {
-                if viewModel.sessionKind == .text {
-                    viewModel.focusedField = .draft
-                }
+                viewModel.focusedField = .draft
             }
         }
     }

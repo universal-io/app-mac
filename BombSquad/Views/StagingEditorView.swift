@@ -3,6 +3,7 @@ import SwiftUI
 /// Left pane: the staging area where the user drafts/pastes the message
 /// before it is reviewed. Nothing here is "live" yet.
 struct StagingEditorView: View {
+    let session: PanelSession?
     @ObservedObject var viewModel: ReviewViewModel
     /// Shared focus across both editors (drives the blue highlight).
     @Binding var focusedField: FocusField?
@@ -58,14 +59,14 @@ struct StagingEditorView: View {
                     focusedField: $focusedField,
                     field: .draft,
                     onSend: { viewModel.deployDraft() },
-                    onEscape: { NotificationCenter.default.post(name: .closePanel, object: nil) }
+                    onEscape: { requestPanelClose() }
                 )
                     .padding(8)
                     .background(EditorFocusBackground(isFocused: isFocused))
             }
 
             if viewModel.needsScreenCapturePermission {
-                ScreenCapturePermissionBanner()
+                ScreenCapturePermissionBanner(session: session)
             }
 
             HStack(spacing: 8) {
@@ -100,7 +101,7 @@ struct StagingEditorView: View {
 
                 if !isTransform {
                     Button {
-                        NotificationCenter.default.post(name: .captureScreenshot, object: nil)
+                        requestScreenshotCapture()
                     } label: {
                         Image(systemName: "camera.viewfinder")
                     }
@@ -149,6 +150,22 @@ struct StagingEditorView: View {
             }
         }
         .padding()
+    }
+
+    private func requestPanelClose() {
+        if let session {
+            session.requestPanelClose()
+        } else {
+            NotificationCenter.default.post(name: .closePanel, object: nil)
+        }
+    }
+
+    private func requestScreenshotCapture() {
+        if let session {
+            session.requestScreenshotCapture()
+        } else {
+            NotificationCenter.default.post(name: .captureScreenshot, object: nil)
+        }
     }
 }
 
@@ -218,6 +235,8 @@ private struct SituationalContextChip: View {
 }
 
 private struct ScreenCapturePermissionBanner: View {
+    let session: PanelSession?
+
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "rectangle.on.rectangle.slash")
@@ -228,7 +247,11 @@ private struct ScreenCapturePermissionBanner: View {
                 .lineLimit(2)
             Spacer(minLength: 8)
             Button {
-                NotificationCenter.default.post(name: .openScreenCaptureSettings, object: nil)
+                if let session {
+                    session.requestScreenCaptureSettings()
+                } else {
+                    NotificationCenter.default.post(name: .openScreenCaptureSettings, object: nil)
+                }
             } label: {
                 Label("設定を開く", systemImage: "gearshape")
             }
