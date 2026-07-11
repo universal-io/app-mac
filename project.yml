@@ -37,6 +37,12 @@ targets:
     dependencies:
       - package: Supabase
         product: Supabase
+    # Generate a shared scheme so `xcodebuild -scheme BombSquad` works right
+    # after `xcodegen generate` (CLI builds resolve SPM packages via schemes;
+    # bare -target builds fail on package module resolution).
+    scheme:
+      testTargets: []
+      gatherCoverageData: false
     sources:
       - BombSquad
       # Bundle the gitignored local auth config so the app reads it regardless of

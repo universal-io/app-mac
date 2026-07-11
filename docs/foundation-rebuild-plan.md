@@ -57,15 +57,23 @@
       （既知バグはバグとして記録し、期待値に混ぜない）。
 
 ### Phase 1: 新中枢の骨格
-新規ディレクトリ `BombSquad/Core/` に、旧計画の設計を継承して新規実装:
-- [ ] `AppMode` 単一状態機械（idle / compose / transform / vision(capturing) / navigator / copilot）。
-      遷移は明示メソッドのみ。`ReviewMode` / `InputSessionKind` / `navigatorSessionActive` /
-      `isCopilotActive` の散在フラグをここに一元化する（旧コードは触らず、新経路のみ）。
-- [ ] `SessionCoordinator` — ジェスチャイベント（右Shift 1回/2回/長押し・⌘J・Enter/esc）を
-      AppMode 遷移に変換する唯一の場所。
-- [ ] `PanelController` + `PanelSpec` — 窓の形（サイズ・位置・activate・キー扱い）を
-      mode の純関数として 1 箇所に集約。`handleResignActive` の閉じ判定もここへ。
-- [ ] 起動フラグ（開発者向け UserDefaults）で新旧エントリポイントを切替可能にする。
+ステータス: 実装済み（2026-07-12、ビルド成功）・**実機確認待ち**
+（確認項目: フラグ OFF＝従来と完全に同一動作／フラグ ON＝右Shift2回でシェルパネルが出て
+mode 表示が遷移し、esc・再タップ・フォーカス喪失で閉じる）
+- [x] `AppMode` 単一状態機械 — [`Core/AppMode.swift`](../BombSquad/Core/AppMode.swift)
+      （遷移表 `canTransition(to:)` ＋ `AppStateMachine`。全遷移が `transition(to:reason:)` を通る。
+      不正遷移は DEBUG で assert。旧コードの散在フラグには触れていない＝新経路のみ）。
+- [x] `SessionCoordinator` — [`Core/SessionCoordinator.swift`](../BombSquad/Core/SessionCoordinator.swift)
+      （`AppEvent` → 遷移の唯一の場所。singleTap / 長押し（ASR）は Phase 3 でセッションと共に実装、
+      現状はトレースのみ。summon は Phase 1 では compose シェル固定＝選択分岐は Phase 3-b）。
+- [x] `PanelController` + `PanelSpec` — [`Core/PanelController.swift`](../BombSquad/Core/PanelController.swift)
+      （サイズ・配置・activate を mode の純関数 `PanelSpec.forMode` に集約。
+      resignActive で閉じるか＝copilot 例外も spec の `closesOnResignActive` に一元化）。
+- [x] 起動フラグ — UserDefaults `core.foundation.enabled`（既定 OFF）。
+      `defaults write com.universal-io.mac core.foundation.enabled -bool YES` で新経路、
+      AppDelegate の分岐は入力配線1箇所のみで旧経路コードは不変。
+- 付随修正: `project.yml` に shared scheme 生成を追加（`xcodegen generate` 直後の
+  `xcodebuild -scheme` が SPM 解決込みで通るように。従来はユーザースキーム依存だった）。
 
 ### Phase 2: GatewayClient 統一
 - [ ] `GatewayClient` コア 1 実装（認証ヘッダ・SSE・エラー変換・フォールバック判定）。

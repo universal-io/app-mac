@@ -40,6 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private var panel: KeyablePanel? { activePanel?.window }
     private var currentSession: PanelSession? { activePanel?.session }
+    /// Foundation rebuild (docs/foundation-rebuild-plan.md): when the
+    /// developer flag is on, all input events route to the rebuilt core
+    /// instead of the legacy path below. Default OFF (nil) — shipping
+    /// behavior is unchanged.
+    private var coreCoordinator: SessionCoordinator?
 
     @MainActor
     private func withSessionIfCurrent(_ session: PanelSession, _ body: (PanelSession) -> Void) {
@@ -93,12 +98,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Right Shift double-tap = summon → review, or empty text → vision → close.
         // Right Shift long-press = hold-to-talk dictation. ⌘J toggles the panel.
-        HotKeyCenter.shared.onHotKey = { [weak self] in self?.togglePanel() }
+        coreCoordinator = MainActor.assumeIsolated { SessionCoordinator.makeIfEnabled() }
+        if let coordinator = coreCoordinator {
+            HotKeyCenter.shared.onHotKey = { MainActor.assumeIsolated { coordinator.handle(.hotKeyToggle) } }
+            gesture.onSingleTap = { MainActor.assumeIsolated { coordinator.handle(.singleTap) } }
+            gesture.onDoubleTap = { MainActor.assumeIsolated { coordinator.handle(.doubleTap) } }
+            gesture.onLongPressBegan = { MainActor.assumeIsolated { coordinator.handle(.longPressBegan) } }
+            gesture.onLongPressEnded = { MainActor.assumeIsolated { coordinator.handle(.longPressEnded) } }
+        } else {
+            HotKeyCenter.shared.onHotKey = { [weak self] in self?.togglePanel() }
+            gesture.onSingleTap = { [weak self] in self?.toggleEditorFocus() }
+            gesture.onDoubleTap = { [weak self] in self?.advance() }
+            gesture.onLongPressBegan = { [weak self] in self?.startDictation() }
+            gesture.onLongPressEnded = { [weak self] in self?.stopDictationAndTranscribe() }
+        }
         HotKeyCenter.shared.register()
-        gesture.onSingleTap = { [weak self] in self?.toggleEditorFocus() }
-        gesture.onDoubleTap = { [weak self] in self?.advance() }
-        gesture.onLongPressBegan = { [weak self] in self?.startDictation() }
-        gesture.onLongPressEnded = { [weak self] in self?.stopDictationAndTranscribe() }
         gesture.start()
         MainActor.assumeIsolated {
             let commandCenter = AppCommandCenter.shared
@@ -153,6 +167,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleResignActive() {
+        if let coordinator = coreCoordinator {
+            MainActor.assumeIsolated { coordinator.handle(.appResignedActive) }
+            return
+        }
         trace("app.resignActive")
         guard !isCapturingScreenshot else {
             trace("app.resignActive.skip", details: ["reason": "capturing"])
