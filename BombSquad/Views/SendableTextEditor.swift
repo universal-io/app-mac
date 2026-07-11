@@ -81,7 +81,8 @@ struct SendableTextEditor: NSViewRepresentable {
                 parent.onSend()
                 return true
             case #selector(NSResponder.cancelOperation(_:)):
-                parent.onEscape?()
+                guard let onEscape = parent.onEscape else { return false }
+                onEscape()
                 return true
             default:
                 return false

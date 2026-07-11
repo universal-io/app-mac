@@ -29,7 +29,7 @@ struct BombSquadApp: App {
             Divider()
 
             Button("入力パネルを開く（⌘J）") {
-                NotificationCenter.default.post(name: .showPanel, object: nil)
+                AppCommandCenter.shared.requestShowPanel()
             }
             Divider()
 
@@ -54,6 +54,6 @@ struct BombSquadApp: App {
     /// delegate to bring it to front.
     private func openManagement(_ section: ManagementSection) {
         ManagementNavigator.shared.section = section
-        NotificationCenter.default.post(name: .showManagement, object: nil)
+        AppCommandCenter.shared.requestShowManagement()
     }
 }

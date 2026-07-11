@@ -28,9 +28,9 @@ enum ScreenshotCaptureError: LocalizedError {
 struct ScreenshotCaptureService {
     /// Capture the whole screen the user is looking at — the "just summon it"
     /// path of the North Star flow: the model sees exactly what the user sees.
-    /// The panel and selection overlay are ordered out by the caller before
-    /// this runs. Throws `noCaptureTarget` when no display can be resolved
-    /// (the caller falls back to interactive selection).
+    /// Universal I/O's own windows are excluded from the captured display so
+    /// a copilot progress shot cannot feed its previous instruction back into
+    /// the model. Throws `noCaptureTarget` when no display can be resolved.
     func captureFullScreen(displayID: CGDirectDisplayID?) async throws -> ScreenshotAttachment {
         let (image, _, resolvedID) = try await captureDisplayImage(displayID: displayID)
         return try Self.writeAttachment(image, captureRect: CGDisplayBounds(resolvedID))
@@ -78,7 +78,15 @@ struct ScreenshotCaptureService {
             throw ScreenshotCaptureError.noCaptureTarget
         }
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let ownProcessID = ProcessInfo.processInfo.processIdentifier
+        let ownApplications = content.applications.filter {
+            $0.processID == ownProcessID
+        }
+        let filter = SCContentFilter(
+            display: display,
+            excludingApplications: ownApplications,
+            exceptingWindows: []
+        )
         let configuration = SCStreamConfiguration()
         let scale = CGFloat(filter.pointPixelScale)
         var width = Int(CGFloat(display.width) * scale)
@@ -166,7 +174,10 @@ struct ScreenshotCaptureService {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("UniversalIO-Captures", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileName = "Universal-IO-\(Self.fileTimestamp()).png"
+        // Multiple progress checks can land within one second. A unique suffix
+        // prevents a newer capture from overwriting a still-preparing older URL.
+        let unique = UUID().uuidString.prefix(8)
+        let fileName = "Universal-IO-\(Self.fileTimestamp())-\(unique).png"
         return directory.appendingPathComponent(fileName)
     }
 

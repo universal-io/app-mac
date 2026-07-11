@@ -16,7 +16,10 @@ struct ComposeContentView: View {
         VStack(spacing: 0) {
             StagingEditorView(session: session, viewModel: viewModel, focusedField: focusedField)
                 .frame(maxHeight: isResultActive ? 190 : .infinity)
-            ReviewPanelView(viewModel: viewModel, focusedField: focusedField)
+            ReviewPanelView(
+                viewModel: viewModel,
+                focusedField: focusedField
+            )
                 .frame(maxHeight: .infinity)
         }
         .animation(.spring(duration: 0.35), value: isResultActive)

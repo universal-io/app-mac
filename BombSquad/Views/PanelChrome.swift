@@ -5,12 +5,18 @@ import SwiftUI
 /// gives borderless windows no key status by default; the I//O panel is a
 /// text-entry surface, so it must become key.
 final class KeyablePanel: NSPanel {
+    var onCloseRequested: (() -> Void)?
+
     override var canBecomeKey: Bool { true }
 
     /// Esc anywhere in the panel (outside the editors, which handle it
     /// themselves) closes it — borderless windows have no close button.
     override func cancelOperation(_ sender: Any?) {
-        NotificationCenter.default.post(name: .closePanel, object: nil)
+        guard let onCloseRequested else {
+            super.cancelOperation(sender)
+            return
+        }
+        onCloseRequested()
     }
 }
 

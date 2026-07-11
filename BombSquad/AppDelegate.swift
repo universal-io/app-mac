@@ -2,44 +2,22 @@ import AppKit
 import AVFoundation
 import SwiftUI
 
-extension Notification.Name {
-    /// Posted by the menu-bar item to summon the panel.
-    static let showPanel = Notification.Name("BombSquad.showPanel")
-    /// Posted from the panel (Esc) to cancel/close it.
-    static let closePanel = Notification.Name("BombSquad.closePanel")
-    /// Posted by the menu bar (or the panel's login CTA) to open the on-demand
-    /// management window. The target section is set on `ManagementNavigator.shared`
-    /// before posting.
-    static let showManagement = Notification.Name("BombSquad.showManagement")
-    /// Posted from the panel to start a screenshot capture: the selection
-    /// overlay opens with the full screen pre-selected (Enter confirms,
-    /// dragging picks a region instead).
-    static let captureScreenshot = Notification.Name("BombSquad.captureScreenshot")
-    /// Hide the panel while an approved action executes: a synthetic click
-    /// must land on the TARGET app, not on our own floating panel covering
-    /// it. Sessions are single-action for now (the multi-step loop with an
-    /// automatic progress re-capture is parked: restoring the panel after a
-    /// synthetic click proved unreliable); the failure path restores it.
-    static let hidePanelForAction = Notification.Name("BombSquad.hidePanelForAction")
-    static let showPanelAfterAction = Notification.Name("BombSquad.showPanelAfterAction")
-    /// Posted by the view model when a vision session ends and the panel
-    /// should return to the narrow single-column layout.
-    static let visionSessionEnded = Notification.Name("BombSquad.visionSessionEnded")
-    /// Posted from the panel when the user wants to grant screen recording.
-    static let openScreenCaptureSettings = Notification.Name("BombSquad.openScreenCaptureSettings")
-    /// Posted by the view model when guided navigation (copilot) starts or
-    /// ends (`userInfo["active"]: Bool`). While active the panel drops its
-    /// modal behavior: it shrinks to a corner strip, survives outside
-    /// clicks, and never steals focus from the app being navigated
-    /// (docs/navigator-copilot-plan.md 正のユーザー体験).
-    static let copilotModeChanged = Notification.Name("BombSquad.copilotModeChanged")
-}
-
 /// Owns the global hotkey and the floating review panel summoned by ⌘J.
 /// On hotkey: capture the frontmost app (the paste target), then show a floating
 /// panel hosting the staging/review UI wired to a `PasteDeployer`.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var panel: NSPanel?
+    private struct ActivePanel {
+        let window: KeyablePanel
+        let session: PanelSession
+    }
+
+    private enum CaptureCompletion {
+        case attachment(ScreenshotAttachment)
+        case cancelled
+        case failed(String)
+    }
+
+    private var activePanel: ActivePanel?
     /// The single on-demand management window (account/settings/history/pricing).
     /// Created lazily and reused; never always-on.
     private var managementWindow: NSWindow?
@@ -47,7 +25,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Lazy so the @MainActor initializer runs on first use (in
     // applicationDidFinishLaunching), not in a nonisolated property default.
     private lazy var permissions = PermissionsCoordinator()
-    private var currentSession: PanelSession?
     private let authClient = BombSquadAuthClient.shared
     private let gesture = ShiftGestureMonitor()
     private let recorder = AudioRecorder()
@@ -61,6 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isCapturingScreenshot: Bool {
         MainActor.assumeIsolated { currentSession?.viewModel.isCapturingScreenshot == true }
     }
+    private var panel: KeyablePanel? { activePanel?.window }
+    private var currentSession: PanelSession? { activePanel?.session }
+
+    @MainActor
+    private func withSessionIfCurrent(_ session: PanelSession, _ body: (PanelSession) -> Void) {
+        guard currentSession === session else { return }
+        body(session)
+    }
 
     private func trace(_ name: String, details: [String: CustomStringConvertible?] = [:]) {
         guard Thread.isMainThread else {
@@ -73,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             SessionTrace.event(
                 name,
                 mode: InferredAppMode.infer(
-                    hasPanel: panel != nil,
+                    hasPanel: activePanel != nil,
                     session: currentSession,
                     isCapturingScreenshot: isCapturingScreenshot,
                     isSelectionOverlayPresenting: screenshotSelection.isPresenting
@@ -115,30 +100,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         gesture.onLongPressBegan = { [weak self] in self?.startDictation() }
         gesture.onLongPressEnded = { [weak self] in self?.stopDictationAndTranscribe() }
         gesture.start()
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleShowPanel), name: .showPanel, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleClosePanel), name: .closePanel, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleShowManagement), name: .showManagement, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleCaptureScreenshot), name: .captureScreenshot, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleHidePanelForAction),
-            name: .hidePanelForAction, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleShowPanelAfterAction),
-            name: .showPanelAfterAction, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleOpenScreenCaptureSettings),
-            name: .openScreenCaptureSettings, object: nil
-        )
+        MainActor.assumeIsolated {
+            let commandCenter = AppCommandCenter.shared
+            commandCenter.onShowPanelRequested = { [weak self] in
+                self?.trace("command.showPanel")
+                self?.togglePanel()
+            }
+            commandCenter.onShowManagementRequested = { [weak self] in
+                self?.trace("command.showManagement")
+                self?.showManagementWindow()
+            }
+            commandCenter.onScreenshotCaptureRequested = { [weak self] in
+                self?.trace("command.captureScreenshot")
+                self?.startScreenshotCapture()
+            }
+            commandCenter.onScreenCaptureSettingsRequested = {
+                ScreenCapturePermission.openSettings()
+            }
+        }
         // Modal-like: if focus leaves to another app/form, exit the mode (close).
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleResignActive),
@@ -207,10 +186,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// navigated screen. Copilot off (task finished or abandoned while the
     /// panel is open): restore the wide vision layout and bring the panel
     /// forward so the final answer is readable.
-    @objc private func handleCopilotModeChanged(_ notification: Notification) {
-        let active = (notification.userInfo?["active"] as? Bool) ?? false
+    private func handleCopilotModeChanged(active: Bool) {
         trace("copilot.changed", details: ["active": active])
-        guard let panel, let session = currentSession else { return }
+        guard let activePanel else { return }
+        let panel = activePanel.window
+        let session = activePanel.session
         let layout = MainActor.assumeIsolated { session.panelLayout }
         applyPanelLayout(layout, to: panel)
         if !active {
@@ -326,25 +306,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Dictation is available wherever there is an editable field: the text
         // compose/review session, and the navigator's question input. The bare
         // (pre-navigator) vision one-shot has no input to dictate into.
-        guard MainActor.assumeIsolated({
-            currentSession?.canAcceptDictation == true
-        }) else {
+        guard let session = MainActor.assumeIsolated({ currentSession }),
+              MainActor.assumeIsolated({ session.canAcceptDictation }) else {
             trace("dictation.begin.ignore", details: ["reason": "noEditableTarget"])
             return
         }
         isDictating = true
         SoundFeedback.recordingStarted()
         MainActor.assumeIsolated {
-            currentSession?.viewModel.errorMessage = nil
-            currentSession?.viewModel.isRecording = true
+            session.viewModel.errorMessage = nil
+            session.viewModel.isRecording = true
         }
         do {
             try recorder.start()
             trace("dictation.recordingStarted")
         } catch {
+            isDictating = false
             MainActor.assumeIsolated {
-                currentSession?.viewModel.isRecording = false
-                currentSession?.viewModel.errorMessage =
+                session.viewModel.isRecording = false
+                session.viewModel.errorMessage =
                     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
             trace("dictation.recordingFailed", details: ["error": error.localizedDescription])
@@ -361,9 +341,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             trace("dictation.end.noFile")
             return
         }
+        guard let session = MainActor.assumeIsolated({ currentSession }) else { return }
         MainActor.assumeIsolated {
-            currentSession?.viewModel.isRecording = false
-            currentSession?.viewModel.isTranscribing = true
+            session.viewModel.isRecording = false
+            session.viewModel.isTranscribing = true
         }
         Task {
             defer { try? FileManager.default.removeItem(at: url) }
@@ -372,7 +353,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // if the file can't be inspected we fail open and transcribe anyway.
             if let clip = AudioRecorder.inspect(url: url),
                clip.duration < 0.4 || clip.averagePower < -45 {
-                await MainActor.run { self.currentSession?.viewModel.isTranscribing = false }
+                await MainActor.run {
+                    self.withSessionIfCurrent(session) { session in
+                        session.viewModel.isTranscribing = false
+                    }
+                }
                 await MainActor.run {
                     trace("dictation.droppedSilence", details: [
                         "duration": String(format: "%.2f", clip.duration),
@@ -384,24 +369,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let text = try await transcriber.transcribe(fileURL: url)
                 await MainActor.run {
-                    self.currentSession?.viewModel.appendTranscription(text)
-                    self.currentSession?.viewModel.isTranscribing = false
-                    trace("dictation.transcribed", details: ["characters": text.count])
+                    self.withSessionIfCurrent(session) { session in
+                        session.viewModel.appendTranscription(text)
+                        session.viewModel.isTranscribing = false
+                        trace("dictation.transcribed", details: ["characters": text.count])
+                    }
                 }
             } catch {
                 await MainActor.run {
-                    self.currentSession?.viewModel.isTranscribing = false
-                    self.currentSession?.viewModel.errorMessage =
-                        "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
-                    trace("dictation.transcribeFailed", details: ["error": error.localizedDescription])
+                    self.withSessionIfCurrent(session) { session in
+                        session.viewModel.isTranscribing = false
+                        session.viewModel.errorMessage =
+                            "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                        trace("dictation.transcribeFailed", details: ["error": error.localizedDescription])
+                    }
                 }
             }
         }
-    }
-
-    @objc private func handleShowPanel() {
-        trace("notification.showPanel")
-        togglePanel()
     }
 
     /// Open (or bring to front) the single management window. The desired section
@@ -410,8 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The capture panel is an always-on-top floating panel, so any normal window
     /// would open behind it. The panel is transient anyway, so we close it and let
     /// the management window take over (e.g. login → the account/login screen).
-    @objc private func handleShowManagement() {
-        trace("notification.showManagement")
+    private func showManagementWindow() {
         if panel != nil { closePanel() }
 
         if let managementWindow {
@@ -468,20 +451,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    @objc private func handleClosePanel() {
-        trace("notification.closePanel")
-        closePanel()
-    }
-
-    @objc private func handleCaptureScreenshot(_ notification: Notification) {
-        trace("notification.captureScreenshot")
-        startScreenshotCapture()
-    }
-
     /// The approved action is about to run: get the panel out of the way so
     /// a synthetic click hits the target app (and the user sees it happen).
-    @objc private func handleHidePanelForAction(_ notification: Notification) {
-        trace("notification.hidePanelForAction")
+    private func hidePanelForAction() {
+        trace("panel.hideForAction")
         panel?.orderOut(nil)
     }
 
@@ -492,8 +465,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// background app — after which makeKeyAndOrderFront does nothing and
     /// the panel looks "gone". `orderFrontRegardless` bypasses activation
     /// and puts the floating panel back on screen unconditionally.
-    @objc private func handleShowPanelAfterAction(_ notification: Notification) {
-        trace("notification.showPanelAfterAction")
+    private func showPanelAfterAction() {
+        trace("panel.showAfterAction")
         guard let panel else {
             NSLog("[Action] restore skipped: panel is nil")
             return
@@ -506,18 +479,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Vision's two-pane session ended (e.g. an action draft was carried into
     /// the compose editor): restore the narrow Spotlight-style layout.
-    @objc private func handleVisionSessionEnded() {
-        trace("notification.visionSessionEnded")
-        guard let panel, let session = currentSession else { return }
+    private func handleVisionSessionEnded() {
+        trace("vision.sessionEnded")
+        guard let activePanel else { return }
+        let panel = activePanel.window
+        let session = activePanel.session
         let layout = MainActor.assumeIsolated { session.panelLayout }
         guard panel.frame.size != NSSize(width: layout.size.width, height: layout.size.height)
             || layout.placement != .centered else { return }
         applyPanelLayout(layout, to: panel)
-    }
-
-    @objc private func handleOpenScreenCaptureSettings() {
-        trace("notification.openScreenCaptureSettings")
-        ScreenCapturePermission.openSettings()
     }
 
     private func togglePanel() {
@@ -529,71 +499,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func showPanel(prefill: String? = nil, mode: ReviewMode = .compose) {
-        trace("panel.show.begin", details: [
-            "requestedMode": String(describing: mode),
-            "prefillCharacters": prefill?.count
-        ])
-        // Capture the target BEFORE our panel activates and steals focus.
-        let target = NSWorkspace.shared.frontmostApplication
-        // Same timing constraint: identify the context source app now; the AX
-        // tree walk itself continues in the background against that pid.
-        let contextTask = SituationalContextService.captureTask()
-        let deployer: Deployer
-        switch mode {
-        case .compose:
-            deployer = PasteDeployer(targetApp: target) { [weak self] in self?.closePanel() }
-        case .transform:
-            // Received message: never write back into the sender's field. The
-            // readable version is for reading, so "send" only copies to clipboard.
-            deployer = ClipboardDeployer()
-        }
-        let viewModel = MainActor.assumeIsolated {
-            ReviewViewModel(deployer: deployer, mode: mode)
-        }
-        currentSession = MainActor.assumeIsolated {
-            PanelSession(viewModel: viewModel)
-        }
-        MainActor.assumeIsolated {
-            currentSession?.configurePanelCallbacks(
+    @MainActor
+    private func makePanelSession(viewModel: ReviewViewModel) -> PanelSession {
+        PanelSession(
+            viewModel: viewModel,
+            callbacks: PanelSessionCallbacks(
                 onVisionModeExited: { [weak self] in
                     self?.handleVisionSessionEnded()
                 },
                 onHidePanelForAction: { [weak self] in
-                    self?.handleHidePanelForAction(Notification(name: .hidePanelForAction))
+                    self?.hidePanelForAction()
                 },
                 onShowPanelAfterAction: { [weak self] in
-                    self?.handleShowPanelAfterAction(Notification(name: .showPanelAfterAction))
+                    self?.showPanelAfterAction()
                 },
                 onClosePanelRequested: { [weak self] in
-                    self?.handleClosePanel()
+                    self?.closePanel()
+                },
+                onScreenshotCaptureRequested: { [weak self] in
+                    self?.startScreenshotCapture()
+                },
+                onScreenCaptureSettingsRequested: {
+                    ScreenCapturePermission.openSettings()
                 },
                 onCopilotModeChanged: { [weak self] active in
-                    self?.handleCopilotModeChanged(
-                        Notification(name: .copilotModeChanged, userInfo: ["active": active])
-                    )
+                    self?.handleCopilotModeChanged(active: active)
                 }
             )
-            currentSession?.prepareForPresentation(contextTask: contextTask)
-        }
-        if let prefill {
-            MainActor.assumeIsolated {
-                // Receiving side: the selection is already captured, so run the
-                // transform immediately — the panel opens with the readable
-                // result already showing on the right (one stop, no second tap).
-                currentSession?.applyPrefill(prefill, autoReviewIfAuthenticated: authClient.currentSession() != nil)
-            }
-        }
+        )
+    }
 
-        // Spotlight-style chrome: borderless transparent window; the SwiftUI
-        // glass shape (PanelChrome) is the visible panel.
-        let initialLayout = MainActor.assumeIsolated {
-            currentSession?.panelLayout ?? PanelLayoutSpec(
-                size: PanelSession.textPanelSize,
-                placement: .centered
-            )
+    private func makeDeployer(for mode: ReviewMode, target: NSRunningApplication?) -> Deployer {
+        switch mode {
+        case .compose:
+            return PasteDeployer(targetApp: target) { [weak self] in self?.closePanel() }
+        case .transform:
+            // Received message: never write back into the sender's field. The
+            // readable version is for reading, so "send" only copies to clipboard.
+            return ClipboardDeployer()
         }
+    }
 
+    @MainActor
+    private func makePanelWindow(for session: PanelSession) -> KeyablePanel {
+        let initialLayout = session.panelLayout
         let panel = KeyablePanel(
             contentRect: NSRect(
                 x: 0,
@@ -604,6 +553,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             styleMask: [.borderless],
             backing: .buffered, defer: false
         )
+        panel.onCloseRequested = { [weak self, weak panel] in
+            guard let self, let panel, self.panel === panel else { return }
+            self.trace("panel.escape")
+            self.closePanel()
+        }
         panel.title = "Universal I/O"
         panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = true
@@ -618,16 +572,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // header rows expose an explicit drag handle (WindowDragHandle),
         // matching standard macOS/iOS behavior of "grab the title area".
         panel.isMovableByWindowBackground = false
-        panel.contentViewController = NSHostingController(
-            rootView: MainActor.assumeIsolated { RootPanelView(session: currentSession!) }
-        )
-        // Enforce a fixed size so SwiftUI can't resize the window out from under
-        // the placement math; the session decides which layout is correct.
+        panel.contentViewController = NSHostingController(rootView: RootPanelView(session: session))
         applyPanelLayout(initialLayout, to: panel)
+        return panel
+    }
 
-        self.panel = panel
+    private func presentPanel(_ panel: KeyablePanel, session: PanelSession) {
+        activePanel = ActivePanel(window: panel, session: session)
+        revealPanel(panel)
+    }
+
+    private func revealPanel(_ panel: NSWindow) {
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    @MainActor
+    private func handleCaptureCompletion(
+        _ completion: CaptureCompletion,
+        session: PanelSession,
+        panel: KeyablePanel
+    ) {
+        switch completion {
+        case .attachment(let attachment):
+            session.handleCapturedScreenshot(attachment)
+            trace("capture.attachmentAdded", details: [
+                "width": attachment.pixelWidth,
+                "height": attachment.pixelHeight
+            ])
+            session.finishScreenshotCapture()
+            guard self.panel === panel else { return }
+            applyPanelLayout(session.panelLayout, to: panel)
+            revealPanel(panel)
+            trace("capture.end")
+        case .cancelled:
+            trace("capture.cancelled")
+            session.finishScreenshotCapture()
+            guard self.panel === panel else { return }
+            closePanel()
+        case .failed(let message):
+            session.failScreenshotCapture(message: message)
+            trace("capture.failed", details: ["error": message])
+            session.finishScreenshotCapture()
+            guard self.panel === panel else { return }
+            revealPanel(panel)
+            trace("capture.end")
+        }
+    }
+
+    private func showPanel(prefill: String? = nil, mode: ReviewMode = .compose) {
+        trace("panel.show.begin", details: [
+            "requestedMode": String(describing: mode),
+            "prefillCharacters": prefill?.count
+        ])
+        // Capture the target BEFORE our panel activates and steals focus.
+        let target = NSWorkspace.shared.frontmostApplication
+        // Same timing constraint: identify the context source app now; the AX
+        // tree walk itself continues in the background against that pid.
+        let contextTask = SituationalContextService.captureTask()
+        let deployer = makeDeployer(for: mode, target: target)
+        let viewModel = MainActor.assumeIsolated {
+            ReviewViewModel(deployer: deployer, mode: mode)
+        }
+        let session = MainActor.assumeIsolated {
+            makePanelSession(viewModel: viewModel)
+        }
+        MainActor.assumeIsolated {
+            session.prepareForPresentation(contextTask: contextTask)
+        }
+        if let prefill {
+            MainActor.assumeIsolated {
+                // Receiving side: the selection is already captured, so run the
+                // transform immediately — the panel opens with the readable
+                // result already showing on the right (one stop, no second tap).
+                session.applyPrefill(prefill, autoReviewIfAuthenticated: authClient.currentSession() != nil)
+            }
+        }
+        let panel = MainActor.assumeIsolated { makePanelWindow(for: session) }
+        presentPanel(panel, session: session)
         trace("panel.show.end", details: ["requestedMode": String(describing: mode)])
     }
 
@@ -639,9 +661,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             currentSession?.handlePanelWillClose()
         }
+        panel?.onCloseRequested = nil
         panel?.orderOut(nil)
-        panel = nil
-        currentSession = nil
+        activePanel = nil
         trace("panel.close.end")
     }
 
@@ -652,10 +674,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startScreenshotCapture() {
         trace("capture.begin")
         guard !isCapturingScreenshot else { return }
-        guard let panel, let session = currentSession else {
+        guard let activePanel else {
             trace("capture.begin.ignore", details: ["reason": "missingPanelOrViewModel"])
             return
         }
+        let panel = activePanel.window
+        let session = activePanel.session
 
         guard ScreenCapturePermission.isGranted || ScreenCapturePermission.request() else {
             MainActor.assumeIsolated {
@@ -681,12 +705,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ] as? CGDirectDisplayID
 
         Task {
-            enum CaptureCompletion {
-                case attachment(ScreenshotAttachment)
-                case cancelled
-                case failed(String)
-            }
-
             let completion: CaptureCompletion
             do {
                 let attachment = try await captureAttachment(on: screen, displayID: displayID)
@@ -702,33 +720,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             await MainActor.run {
-                switch completion {
-                case .attachment(let attachment):
-                    session.handleCapturedScreenshot(attachment)
-                    trace("capture.attachmentAdded", details: [
-                        "width": attachment.pixelWidth,
-                        "height": attachment.pixelHeight
-                    ])
-                    session.finishScreenshotCapture()
-                    guard self.panel === panel else { return }
-                    self.applyPanelLayout(session.panelLayout, to: panel)
-                    NSApp.activate(ignoringOtherApps: true)
-                    panel.makeKeyAndOrderFront(nil)
-                    trace("capture.end")
-                case .cancelled:
-                    trace("capture.cancelled")
-                    session.finishScreenshotCapture()
-                    guard self.panel === panel else { return }
-                    self.closePanel()
-                case .failed(let message):
-                    session.failScreenshotCapture(message: message)
-                    trace("capture.failed", details: ["error": message])
-                    session.finishScreenshotCapture()
-                    guard self.panel === panel else { return }
-                    NSApp.activate(ignoringOtherApps: true)
-                    panel.makeKeyAndOrderFront(nil)
-                    trace("capture.end")
-                }
+                self.handleCaptureCompletion(completion, session: session, panel: panel)
             }
         }
     }

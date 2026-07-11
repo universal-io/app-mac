@@ -22,7 +22,7 @@ struct LoginRequiredView: View {
             }
             Button {
                 ManagementNavigator.shared.section = .account
-                NotificationCenter.default.post(name: .showManagement, object: nil)
+                AppCommandCenter.shared.requestShowManagement()
             } label: {
                 Label("ログイン / 新規登録", systemImage: "person.crop.circle")
             }

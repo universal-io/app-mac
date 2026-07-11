@@ -93,7 +93,8 @@ struct ReviewPanelView: View {
             text: $viewModel.revisedDraft,
             focusedField: $focusedField,
             field: .revision,
-            onSend: { viewModel.deployRevision() }
+            onSend: { viewModel.deployRevision() },
+            onEscape: { viewModel.requestPanelClose() }
         )
             .padding(8)
             .frame(maxHeight: .infinity)
@@ -627,23 +628,23 @@ struct VisionPanelView: View {
             }
             .background(EditorFocusBackground(isFocused: false))
 
-            // Copilot entry (docs/navigator-copilot-plan.md §3-c): the
-            // planner proposed a step plan; guided mode starts only on this
-            // tap — a deterministic mode switch, not a model judgement.
+            // Copilot entry: the planner may have drafted an internal plan,
+            // but the step count is not trustworthy enough to present as user
+            // progress. Treat it as a plain guided-mode entry instead.
             if let task = viewModel.navigatorProposedTask {
                 HStack(spacing: 8) {
                     Button {
                         viewModel.startProposedNavigation()
                     } label: {
                         Label(
-                            "ナビゲーション開始（\(task.steps.count)ステップ）: \(task.goal)",
+                            "この操作を案内する: \(task.goal)",
                             systemImage: "point.bottomleft.forward.to.point.topright.scurvepath"
                         )
                         .lineLimit(1)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(viewModel.isNavigating)
-                    .help("ステップごとに画面上でハイライトしながら案内します")
+                    .help("画面上でハイライトしながら案内を開始します")
                     Button {
                         viewModel.dismissProposedNavigation()
                     } label: {
@@ -655,13 +656,14 @@ struct VisionPanelView: View {
                 }
             }
 
-            // Copilot progress: plan and step cursor are session data, shown
-            // so the user always knows where the guidance stands.
+            // Copilot progress: show that guidance is active, but do not
+            // expose the server-planned step count as if it were trustworthy
+            // completion progress.
             if let task = viewModel.navigatorActiveTask {
                 HStack(spacing: 6) {
                     Image(systemName: "location.fill")
                         .foregroundStyle(.tint)
-                    Text("ステップ \(min(task.currentStep + 1, task.steps.count))/\(task.steps.count) · \(task.goal)")
+                    Text("案内中 · \(task.goal)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -716,7 +718,7 @@ struct VisionPanelView: View {
                     focusedField: $viewModel.focusedField,
                     field: .navigator,
                     onSend: { viewModel.sendNavigatorQuestion() },
-                    onEscape: { NotificationCenter.default.post(name: .closePanel, object: nil) }
+                    onEscape: { viewModel.requestPanelClose() }
                 )
                 .frame(minHeight: 44, maxHeight: 88)
                 .background(EditorFocusBackground(isFocused: viewModel.focusedField == .navigator))
@@ -985,7 +987,7 @@ private struct IssueCard: View {
 // MARK: - Copilot strip (docs/navigator-copilot-plan.md 正のユーザー体験)
 
 /// The whole panel while guided navigation runs: a corner strip with the
-/// step counter, the current instruction, and an explicit finish button. The
+/// current instruction and an explicit finish button. The
 /// real UI is the navigated screen itself — the user clicks the highlighted
 /// spot there, a global monitor notices, and the progress check runs
 /// automatically.
@@ -998,7 +1000,7 @@ struct CopilotStripView: View {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.tint)
                 if let task = viewModel.navigatorActiveTask {
-                    Text("ステップ \(min(task.currentStep + 1, task.steps.count))/\(task.steps.count)")
+                    Text("案内中")
                         .font(.caption.weight(.semibold))
                     Text(task.goal)
                         .font(.caption)
@@ -1007,7 +1009,7 @@ struct CopilotStripView: View {
                 }
                 Spacer()
                 Button {
-                    NotificationCenter.default.post(name: .closePanel, object: nil)
+                    viewModel.requestPanelClose()
                 } label: {
                     Label("終了", systemImage: "checkmark.circle")
                 }
@@ -1046,12 +1048,6 @@ struct CopilotStripView: View {
                 .controlSize(.small)
                 .disabled(viewModel.isNavigating || viewModel.isCopilotChecking)
                 .help("いま手動で進捗を確認する")
-                Button("終了") {
-                    NotificationCenter.default.post(name: .closePanel, object: nil)
-                }
-                .controlSize(.small)
-                .disabled(viewModel.isNavigating || viewModel.isCopilotChecking)
-                .help("案内をここで終了する")
             }
         }
         .padding(14)
@@ -1063,6 +1059,9 @@ struct CopilotStripView: View {
         if let streaming = viewModel.navigatorStreamingText {
             let stripped = NavigatorLocator.strippingMarkers(streaming)
             if !stripped.isEmpty { return stripped }
+        }
+        if viewModel.isCopilotChecking || viewModel.isNavigating {
+            return "最新の画面から次の手順を確認しています…"
         }
         return viewModel.navigatorTurns.last(where: { $0.role == .assistant })?.text
             ?? "案内を待っています…"

@@ -60,6 +60,8 @@ final class ReviewViewModel: ObservableObject {
     var onHidePanelForAction: (() -> Void)?
     var onShowPanelAfterAction: (() -> Void)?
     var onClosePanelRequested: (() -> Void)?
+    var onScreenshotCaptureRequested: (() -> Void)?
+    var onScreenCaptureSettingsRequested: (() -> Void)?
     var onCopilotModeChanged: ((Bool) -> Void)?
 
     /// Staging draft the user is editing.
@@ -114,11 +116,13 @@ final class ReviewViewModel: ObservableObject {
     /// approval-driven by product principle (master plan §1.2).
     @Published private(set) var navigatorProposedAction: NavigatorAction?
     @Published private(set) var isExecutingNavigatorAction = false
-    /// Step plan the gateway planner generated for this session, awaiting
-    /// the user's "start navigation" tap (docs/navigator-copilot-plan.md §3).
+    /// Guided-navigation proposal generated for this session, awaiting the
+    /// user's "start guidance" tap. The server may send step data, but the
+    /// UI does not treat its count as trustworthy progress.
     @Published private(set) var navigatorProposedTask: NavigatorTask?
-    /// Plan being guided step by step (copilot mode). Client-owned session
-    /// state: rides on every request, advances on [[step:done]].
+    /// Active guided-navigation state (copilot mode). The client still keeps
+    /// the server-proposed task data for targeting continuity, advancing only
+    /// on [[step:done]], but the UI no longer presents it as completion truth.
     @Published private(set) var navigatorActiveTask: NavigatorTask?
     /// True while the copilot's automatic progress capture is in flight
     /// (between the user's click and the fresh screenshot hitting the wire).
@@ -154,6 +158,9 @@ final class ReviewViewModel: ObservableObject {
     /// in the navigated app triggers the automatic progress check.
     private var copilotClickMonitor: Any?
     private var copilotRecaptureTask: Task<Void, Never>?
+    /// Monotonic ownership token: a superseded capture may finish at the OS
+    /// layer, but only the newest request may update the navigator session.
+    private var copilotProgressGeneration = 0
     /// Live on-screen ring target for the external app. Kept separate from
     /// `panelNavigatorHighlight` because the panel preview and the real UI do
     /// not share the same rendering or lifecycle constraints.
@@ -236,6 +243,38 @@ final class ReviewViewModel: ObservableObject {
     /// Excludes the captured context from this session (chip dismissed).
     func excludeContext() {
         isContextExcluded = true
+    }
+
+    func requestPanelClose() {
+        onClosePanelRequested?()
+    }
+
+    func requestScreenshotCapture() {
+        onScreenshotCaptureRequested?()
+    }
+
+    func requestScreenCaptureSettings() {
+        onScreenCaptureSettingsRequested?()
+    }
+
+    func attachPanelCallbacks(_ callbacks: PanelSessionCallbacks) {
+        onVisionModeExited = callbacks.onVisionModeExited
+        onHidePanelForAction = callbacks.onHidePanelForAction
+        onShowPanelAfterAction = callbacks.onShowPanelAfterAction
+        onClosePanelRequested = callbacks.onClosePanelRequested
+        onScreenshotCaptureRequested = callbacks.onScreenshotCaptureRequested
+        onScreenCaptureSettingsRequested = callbacks.onScreenCaptureSettingsRequested
+        onCopilotModeChanged = callbacks.onCopilotModeChanged
+    }
+
+    func detachPanelCallbacks() {
+        onVisionModeExited = nil
+        onHidePanelForAction = nil
+        onShowPanelAfterAction = nil
+        onClosePanelRequested = nil
+        onScreenshotCaptureRequested = nil
+        onScreenCaptureSettingsRequested = nil
+        onCopilotModeChanged = nil
     }
 
     /// Context to inject into the next review. The AX walk is budget-bounded
@@ -473,12 +512,6 @@ final class ReviewViewModel: ObservableObject {
         HighlightOverlayPresenter.shared.hide()
     }
 
-    private func latestNavigatorOCRText() -> String? {
-        navigatorWireTurns.reversed().first {
-            $0.role == .user && $0.imageBase64 != nil
-        }?.ocrText
-    }
-
     private func enterVisionShell(with attachment: ScreenshotAttachment) {
         sessionKind = .vision
         visionImage = attachment
@@ -538,11 +571,7 @@ final class ReviewViewModel: ObservableObject {
         //   compose editor while keeping the same panel alive. In that case
         //   AppDelegate should collapse the window from the wide vision layout
         //   back to the narrow text layout. This callback exists for that path.
-        if let onVisionModeExited {
-            onVisionModeExited()
-        } else {
-            NotificationCenter.default.post(name: .visionSessionEnded, object: nil)
-        }
+        onVisionModeExited?()
     }
 
     func runVisionInterpretation() async {
@@ -632,12 +661,31 @@ final class ReviewViewModel: ObservableObject {
 
     private func prepareNavigatorCapture(_ attachment: ScreenshotAttachment, autoRun: Bool) {
         navigatorStreamTask?.cancel()
+        // Invalidate the canceled stream before preprocessing begins. Its
+        // defer must not clear the busy state owned by this fresher capture.
+        navigatorStreamGeneration += 1
+        let preparationGeneration = navigatorStreamGeneration
+        // Cover image/OCR preparation as well as the network stream. Besides
+        // hiding the previous instruction, this prevents a fast question from
+        // overtaking a not-yet-prepared initial capture.
+        isNavigating = true
+        if autoRun {
+            navigatorStreamingText = ""
+        }
         navigatorStreamTask = Task { [weak self] in
             async let imageAsync = GatewayNavigateClient.preparedImage(from: attachment.url)
             async let ocrAsync = ScreenTextRecognizer.recognize(at: attachment.url)
             let image = await imageAsync
             let ocr = await ocrAsync
-            guard let self, !Task.isCancelled else { return }
+            guard let self,
+                  !Task.isCancelled,
+                  preparationGeneration == self.navigatorStreamGeneration else { return }
+            guard image != nil || ocr != nil else {
+                self.isNavigating = false
+                self.navigatorStreamingText = nil
+                self.errorMessage = "最新の画面を推論用に準備できませんでした。撮り直してください。"
+                return
+            }
             // Fragment rects stay on-device: they resolve [[target:…]] labels
             // to measured rectangles, which beat the model's estimated box.
             self.navigatorOCRFragments = ocr?.fragments ?? []
@@ -648,6 +696,13 @@ final class ReviewViewModel: ObservableObject {
                 mediaType: image?.mediaType,
                 ocrText: ocr?.joinedText
             )
+            NSLog(
+                "[Navigator] prepared capture id=%@ generation=%d image=%@ ocrCharacters=%d",
+                attachment.id.uuidString,
+                preparationGeneration,
+                image == nil ? "no" : "yes",
+                ocr?.joinedText.count ?? 0
+            )
             if autoRun {
                 self.navigatorWireTurns.append(turn)
                 await self.runNavigatorStream()
@@ -655,6 +710,8 @@ final class ReviewViewModel: ObservableObject {
                 // Auto first turn off: hold the capture until the first
                 // question, which will carry it.
                 self.navigatorPendingCapture = turn
+                self.isNavigating = false
+                self.navigatorStreamingText = nil
             }
         }
     }
@@ -666,6 +723,10 @@ final class ReviewViewModel: ObservableObject {
     func sendNavigatorQuestion() {
         let question = navigatorInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isNavigating else { return }
+        // Close the tiny scheduling gap before runNavigatorStream starts so a
+        // rapid second submit cannot launch a competing request.
+        isNavigating = true
+        navigatorStreamingText = ""
         navigatorInput = ""
         clearNavigatorHighlights()
         navigatorProposedAction = nil
@@ -676,11 +737,22 @@ final class ReviewViewModel: ObservableObject {
             screenshotAnnotations = []
             let pendingOCR = navigatorPendingCapture?.ocrText
             navigatorPendingCapture = nil
+            navigatorStreamTask?.cancel()
+            navigatorStreamGeneration += 1
+            let preparationGeneration = navigatorStreamGeneration
             navigatorStreamTask = Task { [weak self] in
                 let image = await GatewayNavigateClient.preparedImage(
                     from: imageURL, annotations: annotations
                 )
-                guard let self, !Task.isCancelled else { return }
+                guard let self,
+                      !Task.isCancelled,
+                      preparationGeneration == self.navigatorStreamGeneration else { return }
+                guard image != nil || pendingOCR != nil else {
+                    self.isNavigating = false
+                    self.navigatorStreamingText = nil
+                    self.errorMessage = "最新の画面を推論用に準備できませんでした。撮り直してください。"
+                    return
+                }
                 self.navigatorWireTurns.append(NavigateTurn(
                     role: .user,
                     text: question,
@@ -705,11 +777,12 @@ final class ReviewViewModel: ObservableObject {
         }
     }
 
-    /// Enters copilot mode with the planner's proposal (the "start
-    /// navigation" button). The mode switch is the user's tap — deterministic,
-    /// never a per-turn model judgement.
+    /// Enters copilot mode with the server's proposal. The mode switch is the
+    /// user's tap — deterministic, never a per-turn model judgement.
     func startProposedNavigation() {
         guard let task = navigatorProposedTask, !isNavigating else { return }
+        isNavigating = true
+        navigatorStreamingText = ""
         navigatorProposedTask = nil
         navigatorActiveTask = task
         clearNavigatorHighlights()
@@ -720,7 +793,7 @@ final class ReviewViewModel: ObservableObject {
         ))
         navigatorWireTurns.append(NavigateTurn(
             role: .user,
-            text: "ナビゲーションを開始します。最初のステップを案内してください。"
+            text: "案内を開始します。現在の画面に対して次に取るべき操作を案内してください。"
         ))
         enterCopilotMode()
         navigatorStreamTask = Task { [weak self] in
@@ -735,10 +808,10 @@ final class ReviewViewModel: ObservableObject {
 
     // MARK: - Copilot mode (docs/navigator-copilot-plan.md 正のユーザー体験)
 
-    /// The guided loop: the user clicks the highlighted spot in the TARGET
+    /// The guided loop: the user clicks the highlighted spot in the target
     /// app, a global monitor notices the click, the screen is re-captured
-    /// silently, and the model verifies/advances the step. No approve
-    /// button, no manual "撮り直す" required.
+    /// silently, and the model verifies the new state. No approve button, no
+    /// manual "撮り直す" required.
     private func enterCopilotMode() {
         guard copilotClickMonitor == nil else { return }
         // Global monitors only see events in other apps — which is exactly
@@ -750,13 +823,7 @@ final class ReviewViewModel: ObservableObject {
                 self?.scheduleCopilotProgressCheck()
             }
         }
-        if let onCopilotModeChanged {
-            onCopilotModeChanged(true)
-        } else {
-            NotificationCenter.default.post(
-                name: .copilotModeChanged, object: nil, userInfo: ["active": true]
-            )
-        }
+        onCopilotModeChanged?(true)
     }
 
     /// Tears the copilot apparatus down (monitor, pending check, ring).
@@ -769,16 +836,11 @@ final class ReviewViewModel: ObservableObject {
         }
         copilotRecaptureTask?.cancel()
         copilotRecaptureTask = nil
+        copilotProgressGeneration += 1
         isCopilotChecking = false
         clearNavigatorHighlights()
         if notifyPanel {
-            if let onCopilotModeChanged {
-                onCopilotModeChanged(false)
-            } else {
-                NotificationCenter.default.post(
-                    name: .copilotModeChanged, object: nil, userInfo: ["active": false]
-                )
-            }
+            onCopilotModeChanged?(false)
         }
     }
 
@@ -786,68 +848,117 @@ final class ReviewViewModel: ObservableObject {
     /// into one check, and the target app gets a beat to react first.
     private func scheduleCopilotProgressCheck() {
         guard isCopilotActive, !isExecutingNavigatorAction else { return }
-        copilotRecaptureTask?.cancel()
-        copilotRecaptureTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard let self, !Task.isCancelled else { return }
-            await self.performCopilotProgressCapture()
-        }
+        startCopilotProgressCheck(after: 1_200_000_000)
     }
 
     /// Manual fallback on the copilot strip: check progress right now.
     func requestCopilotProgressCheck() {
         guard isCopilotActive else { return }
+        startCopilotProgressCheck(after: 0)
+    }
+
+    private func startCopilotProgressCheck(after delayNanoseconds: UInt64) {
         copilotRecaptureTask?.cancel()
+        copilotProgressGeneration += 1
+        let generation = copilotProgressGeneration
+        isCopilotChecking = true
+        // The click means the old target is no longer authoritative. Remove
+        // it before the debounce so stale guidance never remains clickable.
+        clearNavigatorHighlights()
         copilotRecaptureTask = Task { [weak self] in
-            await self?.performCopilotProgressCapture()
+            if delayNanoseconds > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                } catch {
+                    return
+                }
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  generation == self.copilotProgressGeneration else { return }
+            await self.performCopilotProgressCapture(generation: generation)
         }
     }
 
-    private func performCopilotProgressCapture() async {
-        guard isCopilotActive, !isCopilotChecking, !isNavigating else { return }
-        isCopilotChecking = true
-        defer { isCopilotChecking = false }
+    private func performCopilotProgressCapture(generation: Int) async {
+        guard isCopilotActive,
+              generation == copilotProgressGeneration,
+              !Task.isCancelled,
+              !isNavigating else {
+            if generation == copilotProgressGeneration {
+                isCopilotChecking = false
+                copilotRecaptureTask = nil
+            }
+            return
+        }
+        defer {
+            if generation == copilotProgressGeneration {
+                isCopilotChecking = false
+                copilotRecaptureTask = nil
+            }
+        }
         do {
             // Keep the previous live ring out of the next screenshot so the
             // panel preview never stacks a baked-in ring with its own overlay.
             liveNavigatorHighlight = nil
             HighlightOverlayPresenter.shared.hide()
-            try? await Task.sleep(nanoseconds: 180_000_000)
+            try await Task.sleep(nanoseconds: 180_000_000)
             let attachment = try await captureCopilotProgressAttachment()
-            guard isCopilotActive else { return }
+            guard isCopilotActive,
+                  !Task.isCancelled,
+                  generation == copilotProgressGeneration else { return }
             // Same path as a manual re-capture: appends the capture turn and
             // streams the verification answer.
             enterVisionMode(with: attachment)
+        } catch is CancellationError {
+            // A newer click owns the next screen; the old capture is ignored.
         } catch {
-            NSLog("[Copilot] auto progress capture failed: %@", String(describing: error))
+            if generation == copilotProgressGeneration {
+                NSLog("[Copilot] auto progress capture failed: %@", String(describing: error))
+            }
         }
     }
 
-    /// Copilot re-capture needs a small settle window after the user's click;
-    /// otherwise we often read the pre-transition screen and repeat the same
-    /// instruction. For now we use OCR-text sameness as a cheap proxy for
-    /// "the screen hasn't materially changed yet" and retry once. A richer
-    /// visual-diff based detector is a follow-up tuning task.
+    /// Copilot re-capture samples consecutive frames after the user's click.
+    /// A changed first frame is often the *least* trustworthy one: it can be a
+    /// loading skeleton between the old and final screens. Wait for a second
+    /// frame, and take one more when pixels are still changing. This bounds the
+    /// wait while ensuring the model sees the newest sampled state.
     private func captureCopilotProgressAttachment() async throws -> ScreenshotAttachment {
         let displayID = copilotCaptureDisplayID()
         let captureService = ScreenshotCaptureService()
-        let previousOCR = latestNavigatorOCRText()
-
         let first = try await captureService.captureFullScreen(displayID: displayID)
-        guard let previousOCR else { return first }
+        try Task.checkCancellation()
 
-        let firstOCR = await ScreenTextRecognizer.recognize(at: first.url)?.joinedText
-        guard
-            let firstOCR,
-            !firstOCR.isEmpty,
-            firstOCR == previousOCR
-        else {
-            return first
+        try await Task.sleep(nanoseconds: 700_000_000)
+        let second = try await captureService.captureFullScreen(displayID: displayID)
+        try Task.checkCancellation()
+        if await Self.capturePixelsMatch(first.url, second.url) {
+            Self.removeDiscardedCapture(first)
+            return second
         }
 
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        let second = try await captureService.captureFullScreen(displayID: displayID)
-        return second
+        try await Task.sleep(nanoseconds: 700_000_000)
+        let third = try await captureService.captureFullScreen(displayID: displayID)
+        try Task.checkCancellation()
+        Self.removeDiscardedCapture(first)
+        Self.removeDiscardedCapture(second)
+        return third
+    }
+
+    /// PNG equality is a deliberately strict and inexpensive stability signal:
+    /// ScreenCaptureKit omits the cursor and our own windows, so identical
+    /// bytes mean no visible pixels changed between the two samples.
+    private nonisolated static func capturePixelsMatch(_ lhs: URL, _ rhs: URL) async -> Bool {
+        await Task.detached(priority: .utility) {
+            guard let left = try? Data(contentsOf: lhs),
+                  let right = try? Data(contentsOf: rhs) else { return false }
+            return left == right
+        }.value
+    }
+
+    private nonisolated static func removeDiscardedCapture(_ attachment: ScreenshotAttachment) {
+        try? FileManager.default.removeItem(at: attachment.url)
     }
 
     /// The display the session is happening on: where the last capture was
@@ -872,11 +983,19 @@ final class ReviewViewModel: ObservableObject {
     /// highlight ring down.
     func panelWillClose() {
         saveNavigatorSessionIfNeeded()
+        navigatorStreamTask?.cancel()
+        navigatorStreamTask = nil
+        navigatorStreamGeneration += 1
+        isNavigating = false
+        navigatorStreamingText = nil
         exitCopilotMode(notifyPanel: false)
     }
 
     private func runNavigatorStream() async {
+        guard !Task.isCancelled else { return }
         guard let client = GatewayNavigateClient.make() else {
+            isNavigating = false
+            navigatorStreamingText = nil
             errorMessage = "ナビゲーターには I//O Cloud へのログインが必要です。"
             return
         }
@@ -896,6 +1015,13 @@ final class ReviewViewModel: ObservableObject {
         }
 
         let context = await resolveContext()
+        guard generation == navigatorStreamGeneration, !Task.isCancelled else { return }
+        NSLog(
+            "[Navigator] request generation=%d captureID=%@ turns=%d",
+            generation,
+            visionImage?.id.uuidString ?? "none",
+            navigatorWireTurns.count
+        )
         do {
             let stream = try await client.navigateStream(
                 turns: navigatorWireTurns,
@@ -938,8 +1064,9 @@ final class ReviewViewModel: ObservableObject {
             navigatorWireTurns.append(NavigateTurn(role: .assistant, text: finalText))
             navigatorTurns.append(NavigatorDisplayTurn(role: .assistant, text: displayText))
             let copilotTurn = isCopilotActive
-            // Copilot progress: the step advance is client-owned data, moved
-            // only by the model's explicit [[step:done]] signal.
+            let taskStepBeforeResponse = navigatorActiveTask?.currentStep
+            // Internal task continuity is client-owned data, moved only by the
+            // model's explicit [[step:done]] signal.
             if stepDone, var active = navigatorActiveTask {
                 active.currentStep += 1
                 if active.isFinished {
@@ -956,14 +1083,49 @@ final class ReviewViewModel: ObservableObject {
                     NSLog("[Navigator] step advanced to %d/%d", active.currentStep + 1, active.steps.count)
                 }
             }
+            NSLog(
+                "[Navigator] response target=%@ stepDone=%@ taskStep=%@->%@",
+                target ?? "none",
+                stepDone ? "yes" : "no",
+                taskStepBeforeResponse.map(String.init) ?? "none",
+                navigatorActiveTask.map(\.currentStep).map(String.init) ?? "none"
+            )
             // A freshly planned task becomes a proposal (start button); it
             // never interrupts a plan already being guided.
             if let plannedTask, navigatorActiveTask == nil {
                 navigatorProposedTask = plannedTask
             }
-            // Precision ladder: an OCR-measured rect for the named target
-            // wins over the model's estimated box (which stays as fallback).
-            let box = resolveHighlightRect(target: target, vlmBox: vlmBox)
+            // A response marker describes the action in *this* answer and is
+            // therefore the normal grounding source. The client-owned task is
+            // authoritative only when the model explicitly advanced it with
+            // [[step:done]]; without that signal the task cursor can lag behind
+            // a correct answer marker and must not pin the ring to an old step.
+            let grounding: (target: String?, box: CGRect?)
+            if copilotTurn && stepDone {
+                let expectedTarget = currentNavigatorTaskTarget()
+                let responseMatchesExpected = expectedTarget.map {
+                    target.map(Self.matchKey) == Self.matchKey($0)
+                } ?? false
+                if let expectedTarget,
+                   let target,
+                   !responseMatchesExpected {
+                    NSLog(
+                        "[Navigator] suppressed stale target marker response=%@ expected=%@",
+                        target,
+                        expectedTarget
+                    )
+                }
+                let trustedVLMBox = responseMatchesExpected ? vlmBox : nil
+                grounding = (
+                    expectedTarget,
+                    expectedTarget.flatMap {
+                        resolveHighlightRect(target: $0, vlmBox: trustedVLMBox)
+                    }
+                )
+            } else {
+                grounding = (target, resolveHighlightRect(target: target, vlmBox: vlmBox))
+            }
+            let box = grounding.box
             panelNavigatorHighlight = box
             liveNavigatorHighlight = box
             let copilotStillActive = isCopilotActive
@@ -977,7 +1139,7 @@ final class ReviewViewModel: ObservableObject {
             }
             // The approve/execute button belongs to Q&A sessions only; the
             // copilot has exactly one interaction (click the highlight).
-            if let target, isNavigatorQASession {
+            if let target = grounding.target, isNavigatorQASession {
                 navigatorProposedAction = NavigatorAction(
                     kind: fill.map { .fill(text: $0) } ?? .press,
                     targetLabel: target,
@@ -992,8 +1154,15 @@ final class ReviewViewModel: ObservableObject {
         } catch is CancellationError {
             // Session was reset mid-stream; nothing to surface.
         } catch {
+            guard generation == navigatorStreamGeneration, !Task.isCancelled else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    private func currentNavigatorTaskTarget() -> String? {
+        guard let task = navigatorActiveTask,
+              task.steps.indices.contains(task.currentStep) else { return nil }
+        return task.steps[task.currentStep].target
     }
 
     /// Saves a copy of the current screenshot wherever the user picks. The
@@ -1064,6 +1233,9 @@ final class ReviewViewModel: ObservableObject {
             }
             return nearest?.rect
         }
+        // A repeated label without a trusted model coordinate is ambiguous.
+        // Arbitrarily selecting one creates a confident but unsafe red ring.
+        guard hits.count == 1 else { return nil }
         let closest = hits.min { lhs, rhs in
             abs(Self.matchKey(lhs.text).count - needle.count)
                 < abs(Self.matchKey(rhs.text).count - needle.count)
@@ -1133,11 +1305,7 @@ final class ReviewViewModel: ObservableObject {
             // target app — hide it for the whole execute-and-verify beat
             // (the progress capture brings it back with the new turn).
             NSLog("[Action] approving: %@", action.buttonTitle)
-            if let onHidePanelForAction {
-                onHidePanelForAction()
-            } else {
-                NotificationCenter.default.post(name: .hidePanelForAction, object: nil)
-            }
+            onHidePanelForAction?()
             try? await Task.sleep(nanoseconds: 150_000_000)
             do {
                 switch action.kind {
@@ -1172,27 +1340,17 @@ final class ReviewViewModel: ObservableObject {
                     role: .user,
                     text: "（\(action.buttonTitle) を実行しました）"
                 ))
-                // Single-action sessions for now: the multi-step loop
-                // (execute → auto re-capture → panel restore) is parked as a
-                // known issue — the panel reliably failed to come back after
-                // a synthetic click (3 attempts, unresolved). The click
-                // feedback ring plays out on the live screen, then the
-                // session ends; past sessions stay reachable via history.
-                NSLog("[Action] executed; ending session (single-action mode)")
+                // Direct action approval remains a one-shot path: execute the
+                // requested action, leave the visible click feedback, then end
+                // the session. Ongoing guided verification belongs to copilot
+                // mode, not the approve-action branch.
+                NSLog("[Action] executed; ending session")
                 self.saveNavigatorSessionIfNeeded()
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 HighlightOverlayPresenter.shared.hide()
-                if let onClosePanelRequested {
-                    onClosePanelRequested()
-                } else {
-                    NotificationCenter.default.post(name: .closePanel, object: nil)
-                }
+                self.requestPanelClose()
             } catch {
-                if let onShowPanelAfterAction {
-                    onShowPanelAfterAction()
-                } else {
-                    NotificationCenter.default.post(name: .showPanelAfterAction, object: nil)
-                }
+                onShowPanelAfterAction?()
                 self.errorMessage = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
             }

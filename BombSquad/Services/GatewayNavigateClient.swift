@@ -271,21 +271,56 @@ struct GatewayNavigateClient {
         language: OutputLanguage,
         task: NavigatorTask?
     ) -> [String: Any] {
-        // Only the LATEST screenshot rides along. Sending the first one too
-        // made the model mix up past and present ("Technology isn't open
-        // yet" while looking at an old shot) — text history carries the
-        // context; exactly one image means exactly one "now".
-        let imageIndices = turns.indices.filter { turns[$0].imageBase64 != nil }
-        let keptImageIndices = Set([imageIndices.last].compactMap { $0 })
+        // An active copilot already carries its complete plan in `task`.
+        // Replaying the whole pre-copilot conversation makes old instructions
+        // compete with the latest screen, so retain only the latest capture and
+        // the final conversational beat. Plain navigator Q&A keeps full history.
+        let effectiveTurns: [NavigateTurn]
+        if task != nil {
+            let latestCaptureIndex = turns.indices.last {
+                turns[$0].imageBase64 != nil || turns[$0].ocrText != nil
+            }
+            let tailStart = max(0, turns.count - 2)
+            var keptIndices = Set(tailStart..<turns.count)
+            if let latestCaptureIndex {
+                keptIndices.insert(latestCaptureIndex)
+            }
+            effectiveTurns = turns.indices
+                .filter { keptIndices.contains($0) }
+                .map { turns[$0] }
+        } else {
+            effectiveTurns = turns
+        }
 
-        let messages: [[String: Any]] = turns.enumerated().map { index, turn in
+        // Only the LATEST screen-derived context rides along. Keeping one
+        // image but every historical OCR dump still mixed past and present;
+        // image and OCR now share the same single definition of "now". Treat
+        // an OCR-only turn as a capture too, so a failed image encode cannot
+        // accidentally resurrect the previous screenshot.
+        let captureIndices = effectiveTurns.indices.filter {
+            effectiveTurns[$0].imageBase64 != nil || effectiveTurns[$0].ocrText != nil
+        }
+        let latestCaptureIndex = captureIndices.last
+
+        let messages: [[String: Any]] = effectiveTurns.enumerated().map { index, turn in
             var payload: [String: Any] = ["role": turn.role.rawValue]
-            if let text = turn.text, !text.isEmpty { payload["text"] = text }
-            if keptImageIndices.contains(index), let image = turn.imageBase64 {
+            if let text = turn.text, !text.isEmpty {
+                payload["text"] = text
+            } else if index != latestCaptureIndex,
+                      turn.imageBase64 != nil || turn.ocrText != nil {
+                // Without a neutral text payload the gateway treats every
+                // image-stripped historical capture as another fresh
+                // re-capture instruction. Preserve the turn boundary while
+                // making its non-current status explicit.
+                payload["text"] = "（過去の画面取得。現在状態は最新の画像とOCRだけを参照する）"
+            }
+            if index == latestCaptureIndex, let image = turn.imageBase64 {
                 payload["image_base64"] = image
                 payload["media_type"] = turn.mediaType ?? "image/jpeg"
             }
-            if let ocr = turn.ocrText, !ocr.isEmpty { payload["ocr_text"] = ocr }
+            if index == latestCaptureIndex, let ocr = turn.ocrText, !ocr.isEmpty {
+                payload["ocr_text"] = ocr
+            }
             return payload
         }
 

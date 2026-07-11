@@ -24,6 +24,16 @@ struct PanelLayoutSpec: Equatable {
     let placement: PanelPlacement
 }
 
+struct PanelSessionCallbacks {
+    let onVisionModeExited: () -> Void
+    let onHidePanelForAction: () -> Void
+    let onShowPanelAfterAction: () -> Void
+    let onClosePanelRequested: () -> Void
+    let onScreenshotCaptureRequested: () -> Void
+    let onScreenCaptureSettingsRequested: () -> Void
+    let onCopilotModeChanged: (Bool) -> Void
+}
+
 @MainActor
 final class PanelSession: ObservableObject {
     static let textPanelSize = CGSize(width: 680, height: 660)
@@ -32,22 +42,9 @@ final class PanelSession: ObservableObject {
 
     let viewModel: ReviewViewModel
 
-    init(viewModel: ReviewViewModel) {
+    init(viewModel: ReviewViewModel, callbacks: PanelSessionCallbacks) {
         self.viewModel = viewModel
-    }
-
-    func configurePanelCallbacks(
-        onVisionModeExited: @escaping () -> Void,
-        onHidePanelForAction: @escaping () -> Void,
-        onShowPanelAfterAction: @escaping () -> Void,
-        onClosePanelRequested: @escaping () -> Void,
-        onCopilotModeChanged: @escaping (Bool) -> Void
-    ) {
-        viewModel.onVisionModeExited = onVisionModeExited
-        viewModel.onHidePanelForAction = onHidePanelForAction
-        viewModel.onShowPanelAfterAction = onShowPanelAfterAction
-        viewModel.onClosePanelRequested = onClosePanelRequested
-        viewModel.onCopilotModeChanged = onCopilotModeChanged
+        viewModel.attachPanelCallbacks(callbacks)
     }
 
     var mode: ReviewMode {
@@ -161,11 +158,7 @@ final class PanelSession: ObservableObject {
     }
 
     func handlePanelWillClose() {
-        viewModel.onVisionModeExited = nil
-        viewModel.onHidePanelForAction = nil
-        viewModel.onShowPanelAfterAction = nil
-        viewModel.onClosePanelRequested = nil
-        viewModel.onCopilotModeChanged = nil
+        viewModel.detachPanelCallbacks()
         viewModel.panelWillClose()
     }
 
@@ -176,22 +169,6 @@ final class PanelSession: ObservableObject {
 
     func requestReviewFromHotkey() {
         viewModel.requestReviewFromHotkey()
-    }
-
-    func requestPanelClose() {
-        if let onClosePanelRequested = viewModel.onClosePanelRequested {
-            onClosePanelRequested()
-        } else {
-            NotificationCenter.default.post(name: .closePanel, object: nil)
-        }
-    }
-
-    func requestScreenshotCapture() {
-        NotificationCenter.default.post(name: .captureScreenshot, object: nil)
-    }
-
-    func requestScreenCaptureSettings() {
-        NotificationCenter.default.post(name: .openScreenCaptureSettings, object: nil)
     }
 
     func markDraftFocusedIfNeeded() {

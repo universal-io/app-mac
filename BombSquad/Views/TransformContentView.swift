@@ -13,7 +13,10 @@ struct TransformContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             StagingEditorView(session: session, viewModel: session.viewModel, focusedField: focusedField)
-            ReviewPanelView(viewModel: session.viewModel, focusedField: focusedField)
+            ReviewPanelView(
+                viewModel: session.viewModel,
+                focusedField: focusedField
+            )
                 .frame(maxHeight: .infinity)
         }
         .animation(.spring(duration: 0.35), value: session.viewModel.isLoading)
