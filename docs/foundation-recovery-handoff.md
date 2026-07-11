@@ -1,6 +1,9 @@
 # Foundation Recovery Handoff
 
-Updated: 2026-07-11
+Updated: 2026-07-12
+Status: **クローズ（記録として保存）**。リカバリは完了し、以降の基盤作業の正本は
+[foundation-rebuild-plan.md](foundation-rebuild-plan.md)（シャーシ交換方式）。
+2026-07-12 に web/・supabase/ を main（本番 Gateway 世代）から port 済み（`42c644e`）。
 
 ## Summary
 

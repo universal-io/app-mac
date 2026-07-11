@@ -3,6 +3,12 @@
 > **2026-07-02**: 製品は **Universal I/O (I//O)** へ方針転換した。ビジョン・アーキテクチャ・
 > 実装マイルストーンの正本は [docs/universal-io-master-plan.md](docs/universal-io-master-plan.md)。
 > 以下はその土台となる現行実装（Bomb Squad 世代）の仕様。
+>
+> **2026-07-12**: macOS アプリの基盤作り直し（シャーシ交換）を進行中。正本は
+> [docs/foundation-rebuild-plan.md](docs/foundation-rebuild-plan.md)。経緯: ビッグバン
+> リファクタリング（R0〜R4）が失敗 → 安定版へ巻き戻して安定化（現状）→ 中枢のみ新規実装・
+> 実証済みサービスは移植、の方針で再スタート。Gateway（web/）と本番 DB は
+> リファクタリング後の世代（plan catalog / admin console）が本番稼働中で、作り直し対象外。
 
 メール・Slack などのコミュニケーションで、送る前に「ちょっと待って」と一拍おくためのアプリ。会話のサンドボックス。受信したメッセージにも適用できるフィルター。macOS ネイティブアプリ版。
 
