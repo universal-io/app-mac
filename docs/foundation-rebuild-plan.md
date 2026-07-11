@@ -90,7 +90,7 @@
 ### Phase 5: クローズ
 - [ ] README を新アーキテクチャに合わせて書き直す
 - [ ] このドキュメントのチェックボックスを全て埋め、ステータスを完了にする
-- [ ] `foundation-recovery-handoff.md` をアーカイブ扱いにする
+- [x] `foundation-recovery-handoff.md` をアーカイブ扱いにする（2026-07-12 `docs/old/` へ移動済み）
 - [ ] main へマージ（web は同一なので本番 Gateway に影響なし）
 
 ## 5. 旧計画からの引き継ぎ対応表

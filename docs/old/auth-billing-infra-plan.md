@@ -1,5 +1,11 @@
 # Auth, Billing, and AI Gateway Plan
 
+> ⚠️ **ARCHIVED（2026-07-12）**: MVP 設計時の草案。確定した API 契約は
+> [api-contract.md](../api-contract.md)、実装の経緯は [implementation-roadmap.md](implementation-roadmap.md)、
+> 現行の開発正本は [foundation-rebuild-plan.md](../foundation-rebuild-plan.md)。
+> データモデル草案の命名（無 prefix）は実スキーマ（`bs_` prefix）と異なり、
+> Admin 節「作らない」は現状（v0 実装済み）と一致しない。
+
 This document captures the near-term production architecture for Bomb Squad.
 The goal is to ship a small MVP without putting the app into a corner as iOS,
 Android, enterprise tenants, custom prompts, usage logs, and additional AI

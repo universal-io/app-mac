@@ -8,8 +8,10 @@
 各マイルストーンの開始・完了・方針変更時には必ずこのファイルを更新すること。
 
 関連ドキュメント:
-- [implementation-roadmap.md](implementation-roadmap.md) — 旧ロードマップ（認証・課金インフラの経緯）
-- [api-contract.md](api-contract.md) / [auth-billing-infra-plan.md](auth-billing-infra-plan.md) — M3 で更新対象
+- [README.md（ドキュメント索引）](README.md) — 全ドキュメントの一覧と役割。**まずここを見る**
+- [foundation-rebuild-plan.md](foundation-rebuild-plan.md) — 現行の開発正本（基盤作り直し）
+- [api-contract.md](api-contract.md) — API 契約の正本
+- [old/implementation-roadmap.md](old/implementation-roadmap.md) / [old/auth-billing-infra-plan.md](old/auth-billing-infra-plan.md) — アーカイブ（経緯資料）
 - [../README.md](../README.md) — 現行実装（Bomb Squad 世代）の仕様
 
 ---
@@ -385,7 +387,7 @@ M3 の Gateway 移行時にサーバー側へ移す。
 ステータス: M3-A 完了・実機検証済み（2026-07-02、`feature/universal-io` ブランチにコミット済み: `e4e0dd7`）。
 **決定（2026-07-02、オーナー確認済み）**: Gateway は FastAPI ではなく
 **Next.js Route Handlers（`web/`、Vercel）**。既存の
-[auth-billing-infra-plan.md](auth-billing-infra-plan.md)・[api-contract.md](api-contract.md)・
+[old/auth-billing-infra-plan.md](old/auth-billing-infra-plan.md)・[api-contract.md](api-contract.md)・
 適用済み Supabase スキーマ（`bs_` テーブル群）に従う。段階分割で進める:
 
 - **M3-A（完了・実機検証済み）**: `web/app/api/ai/review` Gateway（Supabase JWT 検証、
@@ -511,7 +513,7 @@ M3 の Gateway 移行時にサーバー側へ移す。
 
 **スコープ**:
 
-1. **Gateway（Next.js Route Handlers。既存 [auth-billing-infra-plan.md](auth-billing-infra-plan.md) と整合させて更新）**
+1. **Gateway（Next.js Route Handlers。既存 [old/auth-billing-infra-plan.md](old/auth-billing-infra-plan.md) と整合させて更新）**
    - エンドポイント（Pydantic スキーマ必須、[api-contract.md](api-contract.md) を正本として更新）:
      - `POST /v1/transform` — 送信レビュー／受信変換／Vision 解釈を統合した変換 API
        （`mode`, `input`, `situational_context`, `output_language`, ストリーミング=SSE）

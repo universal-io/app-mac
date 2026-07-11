@@ -84,7 +84,7 @@ Optional fallback path when launching the built app outside the repo:
 - `STRIPE_PRICE_TEAM_MONTHLY`
 - `STRIPE_PRICE_ENTERPRISE_MONTHLY`
 
-The canonical names are defined in [api-contract.md](/Users/kaya.matsumoto/projects/just-a-moment/docs/api-contract.md:1).
+The canonical names are defined in [api-contract.md](api-contract.md).
 
 ## Auth Providers
 

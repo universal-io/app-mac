@@ -1,7 +1,12 @@
 # Bomb Squad Implementation Roadmap
 
+> ⚠️ **ARCHIVED（2026-07-12）**: 経緯資料。フェーズ本文は 2026-07 初旬時点で凍結されており、
+> **現状と一致しない記述を含む**（`/api/ai/review` は実装済み・Admin v0 は実装済み等）。
+> 現行の開発正本は [foundation-rebuild-plan.md](../foundation-rebuild-plan.md)、
+> 製品ビジョンは [universal-io-master-plan.md](../universal-io-master-plan.md)。
+>
 > **2026-07-02 更新**: 製品は Universal I/O (I//O) へ方針転換した。今後の正本は
-> [universal-io-master-plan.md](universal-io-master-plan.md)。このファイルは
+> [universal-io-master-plan.md](../universal-io-master-plan.md)。このファイルは
 > 認証・課金インフラの経緯資料として残す（マスタープラン M3 が参照する）。
 
 This is the resumable execution plan after the app rename. Keep this file
