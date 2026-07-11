@@ -10,6 +10,7 @@ import {
   gatewayErrorResponse,
   GatewayError,
 } from "@/lib/server/gateway";
+import { featuresForPlan } from "@/lib/server/entitlements";
 
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -29,6 +30,9 @@ export async function GET(request: Request): Promise<Response> {
         plan: entitlement.plan,
         status: entitlement.status,
         monthly_review_limit: quota.limit,
+        // Additive feature flags (foundation-redesign-plan §5-c). Display
+        // gating only on the client; server-side enforcement lands later.
+        features: await featuresForPlan(entitlement.plan),
       },
       quota,
     });

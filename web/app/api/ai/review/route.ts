@@ -5,10 +5,10 @@
 import {
   authenticate,
   countMonthlyUsage,
+  effectiveMonthlyLimit,
   errorResponse,
   gatewayErrorResponse,
   GatewayError,
-  monthlyReviewLimit,
   quotaInfo,
   recordUsage,
   type QuotaInfo,
@@ -88,12 +88,12 @@ export async function POST(request: Request): Promise<Response> {
     const { userId, tenantId, entitlement } = await authenticate(request);
 
     // --- Quota ---
-    const limit = monthlyReviewLimit(entitlement);
+    const limit = await effectiveMonthlyLimit(entitlement);
     const used = await countMonthlyUsage(tenantId);
 
     const quota = (usedNow: number): QuotaInfo => quotaInfo(entitlement, usedNow, limit);
 
-    if (used >= limit) {
+    if (limit !== null && used >= limit) {
       return errorResponse(429, "QUOTA_EXCEEDED", "Monthly review limit reached.", requestId, quota(used));
     }
 

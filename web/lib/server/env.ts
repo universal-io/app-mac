@@ -16,7 +16,8 @@ export type ServerEnv = {
   navigateModelId: string;
   navigateFastModelVendor: string;
   navigateFastModelId: string;
-  freeMonthlyReviewLimit: number;
+  /** Lowercased emails allowed into /admin (docs/admin-dashboard-plan.md §2). */
+  adminEmails: string[];
 };
 
 export function getServerEnv(): ServerEnv {
@@ -60,21 +61,20 @@ export function getServerEnv(): ServerEnv {
     navigateFastModelId:
       normalize(process.env.BOMB_SQUAD_NAVIGATE_FAST_MODEL_ID) ??
       "meta-llama/llama-4-scout-17b-16e-instruct",
-    // Since 2026-07-06 this caps ALL AI operations (one request = one unit),
-    // not just reviews. 500 is deliberately generous for the initial cohort.
-    freeMonthlyReviewLimit: parsePositiveInt(
-      process.env.BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT,
-      500,
-    ),
+    // Comma-separated allowlist for the admin console (v0 authorization;
+    // admin-dashboard-plan §2). Empty list means nobody is an admin.
+    adminEmails: parseEmailList(process.env.ADMIN_EMAILS),
   };
+}
+
+function parseEmailList(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 function normalize(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
