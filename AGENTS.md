@@ -1,18 +1,20 @@
 # Worktree Guard
 
-This worktree is the current source of truth for the active foundation redesign recovery work.
+This worktree is the active source of truth for the current foundation redesign
+thread.
 
 Path:
-- `/Users/kaya.matsumoto/projects/universal-io/app-mac-stabilize-foundation`
+- `/Users/kaya.matsumoto/projects/universal-io/app-mac`
 
 Rules:
-- Do all code changes for the current thread in this worktree.
-- Do not switch to `/Users/kaya.matsumoto/projects/universal-io/app-mac` for this thread.
-- If the active development target changes in the future, update this file first before editing code elsewhere.
+- Do code changes for the resumed mainline thread in this worktree.
+- The stabilization worktree remains a recovery reference only:
+  `/Users/kaya.matsumoto/projects/universal-io/app-mac-stabilize-foundation`
+- If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `stabilize/foundation-redesign-from-580a211`
+- `feature/foundation-redesign`
 
 Current operational note:
-- This worktree is the one the user runs in Xcode.
-- Any similar changes found only in `app-mac` are not authoritative unless they are intentionally re-applied here.
+- The validated stabilization state was adopted into this branch on 2026-07-11.
+- Continue implementation here unless a new recovery handoff is explicitly documented.

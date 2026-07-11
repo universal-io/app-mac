@@ -9,8 +9,12 @@ updated whenever a phase starts, finishes, or changes direction.
 
 ## Current Checkpoint
 
+> **2026-07-11 更新**: foundation redesign recovery の検証済み状態は
+> `feature/foundation-redesign` に採用済み。切り替え判断とブランチ運用は
+> [foundation-recovery-handoff.md](foundation-recovery-handoff.md) を参照。
+
 - Repository: `git@github.com:universal-io/app-mac.git`
-- Branch: `main`
+- Branch: `feature/foundation-redesign`
 - Last pushed commit: `72ea035 Keep auth panel open during login`
 - App target: `BombSquad`
 - Bundle ID: `com.heywatchme.bombsquad`
