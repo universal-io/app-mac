@@ -88,24 +88,17 @@ actor MemorySyncService {
     }
 
     private func runSync() async {
-        guard let api = GatewayAPI.make() else { return }
+        guard let client = GatewayClient.make() else { return }
         do {
             let localCards = try await MemoryStore.shared.allCardsIncludingDeleted()
 
-            var request = try await api.authorizedRequest("memory/cards")
-            request.httpMethod = "PUT"
-            request.setValue("application/json", forHTTPHeaderField: "content-type")
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .secondsSince1970
-            request.httpBody = try encoder.encode(CardsWirePayload(cards: localCards))
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw ProviderError.http(status: -1, body: "no HTTP response")
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                throw GatewayAPI.error(status: http.statusCode, data: data)
-            }
+            let data = try await client.sendJSONData(
+                "memory/cards",
+                method: "PUT",
+                body: encoder.encode(CardsWirePayload(cards: localCards))
+            )
 
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .secondsSince1970

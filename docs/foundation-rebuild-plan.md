@@ -50,16 +50,14 @@
 
 ## 4. フェーズ
 
-### Phase 0: 検証ハーネス（着手済み）
-- [ ] `docs/manual-golden-paths.md` — 全機能の手動検証シナリオ（15〜25件、ID 付き）。
+### Phase 0: 検証ハーネス（完了 2026-07-12）
+- [x] `docs/manual-golden-paths.md` — 全機能の手動検証シナリオ（GP-01〜26）。
       **これが無い状態で中枢に触れることを禁止**（前回の失敗の直接原因）。
-- [ ] 現行アプリで全シナリオを一度実施し、ベースライン結果を記録する
-      （既知バグはバグとして記録し、期待値に混ぜない）。
+- [x] 現行アプリでシナリオを実施し、ベースラインを確認（2026-07-12 オーナー実機確認: 問題なし）。
 
 ### Phase 1: 新中枢の骨格
-ステータス: 実装済み（2026-07-12、ビルド成功）・**実機確認待ち**
-（確認項目: フラグ OFF＝従来と完全に同一動作／フラグ ON＝右Shift2回でシェルパネルが出て
-mode 表示が遷移し、esc・再タップ・フォーカス喪失で閉じる）
+ステータス: **完了**（2026-07-12 実装・ビルド成功・オーナー実機確認済み:
+フラグ ON でシェルパネルの召喚・遷移・クローズが動作、フラグ OFF で従来動作に変化なし）
 - [x] `AppMode` 単一状態機械 — [`Core/AppMode.swift`](../BombSquad/Core/AppMode.swift)
       （遷移表 `canTransition(to:)` ＋ `AppStateMachine`。全遷移が `transition(to:reason:)` を通る。
       不正遷移は DEBUG で assert。旧コードの散在フラグには触れていない＝新経路のみ）。
@@ -76,9 +74,17 @@ mode 表示が遷移し、esc・再タップ・フォーカス喪失で閉じる
   `xcodebuild -scheme` が SPM 解決込みで通るように。従来はユーザースキーム依存だった）。
 
 ### Phase 2: GatewayClient 統一
-- [ ] `GatewayClient` コア 1 実装（認証ヘッダ・SSE・エラー変換・フォールバック判定）。
-      既存 6 クライアント（Review/Vision/Transcribe/Account/Navigate/API）を薄いラッパー化。
-      これは新旧両経路から使えるため先行して差し替えてよい（挙動不変の置換）。
+ステータス: 実装済み（2026-07-12、ビルド成功）・**実機確認待ち**
+（確認項目: golden paths のうち Gateway を通る系 = GP-03/04 レビューSSE・GP-10 ASR・
+GP-14〜16 Vision・GP-17〜19 Navigator/Copilot・GP-22 アカウント・GP-23 メモリ）
+- [x] `GatewayClient` コア 1 実装 — [`Core/GatewayClient.swift`](../BombSquad/Core/GatewayClient.swift)
+      （可用性ゲート・エンベロープ・JSON/multipart 送信・transport/status/エラー契約の変換・
+      SSE フレーミング・context/memory ペイロードを一元化）。
+- [x] 8 消費者を薄いラッパー化: Review / Vision / Transcribe / Account / Navigate ＋
+      MemoryDistiller / MemorySyncService（計画時の 6 に加えメモリ系 2 つも同パターンだったため含めた）。
+      公開 API は不変＝呼び出し側の変更ゼロ。正味 -200 行、SSE 解析の重複 2 → 1。
+- 意図的な軽微変更: MemoryDistiller / MemorySyncService の transport エラーが他クライアントと
+  同じ `ProviderError.http(-1)` 形式に統一された（従来は生 URLError。ログ文言のみの差）。
 
 ### Phase 3: モード移植（1 モードずつ、各段で golden paths）
 順序: 依存が少なく検証しやすい順。各モードは「小さなセッション VM ＋薄い View」として新規に書き、

@@ -57,93 +57,52 @@ struct GatewayNavigateClient {
     static let maxImageLongEdge: CGFloat = 1600
     private static let jpegQuality: CGFloat = 0.7
 
-    private let api: GatewayAPI
-    private let session: URLSession
+    private let client: GatewayClient
 
     static func make() -> GatewayNavigateClient? {
-        guard let api = GatewayAPI.make() else { return nil }
-        return GatewayNavigateClient(api: api)
+        guard let client = GatewayClient.make() else { return nil }
+        return GatewayNavigateClient(client: client)
     }
 
-    init(api: GatewayAPI, session: URLSession = .shared) {
-        self.api = api
-        self.session = session
+    init(client: GatewayClient) {
+        self.client = client
     }
 
     /// Streams a navigation answer for the conversation so far. The last turn
     /// must be a user turn (the auto first turn is a user turn with an image
-    /// and no text).
+    /// and no text). SSE framing/error mapping lives in `GatewayClient`.
     func navigateStream(
         turns: [NavigateTurn],
         hints: SituationalContext?,
         language: OutputLanguage,
         task: NavigatorTask? = nil
     ) async throws -> AsyncThrowingStream<NavigateStreamEvent, Error> {
-        var request = try await api.authorizedRequest("ai/navigate")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "accept")
-        request.httpBody = try JSONSerialization.data(
-            withJSONObject: requestBody(turns: turns, hints: hints, language: language, task: task)
+        let events = try await client.postSSE(
+            "ai/navigate",
+            body: requestBody(turns: turns, hints: hints, language: language, task: task)
         )
-
-        let (bytes, response): (URLSession.AsyncBytes, URLResponse)
-        do {
-            (bytes, response) = try await session.bytes(for: request)
-        } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ProviderError.http(status: -1, body: "no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            var data = Data()
-            for try await byte in bytes {
-                data.append(byte)
-                if data.count > 4096 { break }
-            }
-            throw GatewayAPI.error(status: http.statusCode, data: data)
-        }
 
         return AsyncThrowingStream { continuation in
             let task = Task {
-                var eventName = ""
                 do {
-                    // Same SSE framing as the review stream: one `data:` line
-                    // per event, dispatched on the data line.
-                    for try await line in bytes.lines {
-                        if line.hasPrefix("event:") {
-                            eventName = line.dropFirst("event:".count)
-                                .trimmingCharacters(in: .whitespaces)
-                            continue
-                        }
-                        guard line.hasPrefix("data:") else { continue }
-                        let payload = line.dropFirst("data:".count)
-                            .trimmingCharacters(in: .whitespaces)
-                        guard
-                            let data = payload.data(using: .utf8),
-                            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        else { continue }
-
-                        switch eventName {
+                    for try await event in events {
+                        switch event.name {
                         case "delta":
-                            if let text = root["text"] as? String, !text.isEmpty {
+                            if let text = event.json["text"] as? String, !text.isEmpty {
                                 continuation.yield(.delta(text))
                             }
                         case "result":
-                            guard let result = root["result"] as? [String: Any],
+                            guard let result = event.json["result"] as? [String: Any],
                                   let text = result["text"] as? String else {
                                 throw ProviderError.decoding("stream result had no payload")
                             }
-                            let meta = root["meta"] as? [String: Any]
+                            let meta = event.json["meta"] as? [String: Any]
                             continuation.yield(.result(
                                 text: text,
                                 harness: result["harness"] as? String,
                                 modelID: meta?["model_id"] as? String,
                                 task: Self.parseTask(result["task"])
                             ))
-                        case "error":
-                            throw GatewayAPI.error(status: 502, data: data)
                         default:
                             break
                         }
@@ -343,12 +302,6 @@ struct GatewayNavigateClient {
             ] as [String: Any]
         }
 
-        return [
-            "request_id": UUID().uuidString,
-            "operation": "navigate",
-            "input": input,
-            "preferences": ["output_language": language.rawValue],
-            "client": GatewayAPI.clientPayload(),
-        ]
+        return GatewayClient.envelope(operation: "navigate", input: input, language: language)
     }
 }

@@ -29,9 +29,9 @@ enum MemoryDistiller {
     /// onboarding UI can show what went wrong.
     static func generatePersonaCard(fromSamples samples: String) async throws -> String {
         let content: String
-        if let api = GatewayAPI.make() {
+        if let client = GatewayClient.make() {
             let result = try await gatewayCall(
-                api: api,
+                client: client,
                 operation: "bootstrap",
                 input: ["samples": samples]
             )
@@ -58,19 +58,16 @@ enum MemoryDistiller {
     ) async {
         do {
             let root: [String: Any]
-            if let api = GatewayAPI.make() {
+            if let client = GatewayClient.make() {
                 var input: [String: Any] = [
                     "original": original,
                     "suggestion": suggestion,
                     "final": final,
                 ]
                 if let context {
-                    var contextPayload: [String: Any] = ["app_name": context.appName]
-                    if let title = context.windowTitle { contextPayload["window_title"] = title }
-                    if let excerpt = context.conversationExcerpt { contextPayload["conversation_excerpt"] = excerpt }
-                    input["context"] = contextPayload
+                    input["context"] = GatewayClient.contextPayload(context)
                 }
-                root = try await gatewayCall(api: api, operation: "distill", input: input)
+                root = try await gatewayCall(client: client, operation: "distill", input: input)
             } else {
                 let user = PersonaPrompt.distillUser(
                     original: original, suggestion: suggestion, final: final, context: context
@@ -98,27 +95,16 @@ enum MemoryDistiller {
     // MARK: - Gateway call
 
     /// Calls POST /api/ai/memory/distill and returns the `result` object.
+    /// Transport/error plumbing lives in `GatewayClient`.
     private static func gatewayCall(
-        api: GatewayAPI,
+        client: GatewayClient,
         operation: String,
         input: [String: Any]
     ) async throws -> [String: Any] {
-        var request = try await api.authorizedRequest("ai/memory/distill")
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "request_id": UUID().uuidString,
-            "operation": operation,
-            "input": input,
-            "client": GatewayAPI.clientPayload(),
-        ])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw DistillerError.badResponse("no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw GatewayAPI.error(status: http.statusCode, data: data)
-        }
+        let data = try await client.postJSON(
+            "ai/memory/distill",
+            body: GatewayClient.envelope(operation: operation, input: input)
+        )
         guard
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let result = root["result"] as? [String: Any]

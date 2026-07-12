@@ -8,44 +8,30 @@ protocol Transcriber {
 
 /// ASR via the product gateway (POST /api/ai/transcribe). The server owns the
 /// Groq key and the hallucination filter; usage is metered per tenant.
+/// Transport/error plumbing lives in `GatewayClient`.
 struct GatewayTranscriber: Transcriber {
-    private let api: GatewayAPI
-    private let session: URLSession
+    private let client: GatewayClient
 
     static func make() -> GatewayTranscriber? {
-        guard let api = GatewayAPI.make() else { return nil }
-        return GatewayTranscriber(api: api)
+        guard let client = GatewayClient.make() else { return nil }
+        return GatewayTranscriber(client: client)
     }
 
-    init(api: GatewayAPI, session: URLSession = .shared) {
-        self.api = api
-        self.session = session
+    init(client: GatewayClient) {
+        self.client = client
     }
 
     func transcribe(fileURL: URL) async throws -> String {
         let audioData = try Data(contentsOf: fileURL)
-
         let boundary = "Boundary-\(UUID().uuidString)"
-        var request = try await api.authorizedRequest("ai/transcribe")
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = multipartBody(boundary: boundary, audioData: audioData)
+        let data = try await client.postMultipart(
+            "ai/transcribe",
+            boundary: boundary,
+            body: multipartBody(boundary: boundary, audioData: audioData)
+        )
 
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
-        }
-
-        guard let http = response as? HTTPURLResponse else {
-            throw ProviderError.http(status: -1, body: "no HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw GatewayAPI.error(status: http.statusCode, data: data)
-        }
-
+        let root = try GatewayClient.rootObject(data)
         guard
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let result = root["result"] as? [String: Any],
             let text = result["text"] as? String
         else {
