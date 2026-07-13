@@ -40,26 +40,13 @@ enum AppEvent: CustomStringConvertible {
 /// gesture means in a given mode.
 ///
 /// Phase 1 introduced the machinery; Phase 3 moved compose, transform,
-/// Vision, Navigator, and Copilot onto this path behind the migration flag.
+/// Vision, Navigator, and Copilot here; Phase 4 made it the live path.
 @MainActor
 final class SessionCoordinator {
     private enum CaptureCompletion {
         case attachment(ScreenshotAttachment)
         case cancelled
         case failed(String)
-    }
-
-    /// Developer flag: `defaults write <bundle-id> core.foundation.enabled -bool YES`.
-    /// Default OFF — the legacy path stays the shipping behavior until
-    /// Phase 4 parity (docs/foundation-rebuild-plan.md §Phase 4).
-    static let enabledDefaultsKey = "core.foundation.enabled"
-
-    static var isEnabled: Bool {
-        UserDefaults.standard.bool(forKey: enabledDefaultsKey)
-    }
-
-    static func makeIfEnabled() -> SessionCoordinator? {
-        isEnabled ? SessionCoordinator() : nil
     }
 
     let stateMachine = AppStateMachine()
@@ -568,7 +555,7 @@ struct CorePanelShellView: View {
             Text("mode: \(stateMachine.mode.description)")
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.secondary)
-            Text("Right-Shift double-tap or Esc closes. Legacy path is untouched; disable with:\ndefaults delete \(Bundle.main.bundleIdentifier ?? "<bundle-id>") \(SessionCoordinator.enabledDefaultsKey)")
+            Text("Right-Shift double-tap or Esc closes.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)

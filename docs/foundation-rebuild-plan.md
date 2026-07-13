@@ -116,9 +116,8 @@ grounding が無い）、(c) 案内の正確性低下（存在しない「国」
 - [x] `PanelController` + `PanelSpec` — [`Core/PanelController.swift`](../BombSquad/Core/PanelController.swift)
       （サイズ・配置・activate を mode の純関数 `PanelSpec.forMode` に集約。
       resignActive で閉じるか＝copilot 例外も spec の `closesOnResignActive` に一元化）。
-- [x] 起動フラグ — UserDefaults `core.foundation.enabled`（既定 OFF）。
-      `defaults write com.universal-io.mac core.foundation.enabled -bool YES` で新経路、
-      AppDelegate の分岐は入力配線1箇所のみで旧経路コードは不変。
+- [x] 起動フラグ — Phase 1〜3 の移行中は UserDefaults `core.foundation.enabled`（既定 OFF）で
+      新旧経路を切替。Phase 4 の実機確認後にフラグを削除し、新経路へ固定済み。
 - 付随修正: `project.yml` に shared scheme 生成を追加（`xcodegen generate` 直後の
   `xcodebuild -scheme` が SPM 解決込みで通るように。従来はユーザースキーム依存だった）。
 
@@ -181,7 +180,7 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
       golden paths と実機差分確認で最終確認する。
 
 ### Phase 4: パリティ切替と旧中枢の削除
-ステータス: **進行中**（2026-07-13 静的パリティ監査を開始）
+ステータス: **進行中**（2026-07-13 静的パリティ監査＋オーナー実機確認後、新経路へ固定）
 - [x] 旧 compose の明示的なカメラボタン経路を新中枢へ移植。
       `AppCommandCenter.onScreenshotCaptureRequested` がフラグ ON でも旧
       `AppDelegate.startScreenshotCapture()` へ直結され、新 Compose UI にボタン自体が
@@ -191,8 +190,10 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
 - [x] 認証中の resign-active 例外を新旧共通に戻した。
       新経路だけ `SessionCoordinator` 分岐が先に評価され、Google 認証やメールへ
       移動するとログインパネルが閉じる差分を修正。GP-22 で実機確認する。
+- [x] 上記 Phase 4 パリティ修正をオーナーが実機確認（2026-07-13）。
+- [x] エントリポイントを新 `SessionCoordinator` 経路に固定し、`core.foundation.enabled` 移行フラグを削除。
 - [ ] golden paths 全シナリオを新経路で通す（ベースラインと比較）
-- [ ] エントリポイントを新経路に固定、旧 `ReviewViewModel` / 旧パネル経路 / 移行フラグを削除
+- [ ] 旧 `ReviewViewModel` / 旧パネル経路を削除
 - [ ] `ReviewPanelView.swift` の残骸整理（コンポーネント分割の仕上げ）
 - [ ] 旧 transform 表示・`transformSystem` プロンプト等の未使用コード掃除（M4-B の積み残し）
 

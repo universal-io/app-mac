@@ -40,10 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private var panel: KeyablePanel? { activePanel?.window }
     private var currentSession: PanelSession? { activePanel?.session }
-    /// Foundation rebuild (docs/foundation-rebuild-plan.md): when the
-    /// developer flag is on, all input events route to the rebuilt core
-    /// instead of the legacy path below. Default OFF (nil) — shipping
-    /// behavior is unchanged.
+    /// Foundation rebuild coordinator. Phase 4 made this the only live input
+    /// path; the legacy implementation remains below only until deletion.
     private var coreCoordinator: SessionCoordinator?
 
     @MainActor
@@ -98,31 +96,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Right Shift double-tap = summon → review, or empty text → vision → close.
         // Right Shift long-press = hold-to-talk dictation. ⌘J toggles the panel.
-        coreCoordinator = MainActor.assumeIsolated { SessionCoordinator.makeIfEnabled() }
-        if let coordinator = coreCoordinator {
-            HotKeyCenter.shared.onHotKey = { MainActor.assumeIsolated { coordinator.handle(.hotKeyToggle) } }
-            gesture.onSingleTap = { MainActor.assumeIsolated { coordinator.handle(.singleTap) } }
-            gesture.onDoubleTap = { MainActor.assumeIsolated { coordinator.handle(.doubleTap) } }
-            gesture.onLongPressBegan = { MainActor.assumeIsolated { coordinator.handle(.longPressBegan) } }
-            gesture.onLongPressEnded = { MainActor.assumeIsolated { coordinator.handle(.longPressEnded) } }
-        } else {
-            HotKeyCenter.shared.onHotKey = { [weak self] in self?.togglePanel() }
-            gesture.onSingleTap = { [weak self] in self?.toggleEditorFocus() }
-            gesture.onDoubleTap = { [weak self] in self?.advance() }
-            gesture.onLongPressBegan = { [weak self] in self?.startDictation() }
-            gesture.onLongPressEnded = { [weak self] in self?.stopDictationAndTranscribe() }
-        }
+        let coordinator = MainActor.assumeIsolated { SessionCoordinator() }
+        coreCoordinator = coordinator
+        HotKeyCenter.shared.onHotKey = { MainActor.assumeIsolated { coordinator.handle(.hotKeyToggle) } }
+        gesture.onSingleTap = { MainActor.assumeIsolated { coordinator.handle(.singleTap) } }
+        gesture.onDoubleTap = { MainActor.assumeIsolated { coordinator.handle(.doubleTap) } }
+        gesture.onLongPressBegan = { MainActor.assumeIsolated { coordinator.handle(.longPressBegan) } }
+        gesture.onLongPressEnded = { MainActor.assumeIsolated { coordinator.handle(.longPressEnded) } }
         HotKeyCenter.shared.register()
         gesture.start()
         MainActor.assumeIsolated {
             let commandCenter = AppCommandCenter.shared
             commandCenter.onShowPanelRequested = { [weak self] in
                 self?.trace("command.showPanel")
-                if let coordinator = self?.coreCoordinator {
-                    coordinator.handle(.hotKeyToggle)
-                } else {
-                    self?.togglePanel()
-                }
+                self?.coreCoordinator?.handle(.hotKeyToggle)
             }
             commandCenter.onShowManagementRequested = { [weak self] in
                 self?.trace("command.showManagement")
@@ -131,11 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             commandCenter.onScreenshotCaptureRequested = { [weak self] in
                 self?.trace("command.captureScreenshot")
-                if let coordinator = self?.coreCoordinator {
-                    coordinator.handle(.screenshotCaptureRequested)
-                } else {
-                    self?.startScreenshotCapture()
-                }
+                self?.coreCoordinator?.handle(.screenshotCaptureRequested)
             }
             commandCenter.onScreenCaptureSettingsRequested = {
                 ScreenCapturePermission.openSettings()
