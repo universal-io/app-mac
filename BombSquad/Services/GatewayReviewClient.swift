@@ -28,7 +28,6 @@ struct GatewayReviewClient: ReviewProvider {
 
     func review(
         draft: String,
-        mode: ReviewMode,
         language: OutputLanguage,
         context: SituationalContext?,
         memory: MemoryInjection?
@@ -38,7 +37,7 @@ struct GatewayReviewClient: ReviewProvider {
 
         let data = try await client.postJSON(
             "ai/review",
-            body: requestBody(draft: trimmed, mode: mode, language: language, context: context, memory: memory)
+            body: requestBody(draft: trimmed, language: language, context: context, memory: memory)
         )
         return try decodeResult(from: data)
     }
@@ -48,7 +47,6 @@ struct GatewayReviewClient: ReviewProvider {
     /// well under a second, which is what makes rich models feel instant.
     func reviewStream(
         draft: String,
-        mode: ReviewMode,
         language: OutputLanguage,
         context: SituationalContext?,
         memory: MemoryInjection?
@@ -56,7 +54,7 @@ struct GatewayReviewClient: ReviewProvider {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProviderError.emptyDraft }
 
-        var body = requestBody(draft: trimmed, mode: mode, language: language, context: context, memory: memory)
+        var body = requestBody(draft: trimmed, language: language, context: context, memory: memory)
         body["stream"] = true
         let events = try await client.postSSE("ai/review", body: body)
 
@@ -94,7 +92,6 @@ struct GatewayReviewClient: ReviewProvider {
 
     private func requestBody(
         draft: String,
-        mode: ReviewMode,
         language: OutputLanguage,
         context: SituationalContext?,
         memory: MemoryInjection?
@@ -110,7 +107,7 @@ struct GatewayReviewClient: ReviewProvider {
             operation: "review",
             input: input,
             language: language,
-            extra: ["mode": mode == .transform ? "transform" : "compose"]
+            extra: ["mode": "compose"]
         )
     }
 

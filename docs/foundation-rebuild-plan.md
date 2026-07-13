@@ -198,7 +198,9 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
       AppDelegate はプロセス配線と管理・権限ウィンドウだけに縮小。
 - [x] `ReviewPanelView.swift` を削除。新経路も使う `GatewayOverrideBadge` / `ErrorBanner` /
       `VisionInterpretationView` だけを `FoundationSharedViews.swift` へ分離。
-- [ ] 旧 transform 表示・`transformSystem` プロンプト等の未使用コード掃除（M4-B の積み残し）
+- [x] 旧 transform 表示・クライアント `transformSystem` プロンプト等の
+      未使用コードを削除。`ReviewProvider` は compose 専用契約へ縮小し、受信 Transform は
+      現行の `VisionProvider` 経路のみとした。
 
 ### Phase 5: クローズ
 - [ ] README を新アーキテクチャに合わせて書き直す

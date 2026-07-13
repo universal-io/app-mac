@@ -1,15 +1,6 @@
 import Foundation
 
-/// Which direction the middle layer is operating in.
-/// - compose: the user's own outgoing draft → remove hostility before sending.
-/// - transform: a received message → restructure into something readable for
-///   someone who has difficulty parsing it (the receiving side).
-enum ReviewMode {
-    case compose
-    case transform
-}
-
-/// Abstraction over the engine that reviews/transforms text.
+/// Abstraction over the engine that reviews outgoing text.
 /// MVP ships a Claude-backed implementation; a local-LLM implementation
 /// can be swapped in later without touching the UI or the view model.
 protocol ReviewProvider {
@@ -20,7 +11,6 @@ protocol ReviewProvider {
     /// this call; nil when memory is off or empty.
     func review(
         draft: String,
-        mode: ReviewMode,
         language: OutputLanguage,
         context: SituationalContext?,
         memory: MemoryInjection?
@@ -28,7 +18,7 @@ protocol ReviewProvider {
 }
 
 extension ReviewProvider {
-    func review(draft: String, mode: ReviewMode, language: OutputLanguage) async throws -> ReviewResult {
-        try await review(draft: draft, mode: mode, language: language, context: nil, memory: nil)
+    func review(draft: String, language: OutputLanguage) async throws -> ReviewResult {
+        try await review(draft: draft, language: language, context: nil, memory: nil)
     }
 }

@@ -245,7 +245,6 @@ final class ComposeSession: ObservableObject {
                 var finalResult: ReviewResult?
                 let stream = try await gateway.reviewStream(
                     draft: input,
-                    mode: .compose,
                     language: language,
                     context: context,
                     memory: memory
@@ -266,7 +265,6 @@ final class ComposeSession: ObservableObject {
             } else {
                 reviewed = try await provider.review(
                     draft: input,
-                    mode: .compose,
                     language: language,
                     context: context,
                     memory: memory

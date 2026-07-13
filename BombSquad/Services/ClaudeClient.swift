@@ -15,7 +15,6 @@ struct ClaudeClient: ReviewProvider {
 
     func review(
         draft: String,
-        mode: ReviewMode,
         language: OutputLanguage,
         context: SituationalContext?,
         memory: MemoryInjection?
@@ -33,7 +32,7 @@ struct ClaudeClient: ReviewProvider {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONSerialization.data(
             withJSONObject: requestBody(
-                draft: trimmed, mode: mode, language: language, context: context, memory: memory
+                draft: trimmed, language: language, context: context, memory: memory
             )
         )
 
@@ -59,17 +58,12 @@ struct ClaudeClient: ReviewProvider {
 
     private func requestBody(
         draft: String,
-        mode: ReviewMode,
         language: OutputLanguage,
         context: SituationalContext?,
         memory: MemoryInjection?
     ) -> [String: Any] {
-        let base = mode == .transform ? ReviewPrompt.transformSystem : ReviewPrompt.system
-        let system = ReviewPrompt.enrichedSystem(base: base, mode: mode, memory: memory)
-        let task = mode == .transform
-            ? "次の受信メッセージを読みやすく整理してください:\n\n\(draft)"
-            : "次の下書きをレビューしてください:\n\n\(draft)"
-        var userText = task
+        let system = ReviewPrompt.enrichedSystem(base: ReviewPrompt.system, memory: memory)
+        var userText = "次の下書きをレビューしてください:\n\n\(draft)"
         if let context {
             userText = ReviewPrompt.contextBlock(context) + "\n\n" + userText
         }
