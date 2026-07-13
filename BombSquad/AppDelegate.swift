@@ -176,11 +176,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func handleResignActive() {
+        trace("app.resignActive")
+
+        // Login can legitimately move focus to the browser or Mail. This is a
+        // shared UX contract: keep either foundation path's auth gate alive
+        // until the callback returns to the app.
+        guard authClient.currentSession() != nil else {
+            trace("app.resignActive.skip", details: ["reason": "auth"])
+            return
+        }
+
         if let coordinator = coreCoordinator {
             MainActor.assumeIsolated { coordinator.handle(.appResignedActive) }
             return
         }
-        trace("app.resignActive")
         guard !isCapturingScreenshot else {
             trace("app.resignActive.skip", details: ["reason": "capturing"])
             return
@@ -191,13 +200,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // close signal (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
         guard MainActor.assumeIsolated({ currentSession?.flowState }) != .copilot else {
             trace("app.resignActive.skip", details: ["reason": "copilot"])
-            return
-        }
-
-        // Login can legitimately move focus to the browser or Mail. Keep the
-        // auth gate alive so the user has a visible return point after callback.
-        guard authClient.currentSession() != nil else {
-            trace("app.resignActive.skip", details: ["reason": "auth"])
             return
         }
 
