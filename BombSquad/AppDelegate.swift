@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var permissionsWindow: NSWindow?
     private lazy var permissions = PermissionsCoordinator()
     private let authClient = BombSquadAuthClient.shared
-    private let gesture = ShiftGestureMonitor()
+    private let gesture = ModifierGestureMonitor()
     private let recorder = AudioRecorder()
     private var coreCoordinator: SessionCoordinator?
 
@@ -48,9 +48,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let coordinator = MainActor.assumeIsolated { SessionCoordinator() }
         coreCoordinator = coordinator
-        HotKeyCenter.shared.onHotKey = {
-            MainActor.assumeIsolated { coordinator.handle(.hotKeyToggle) }
-        }
         gesture.onSingleTap = {
             MainActor.assumeIsolated { coordinator.handle(.singleTap) }
         }
@@ -63,7 +60,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         gesture.onLongPressEnded = {
             MainActor.assumeIsolated { coordinator.handle(.longPressEnded) }
         }
-        HotKeyCenter.shared.register()
         gesture.start()
 
         MainActor.assumeIsolated {
