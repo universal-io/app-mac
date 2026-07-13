@@ -1,7 +1,7 @@
 # Foundation Rebuild Plan（シャーシ交換）
 
 最終更新: 2026-07-13
-ステータス: Phase 3 完了・Phase 4 進行中
+ステータス: Phase 4 完了・Phase 5 統合待ち
 
 このドキュメントは macOS アプリの基盤作り直しの**正本**である。
 旧計画 `foundation-redesign-plan.md`（ビッグバン方式、`backup/foundation-bigbang-broken-bc1070e`
@@ -181,7 +181,7 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
       golden paths と実機差分確認で最終確認する。
 
 ### Phase 4: パリティ切替と旧中枢の削除
-ステータス: **進行中**（2026-07-13 静的パリティ監査＋オーナー実機確認後、新経路へ固定）
+ステータス: **完了**（2026-07-13、GP-01〜27 オーナー実機確認済み）
 - [x] 旧 compose の明示的なカメラボタン経路を新中枢へ移植。
       `AppCommandCenter.onScreenshotCaptureRequested` がフラグ ON でも旧
       `AppDelegate.startScreenshotCapture()` へ直結され、新 Compose UI にボタン自体が
@@ -193,7 +193,7 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
       移動するとログインパネルが閉じる差分を修正。GP-22 で実機確認する。
 - [x] 上記 Phase 4 パリティ修正をオーナーが実機確認（2026-07-13）。
 - [x] エントリポイントを新 `SessionCoordinator` 経路に固定し、`core.foundation.enabled` 移行フラグを削除。
-- [ ] golden paths 全シナリオを新経路で通す（ベースラインと比較）
+- [x] golden paths 全シナリオを新経路で通す（GP-01〜27、ベースラインと比較）
 - [x] 旧 `ReviewViewModel` / `PanelSession` / 旧 AppDelegate パネル経路 / 旧 View 群を削除。
       AppDelegate はプロセス配線と管理・権限ウィンドウだけに縮小。
 - [x] `ReviewPanelView.swift` を削除。新経路も使う `GatewayOverrideBadge` / `ErrorBanner` /
