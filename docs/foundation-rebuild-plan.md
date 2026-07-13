@@ -1,7 +1,7 @@
 # Foundation Rebuild Plan（シャーシ交換）
 
 最終更新: 2026-07-13
-ステータス: Phase 4 完了・Phase 5 統合待ち
+ステータス: **完了**（2026-07-13、main 統合済み）
 
 このドキュメントは macOS アプリの基盤作り直しの**正本**である。
 旧計画 `foundation-redesign-plan.md`（ビッグバン方式、`backup/foundation-bigbang-broken-bc1070e`
@@ -204,9 +204,9 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
 
 ### Phase 5: クローズ
 - [x] README を新アーキテクチャに合わせて書き直す
-- [ ] このドキュメントのチェックボックスを全て埋め、ステータスを完了にする
+- [x] このドキュメントのチェックボックスを全て埋め、ステータスを完了にする
 - [x] `foundation-recovery-handoff.md` をアーカイブ扱いにする（2026-07-12 `docs/old/` へ移動済み）
-- [ ] main へマージ（web は同一なので本番 Gateway に影響なし）
+- [x] main へマージ（`8977f57`。web / Supabase は統合前差分ゼロ）
 
 次の開発トラックは
 [navigator-stabilization-followups.md](navigator-stabilization-followups.md)。main 統合後、

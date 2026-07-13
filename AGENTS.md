@@ -24,12 +24,12 @@ Rules:
 - If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `feature/foundation-redesign`
+- `main`
 
 Planned transition:
-- merge the validated foundation rebuild into `main`
-- branch `feature/copilot-accuracy` from that merged main
+- foundation rebuild merged into `main` as `8977f57`
+- branch `feature/copilot-accuracy` from this integrated main
 
 Current operational note:
-- The foundation rebuild passed GP-01〜27 on 2026-07-13 and is ready for main integration.
+- The foundation rebuild passed GP-01〜27 and was integrated into main on 2026-07-13.
 - After integration, continue Copilot model/workflow evaluation in this worktree.
