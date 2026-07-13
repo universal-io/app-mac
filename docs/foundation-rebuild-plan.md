@@ -48,6 +48,42 @@
 - スコープ外の機能追加はしない（品質チューニングは
   [navigator-stabilization-followups.md](navigator-stabilization-followups.md) を起点に再開）。
 
+**移植規律（2026-07-13 追加。Phase 3-c で「Vision one-shot と Navigator 初期準備の並行起動」
+という旧経路に無い挙動を発明した結果、スピナー残留・フォーカス喪失・空パネル残留の競合バグが
+発生した教訓のルール化）:**
+1. **忠実移植の原則**: Phase 3 の間は挙動の変更・最適化・先回り（プリウォーム等）を一切禁止。
+   旧経路の挙動を 1:1 で写すだけ。改善のアイデアは
+   [navigator-stabilization-followups.md](navigator-stabilization-followups.md) に書いて
+   Phase 4 パリティ達成後に別トラックでやる。
+2. **モード完了ゲート**: 1 モード = 実装 → フラグ OFF/ON の A/B 実機比較 → 差分ゼロ →
+   **コミット** → 次のモードへ。検証とコミットの先送り禁止（未コミットの複数モード同時進行は
+   ミニ・ビッグバン）。
+3. **非同期の世代ガード**: セッション内の async 完了ハンドラは、状態を書く前に必ず
+   「自分のセッション／世代がまだ現行か」を確認する（`captureGeneration` と同じパターンを
+   全 async に義務付け）。1 つのペインに書けるオーナーは常に 1 つ。
+4. **teardown の完全性**: close は進行中 Task のキャンセル・セッション破棄・世代無効化まで
+   やり切る。「次の召喚で前セッションの残骸が見える」は teardown バグ（GP-27 で検証）。
+5. **バグ修正の第一手は旧経路の読解**: 新経路の挙動差を直すときは、まず旧コードの該当制御を
+   引用してから着手する。症状だけ消す修正は禁止。
+6. **Phase 3 の仕様の正は「フラグ OFF の旧コードの挙動」ただ一つ**（2026-07-13 追加）。
+   README・master-plan の Vision 記述は **M4 世代のまま**で、Navigator 有効時の現挙動と異なる
+   （旧コードの正: [`ReviewViewModel.enterVisionMode`](../BombSquad/ViewModels/ReviewViewModel.swift) —
+   キャプチャ直後、Navigator 利用可なら **Navigator セッションを即開始**（auto first turn は
+   `AppSettings.isNavigatorAutoFirstTurnEnabled()` に従い「軽い現状認識」を返す）。
+   `/api/ai/vision` のフル解釈（状況→求められていること→提案アクション）は
+   **Navigator 利用不可時のフォールバックのみ**）。ドキュメントを仕様として移植した結果、
+   M4 世代の挙動が「亡霊」として復活する事故が Phase 3-c で実際に起きた（下記）。
+
+**2026-07-13 の回帰と修正**: 新経路は一時、キャプチャ直後に常に one-shot vision 解釈を実行し、
+Navigator は質問時にのみ起動する実装になっていた。これは旧挙動と逆
+（旧: Navigator 優先・vision はフォールバック）で、(a) 初回解析が「軽い現状認識」でなく
+フル解釈＋提案アクションになる、(b) 初回ターンのハイライト/ズームが出ない（vision 解釈には
+grounding が無い）、(c) 案内の正確性低下（存在しない「国」ディメンションを案内する等）の原因になった。
+修正方針は **キャプチャ後のエントリを旧と同じ分岐に戻す** こと
+（Navigator 利用可 → `prepareNavigatorCapture(autoRun: isNavigatorAutoFirstTurnEnabled())`
+相当を即実行、one-shot vision は Navigator 不可時のみ）。以前の「同時起動」不安定化は両方を
+走らせたのが原因であり、正しい解消は「vision 側を残す」でなく「Navigator 側だけを残す」だった。
+
 補強ルール（2026-07-12 追加）:
 - **モード移植は「画面1枚」単位ではなく「挙動契約」単位で完了判定する**。
   例: Vision/Navigator は「説明表示」「初回質問」「panel highlight」「live highlight」
@@ -133,7 +169,11 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
       hold-to-talk は `.vision` / `.navigator` / `.copilot` の質問欄に接続済み。2026-07-12 の実機確認で見つかった
       回帰（質問開始で one-shot 説明が消える / vision 質問欄で音声入力できない / 実行時の対象 app 解決が
       L1 context 欠落に弱い）は同日フォローアップで修正済み。live highlight はスクロールやクリック後に
-      stale な位置へ残らないよう、ユーザー操作で自動 dismiss する。オーナー実機確認は GP-17〜19 を後段で確認する。
+      stale な位置へ残らないよう、ユーザー操作で自動 dismiss する。2026-07-13 の回帰修正として、
+      Foundation 経路の入口分岐を旧経路に合わせ、Navigator 利用可なら capture 直後に
+      `prepareNavigatorCapture(autoRun: isNavigatorAutoFirstTurnEnabled())` 相当を即実行し、
+      one-shot vision は Navigator 不可時のフォールバックに戻した。オーナー実機確認は
+      GP-17〜19 を後段で確認する。
 - [x] 3-e 横断: L1 コンテクストチップ、出力言語、メモリ注入・蒸留、管理ウィンドウ連携
       L1 コンテクストチップ / 出力言語 / メモリ注入・蒸留は新セッション群へ移植済み。
       2026-07-13 時点で Compose / Transform / Vision / Copilot strip から account / settings /

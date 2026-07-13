@@ -1,6 +1,7 @@
 # Universal I/O (I//O) マスタープラン
 
-最終更新: 2026-07-04（macOS の Web 直接配布パイプライン完成＝ §4.5。Android 展開の見立ては §M5）
+最終更新: 2026-07-13（Navigator v3 への相互参照と世代注記を追加。M4 の Vision フル解釈は
+Navigator 利用可時のフォールバックへ降格済み — 詳細は M4 節冒頭の注記）
 ステータス: 承認済み（オーナー承認済みの製品方針。実装はマイルストーン M1 から開始）
 
 このドキュメントは、Bomb Squad から **Universal I/O**（ロゴ: **I//O**）への製品転換の正本である。
@@ -10,6 +11,8 @@
 関連ドキュメント:
 - [README.md（ドキュメント索引）](README.md) — 全ドキュメントの一覧と役割。**まずここを見る**
 - [foundation-rebuild-plan.md](foundation-rebuild-plan.md) — 現行の開発正本（基盤作り直し）
+- [navigator-copilot-plan.md](navigator-copilot-plan.md) — **Navigator/Copilot（現在の中核機能）の設計正本**。
+  M4 完了後の 2026-07-06〜07 に追加され、Vision のキャプチャ後の既定挙動を置き換えた
 - [api-contract.md](api-contract.md) — API 契約の正本
 - [old/implementation-roadmap.md](old/implementation-roadmap.md) / [old/auth-billing-infra-plan.md](old/auth-billing-infra-plan.md) — アーカイブ（経緯資料）
 - [../README.md](../README.md) — 現行実装（Bomb Squad 世代）の仕様
@@ -142,6 +145,9 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
   「速いモデルで先行プレビュー → リッチモデルの本結果で差し替え」として活かす。
 - 課金プラン: Standard ¥1,980/月 / Pro ¥4,980/月（2026-07-03 オーナー決定）＋
   フェアユース上限。原価は 1 変換あたり数円〜十数円で吸収可能。
+  **更新（2026-07-08 オーナー決定）**: プラン→クォータ/機能の定義は DB の `bs_plans`
+  テーブルが唯一の正本（migration 0004。env・プロビジョニングコードにコピーを持たない）。
+  ベータ期間中は**機能ゲート無しの全開放**、free のみ 500 件/月、他プランは当面無制限。
 - **可用性の原則（2026-07-03 オーナー決定）**: 事業者側の都合（プロバイダ障害・
   プロバイダ側レート制限・事業者クォータ設定ミス）でユーザーが機能を使えない状態を
   作らない。Gateway の各機能（ASR・レビュー・Vision）はプロバイダ障害時に**自動で
@@ -177,6 +183,12 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
 ---
 
 ## 4. 現状コードベースの地図（実装者向け）
+
+> ⚠️ 本表は M1〜M4（〜2026-07-04）時点のもの。以降に追加された Navigator/Copilot 関連
+> （`GatewayNavigateClient` / `NavigatorLocator` / `CopilotStripView` / `AXActionService` /
+> `web/lib/server/navigate-engine.ts`・`harness.ts` 等）は
+> [navigator-copilot-plan.md](navigator-copilot-plan.md) を、基盤作り直しで新設された
+> `BombSquad/Core/` は [foundation-rebuild-plan.md](foundation-rebuild-plan.md) を参照。
 
 リポジトリ: `git@github.com:universal-io/app-mac.git`（ローカル: `~/projects/universal-io/app-mac`。
 2026-07-02 に GitHub org を `hey-watchme/mac-bomb-squad` から `universal-io/app-mac` へ移行し、
@@ -549,6 +561,14 @@ M3 の Gateway 移行時にサーバー側へ移す。
 - [ ] パネルにプルダウン類がなく、空→原文→結果の 3 状態だけで完結する
 
 ### M4: Vision の再定義 —「見る → わかる → 返す」
+
+> ⚠️ **世代注記（2026-07-13）**: 本節は M4 完了時点（2026-07-03）の記録。**2026-07-07 の
+> Navigator v3 以降、キャプチャ直後の既定挙動は Navigator セッション（軽い現状認識 →
+> 質問チャット → コパイロット）に置き換わり、本節のフル解釈フローは Navigator 利用不可時の
+> フォールバックに降格した**。現在の挙動の正本は
+> [navigator-copilot-plan.md](navigator-copilot-plan.md)、コードの正は
+> `ReviewViewModel.enterVisionMode`。本節を「現在の Vision の仕様」として移植・実装しないこと
+> （foundation-rebuild-plan.md §3 移植規律 6 の事故事例参照）。
 
 ステータス: スコープ 1〜3 完了・**実機確認済み**（`feature/universal-io-m4`、2026-07-03。
 受け入れ基準 4 項目＋キャプチャ UX を実機で確認）。スコープ 4（受信変換の統合）は

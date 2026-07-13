@@ -9,33 +9,30 @@ Project URL:
 
 Product URLs:
 
-- Production web: `https://bombsquad.me`
+- Production Gateway: `https://api.universal-io.com`（**移行完了済み、2026-07-03**。
+  製品サイトは `https://universal-io.com`。`bombsquad.me` はレガシー）
 - Local web: `http://localhost:3000`
+- Native callback: `universal-io://auth/callback`（`bombsquad://` はレガシー後方互換）
 
 Database naming rule:
 
 - Bomb Squad-owned tables use the `bs_` prefix.
 - Existing tables from other projects are left untouched.
 
-## Current Migration Files
+## Current Migration Files（本番適用済み: 0001〜0004）
 
-- `supabase/migrations/0001_bs_core_schema.sql`
-
-That migration creates:
-
-- `bs_tenants`
-- `bs_profiles`
-- `bs_tenant_members`
-- `bs_entitlements`
-- `bs_usage_events`
-- `bs_app_devices`
-
-It also:
-
-- enables RLS
-- adds membership helper functions
-- adds a Bomb Squad-specific user bootstrap RPC
-- backfills existing `auth.users` rows that do not yet have `bs_` records
+- `supabase/migrations/0001_bs_core_schema.sql` — コアスキーマ:
+  `bs_tenants` / `bs_profiles` / `bs_tenant_members` / `bs_entitlements` /
+  `bs_usage_events` / `bs_app_devices`。RLS 有効化、メンバーシップ補助関数、
+  ユーザーブートストラップ RPC、既存 `auth.users` のバックフィル。
+- `supabase/migrations/0002_bs_memory_cards.sql` — `bs_memory_cards`
+  （メモリ同期。tombstone 付き、user スコープ RLS。M3-B）。
+- `supabase/migrations/0003_bs_harness_packs.sql` — `bs_harness_packs`
+  （Navigator のデータ駆動ツールハーネス。service-role のみ読み取り）。
+- `supabase/migrations/0004_plan_catalog.sql` — **`bs_plans`（プラン→クォータ/機能の唯一の正本）**。
+  `bs_entitlements.plan` を FK 化、`monthly_review_limit` を NULL 可（NULL = プラン値に従う）に変更、
+  `bs_provision_user()` 再定義。**ベータ方針（2026-07-08）: free=500件/月、他プランは無制限・
+  機能ゲート無し。プラン変更はこのテーブルの行を編集する（env・コードにコピーを持たない）**。
 
 ## Secrets Needed Later
 
@@ -212,7 +209,8 @@ Default free plan values:
 
 - `plan = free`
 - `status = active`
-- `monthly_review_limit = 50`
+- `monthly_review_limit = NULL`（0004 以降。NULL = `bs_plans` のプラン値に従う。
+  実効値は `bs_plans.free = 500`/月。行単位の特別オーバーライドが必要な時だけ数値を入れる）
 
 ## Manual Verification Queries
 

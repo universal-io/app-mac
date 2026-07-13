@@ -25,6 +25,9 @@ drift.
   - `POST /api/ai/memory/distill` (2026-07-02, M3-B)
   - `POST /api/ai/vision` (2026-07-02, M3-B)
   - `GET/PUT /api/memory/cards` (2026-07-02, M3-B)
+  - `POST /api/ai/navigate` (2026-07-06, Navigator v3 — 契約は下記「Navigate」節)
+  - `GET /api/account` (アカウント要約＋quota)
+  - `GET /api/admin/overview` (admin console v0、`ADMIN_EMAILS` ゲート)
 
 Future routes will reuse the same authentication and envelope conventions:
 
@@ -88,7 +91,8 @@ Server-only vars:
 - `BOMB_SQUAD_DEFAULT_MODEL_VENDOR`
 - `BOMB_SQUAD_DEFAULT_MODEL_ID`
 - `BOMB_SQUAD_VISION_MODEL_ID`
-- `BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT`
+- ~~`BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT`~~ **廃止（2026-07-08）**: free 枠上限は DB の
+  `bs_plans` テーブルが正本（migration 0004。env にコピーを持たない）
 - `OPENAI_API_KEY`
 - `GROQ_API_KEY`
 - `ANTHROPIC_API_KEY`
@@ -250,7 +254,7 @@ Rules:
   "quota": {
     "plan": "free",
     "used": 12,
-    "limit": 50,
+    "limit": 500,
     "remaining": 38,
     "resets_at": "2026-07-01T00:00:00Z"
   }
@@ -283,7 +287,7 @@ Error responses must follow this shape:
     "details": {
       "plan": "free",
       "used": 50,
-      "limit": 50,
+      "limit": 500,
       "resets_at": "2026-07-01T00:00:00Z"
     }
   },
@@ -591,6 +595,56 @@ Expected future use:
 - emotion analysis
 - acoustic event analysis
 - long-running or async worker path
+
+## Navigate（画面ナビゲーター、2026-07-06 追加・実装済み）
+
+`POST /api/ai/navigate` — Navigator/Copilot の中核。**常に SSE**（`accept: text/event-stream`）。
+実装: `web/app/api/ai/navigate/route.ts` + `web/lib/server/navigate-engine.ts`（プロンプト・
+モデル段階選択・ハーネス選択はサーバー所有）。クライアント: `GatewayNavigateClient`。
+
+リクエスト（共通エンベロープ準拠）:
+
+```json
+{
+  "request_id": "uuid",
+  "operation": "navigate",
+  "input": {
+    "messages": [
+      { "role": "user",
+        "text": "任意（auto first turn は text 無しの画像のみ）",
+        "image_base64": "最新キャプチャのみ", "media_type": "image/jpeg",
+        "ocr_text": "最新キャプチャのローカルOCR全文" }
+    ],
+    "hints": { "app_name": "...", "window_title": "..." },
+    "task": {
+      "goal": "...",
+      "steps": [{ "verbal": "...", "target": "画面上の正確なラベル", "fill": "任意" }],
+      "current_step": 0
+    }
+  },
+  "preferences": { "output_language": "ja" },
+  "client": { "platform": "macos", "app_version": "...", "build_number": "..." }
+}
+```
+
+- `input.task` はクライアント所有のステッププラン（プランはデータであり、モデルが毎ターン
+  再導出しない）。無ければ通常の Q&A ターン。
+- 画像・OCR は**最新キャプチャの1つだけ**が乗る（過去分はテキストプレースホルダ化）。
+
+SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
+（`{"result": {"text", "harness", "task"}, "meta": {"model_id"}}`）。エラーは `error` イベント
+または非 2xx の JSON（共通エラー契約）。`result.text` には決定論マーカー
+`[[target:ラベル]]` / `[[loc:x,y,w,h]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
+クライアント（`NavigatorLocator`）が抽出して OCR grounding と突き合わせる
+（詳細は [navigator-copilot-plan.md](navigator-copilot-plan.md)）。
+
+## Account / Admin（実装済み・簡易記載）
+
+- `GET /api/account` — アカウント要約（email / tenant_id / plan / status /
+  monthly_review_limit）＋ `quota` エンベロープ。プラン→機能は `bs_plans` 由来の
+  `features` を含む。
+- `GET /api/admin/overview` — 管理コンソール v0 の集計。`ADMIN_EMAILS` に列挙された
+  メールのユーザーのみ 200（それ以外 403）。読み取り専用。
 
 ## Implementation Rule
 
