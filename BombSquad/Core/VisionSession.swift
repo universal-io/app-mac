@@ -168,6 +168,23 @@ final class VisionSession: ObservableObject {
         onRequestPanelClose()
     }
 
+    /// Saves an explicit copy of the temporary capture at the user's chosen
+    /// location. Captures are never written to a permanent location implicitly.
+    func saveScreenshotAs() {
+        let sourceURL = attachment.url
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = sourceURL.lastPathComponent
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+        } catch {
+            errorMessage = "保存に失敗しました: \(error.localizedDescription)"
+        }
+    }
+
     func appendTranscription(_ text: String) {
         let piece = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !piece.isEmpty else { return }

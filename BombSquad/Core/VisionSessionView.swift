@@ -35,6 +35,8 @@ struct FoundationVisionRootView: View {
 struct VisionSessionView: View {
     @ObservedObject var session: VisionSession
     @State private var annotations: [ScreenshotAnnotation] = []
+    @State private var previewTool: ScreenshotPreviewTool = .pan
+    @State private var annotationTint: ScreenshotAnnotation.Tint = .red
 
     private var focusedField: Binding<FocusField?> {
         Binding(get: { session.focusedField }, set: { session.focusedField = $0 })
@@ -98,13 +100,15 @@ struct VisionSessionView: View {
                 FoundationContextChip(context: context, onExclude: session.excludeContext)
             }
 
+            previewToolbar
+
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.quaternary.opacity(0.25))
                 ZoomableScreenshotView(
                     url: session.attachment.url,
-                    tool: .pan,
-                    annotationTint: .red,
+                    tool: previewTool,
+                    annotationTint: annotationTint,
                     annotations: $annotations,
                     highlight: session.panelNavigatorHighlight
                 )
@@ -113,6 +117,84 @@ struct VisionSessionView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var previewToolbar: some View {
+        HStack(spacing: 8) {
+            previewToolButton(
+                .pan,
+                icon: "hand.raised",
+                help: "手のひらツール: ドラッグで移動、ピンチで拡大縮小、ダブルクリックで全体表示"
+            )
+            previewToolButton(
+                .annotate,
+                icon: "rectangle.dashed",
+                help: "枠線ツール: ドラッグで画面の一部を囲みます"
+            )
+
+            if previewTool == .annotate {
+                ForEach(ScreenshotAnnotation.Tint.allCases) { tint in
+                    Button {
+                        annotationTint = tint
+                    } label: {
+                        Circle()
+                            .fill(tint.color)
+                            .frame(width: 16, height: 16)
+                            .overlay(
+                                Circle().strokeBorder(
+                                    .primary.opacity(annotationTint == tint ? 0.8 : 0),
+                                    lineWidth: 2
+                                )
+                                .padding(-3)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(tint == .red ? "赤い枠線" : "青い枠線")
+                    .accessibilityLabel(tint == .red ? "赤い枠線" : "青い枠線")
+                }
+            }
+
+            if !annotations.isEmpty {
+                Button {
+                    annotations = []
+                } label: {
+                    Image(systemName: "eraser")
+                        .font(.system(size: 15))
+                }
+                .buttonStyle(.borderless)
+                .help("枠線をすべて消す")
+                .accessibilityLabel("枠線をすべて消す")
+            }
+
+            Spacer()
+
+            Button(action: session.saveScreenshotAs) {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 15))
+            }
+            .buttonStyle(.borderless)
+            .help("スクリーンショットを保存")
+            .accessibilityLabel("スクリーンショットを保存")
+        }
+    }
+
+    private func previewToolButton(
+        _ tool: ScreenshotPreviewTool,
+        icon: String,
+        help: String
+    ) -> some View {
+        Button {
+            previewTool = tool
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 36, height: 28)
+        }
+        .buttonStyle(.borderless)
+        .background(previewTool == tool ? Color.accentColor.opacity(0.14) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .help(help)
+        .accessibilityLabel(help)
     }
 
     @ViewBuilder

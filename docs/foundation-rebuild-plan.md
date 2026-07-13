@@ -186,6 +186,8 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
       `AppCommandCenter.onScreenshotCaptureRequested` がフラグ ON でも旧
       `AppDelegate.startScreenshotCapture()` へ直結され、新 Compose UI にボタン自体が
       無かった差分を修正。ボタンからも `SessionCoordinator` の同じ capture 経路へ入る。
+- [x] 旧 Vision プレビューの pan / 枠線ツール・枠消去・明示保存を新 UI へ移植。
+      キャプチャは一時ファイルのままとし、保存ボタンでユーザーが選んだ場所にのみコピーする。
 - [ ] golden paths 全シナリオを新経路で通す（ベースラインと比較）
 - [ ] エントリポイントを新経路に固定、旧 `ReviewViewModel` / 旧パネル経路 / 移行フラグを削除
 - [ ] `ReviewPanelView.swift` の残骸整理（コンポーネント分割の仕上げ）
