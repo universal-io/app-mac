@@ -27,8 +27,7 @@ struct FoundationVisionRootView: View {
         }
         .panelChrome()
         .task {
-            session.startInterpretationIfNeeded()
-            session.startNavigatorPreparationIfNeeded()
+            session.startInitialFlowIfNeeded()
         }
     }
 }

@@ -32,8 +32,9 @@ private struct CoreNavigatorHighlightResolution {
     let liveBox: CGRect?
 }
 
-/// Phase 3-c/d screenshot interpretation state. It owns one-shot Vision plus
-/// Navigator/Copilot on top of the same screenshot session.
+/// Phase 3-c/d screenshot interpretation state. It owns the legacy split:
+/// Navigator-first when available, one-shot Vision only as fallback, plus
+/// Copilot on top of the same screenshot session.
 @MainActor
 final class VisionSession: ObservableObject {
     @Published private(set) var attachment: ScreenshotAttachment
@@ -69,8 +70,7 @@ final class VisionSession: ObservableObject {
 
     private var contextCaptureTask: Task<SituationalContext?, Never>?
     private var interpretationTask: Task<Void, Never>?
-    private var hasStartedInitialInterpretation = false
-    private var hasPreparedInitialNavigatorCapture = false
+    private var hasStartedInitialFlow = false
 
     private var navigatorWireTurns: [NavigateTurn] = []
     private var navigatorPendingCapture: NavigateTurn?
@@ -138,20 +138,19 @@ final class VisionSession: ObservableObject {
         navigatorActiveTask != nil
     }
 
-    func startInterpretationIfNeeded() {
-        guard !hasStartedInitialInterpretation else { return }
-        hasStartedInitialInterpretation = true
-        requestInterpretation()
-    }
+    func startInitialFlowIfNeeded() {
+        guard !hasStartedInitialFlow else { return }
+        hasStartedInitialFlow = true
 
-    func startNavigatorPreparationIfNeeded() {
-        guard isNavigatorAvailable, !hasPreparedInitialNavigatorCapture else { return }
-        hasPreparedInitialNavigatorCapture = true
-        focusedField = .navigator
-        prepareNavigatorCapture(
-            attachment,
-            autoRun: AppSettings.isNavigatorAutoFirstTurnEnabled()
-        )
+        if isNavigatorAvailable {
+            focusedField = .navigator
+            prepareNavigatorCapture(
+                attachment,
+                autoRun: AppSettings.isNavigatorAutoFirstTurnEnabled()
+            )
+        } else {
+            requestInterpretation()
+        }
     }
 
     func requestInterpretation() {
