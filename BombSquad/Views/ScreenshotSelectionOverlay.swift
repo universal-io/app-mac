@@ -191,7 +191,7 @@ private final class SelectionOverlayView: NSView {
     private func drawInstructionPill() {
         let title = "全画面が選択されています"
         let line1 = "Enter でこのまま読み取り ／ ドラッグで範囲を選択"
-        let line2 = "esc で閉じる ・ 右Shift 2回で閉じる"
+        let line2 = "esc で閉じる ・ \(KeybindingSettings.gestureKey().hintLabel) 2回で閉じる"
         let maxWidth = min(bounds.width - 80, 460)
         let pillRect = NSRect(
             x: bounds.midX - maxWidth / 2,

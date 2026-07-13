@@ -34,14 +34,15 @@ macOS の画面構成方針:
 - 入力補助のたびに管理ウィンドウへ勝手にフォーカスを移さない。
 - Google 認証やメールリンク認証の途中だけは、ブラウザやメールへ移動してもログイン画面を閉じない。
 
-操作（右Shift 中心で完結）:
-- **右Shift 2回タップ = 起動 / レビュー / ビジョン / 閉じる**: パネルが閉じていれば呼び出し。開いている時は**原文欄にフォーカスがある場合だけ**レビューを実行。原文が空ならビジョン入力（スクリーンショット撮影）へ移る。ビジョン表示中なら閉じる。レビュー結果欄では何もしない。
-- **右Shift 1回タップ = フォーカス切替**: 原文欄とレビュー結果欄を行き来する。
-- **右Shift 長押し = 喋る（ASR）**: 押している間だけ録音し、離すと Groq `whisper-large-v3` で文字起こしして原文欄に挿入（hold-to-talk）。
+操作（ジェスチャキー中心で完結。既定=右Shift、**設定 → キーボードで変更可能**）:
+- **ジェスチャキー 2回タップ = 起動 / レビュー / ビジョン / 閉じる**: パネルが閉じていれば呼び出し。開いている時は**原文欄にフォーカスがある場合だけ**レビューを実行。原文が空ならビジョン入力（スクリーンショット撮影）へ移る。ビジョン表示中なら閉じる。レビュー結果欄では何もしない。
+- **ジェスチャキー 1回タップ = フォーカス切替**: 原文欄とレビュー結果欄を行き来する。
+- **ジェスチャキー 長押し = 喋る（ASR）**: 押している間だけ録音し、離すと Groq `whisper-large-v3` で文字起こしして原文欄に挿入（hold-to-talk）。
 - **Enter = 送信**: カーソルがある側を直接送信（原文欄なら原文、レビュー欄ならレビュー結果）。Shift+Enter は改行。
-- ⌘J は単純なパネル開閉。
 
-> 喋る・レビューを ⌘ から **右Shift に統一**したのは、⌘ が日常のショートカット（⌘C/⌘V 等）と衝突し、保持した瞬間に誤発火していたため。右Shift は単独で握ることが稀で、覚えやすいよう両ジェスチャを同じキーに揃えた。
+> 喋る・レビューを ⌘ から **右Shift に統一**したのは、⌘ が日常のショートカット（⌘C/⌘V 等）と衝突し、保持した瞬間に誤発火していたため。右Shift は単独で握ることが稀で、覚えやすいよう両ジェスチャを同じキーに揃えた。ジェスチャキーは**設定 → キーボード**で右/左の Shift・Option・Control・⌘、fn（🌐）へ変更でき、2回タップ間隔・長押し判定時間も調整できる（[`KeybindingSettings`](BombSquad/Models/KeybindingSettings.swift)、UserDefaults 永続化）。
+
+> かつて存在した「⌘J で単純にパネル開閉」する重複ホットキーは、右Shift2回（選択テキストの有無で送信/受信を自動分岐する上位版）と機能が被り混乱の元だったため撤去した。パネルはジェスチャキー、またはメニューバーの「パネルを表示」から開く。
 
 フロー（M3-C で Spotlight 型の縦1カラム・3状態 = 空→原文→結果 に刷新）:
 1. 任意のアプリのフォームにフォーカス → **右Shift2回** でパネルが画面中央に出現（入力欄に自動フォーカス）
@@ -134,7 +135,7 @@ UserDefaults に永続化され、次にパネルを開いた時から反映）�
   それぞれ専用 Session に分離され、`AppDelegate` はプロセス起動と入力配線のみを担当する。
 - レビュー: OpenAI／Groq は OpenAI 互換 Chat Completions を [`OpenAICompatibleClient`](BombSquad/Services/OpenAICompatibleClient.swift) で共用、Anthropic は [`ClaudeClient`](BombSquad/Services/ClaudeClient.swift)。構造化出力は OpenAI=json_schema strict／Groq=json_object／Claude=Tool Use。`ReviewProvider` で抽象化。
 - **音声入力（ASR）**: [`AudioRecorder`](BombSquad/Services/AudioRecorder.swift)（AVAudioRecorder, 16kHz mono m4a）＋ [`GroqTranscriber`](BombSquad/Services/GroqTranscriber.swift)（Groq `whisper-large-v3`, multipart）。右Shift 長押しで録音→離すと文字起こしして draft に挿入。
-- **ジェスチャ**: [`ShiftGestureMonitor`](BombSquad/Services/ShiftGestureMonitor.swift) が右Shift の 1回タップ（=左右フォーカス切替）、2回タップ（=起動 / レビュー / Vision / 閉じる）、長押し（=音声）を判定する。⌘J は Carbon `RegisterEventHotKey`。
+- **ジェスチャ**: [`ModifierGestureMonitor`](BombSquad/Services/ModifierGestureMonitor.swift) が設定されたジェスチャキー（既定=右Shift）の 1回タップ（=左右フォーカス切替）、2回タップ（=起動 / レビュー / Vision / 閉じる）、長押し（=音声）を判定する。キーコードは設定値を**イベントごとに参照**するため、キー変更はモニタ再登録なしで即反映される（割り当ては [`KeybindingSettings`](BombSquad/Models/KeybindingSettings.swift)、UI は [`KeyboardSettingsView`](BombSquad/Views/Management/KeyboardSettingsView.swift)）。
 - **Vision / スクリーンショット**: [`ScreenshotSelectionOverlay`](BombSquad/Views/ScreenshotSelectionOverlay.swift) で全画面または範囲を選び、
   [`ScreenshotCaptureService`](BombSquad/Services/ScreenshotCaptureService.swift) が ScreenCaptureKit で撮影する。失敗時のみ `screencapture -i` へフォールバック。
   [`VisionSession`](BombSquad/Core/VisionSession.swift) が Navigator優先／one-shot Visionフォールバック、ハイライト、Copilot進行を所有する。

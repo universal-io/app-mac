@@ -28,11 +28,11 @@ final class PermissionsCoordinator: ObservableObject {
         var reason: String {
             switch self {
             case .accessibility:
-                return "フィールドへの自動入力（⌘V）と右Shiftジェスチャの検出に使います。"
+                return "フィールドへの自動入力（⌘V）と\(KeybindingSettings.gestureKey().hintLabel)ジェスチャの検出に使います。"
             case .screenRecording:
                 return "画面を読む（Vision）ためのスクリーンショット撮影に使います。許可後、アプリが一度だけ再起動します（macOS の仕様）。"
             case .microphone:
-                return "右Shift長押しの音声入力に使います。"
+                return "\(KeybindingSettings.gestureKey().hintLabel)長押しの音声入力に使います。"
             }
         }
 
