@@ -36,12 +36,17 @@ enum AppEvent: CustomStringConvertible {
 /// drives the `PanelController`. This is the ONLY place that decides what a
 /// gesture means in a given mode.
 ///
-/// Phase 1 scope (docs/foundation-rebuild-plan.md): the machinery itself —
-/// summon/close with a placeholder content view proving the state machine
-/// and panel geometry on device. Phase 3 ports the real mode sessions in
-/// one at a time.
+/// Phase 1 introduced the machinery; Phase 3 replaces the shell one mode at
+/// a time. Compose / transform / one-shot vision are now owned here while
+/// navigator/copilot still render on the legacy path.
 @MainActor
 final class SessionCoordinator {
+    private enum CaptureCompletion {
+        case attachment(ScreenshotAttachment)
+        case cancelled
+        case failed(String)
+    }
+
     /// Developer flag: `defaults write <bundle-id> core.foundation.enabled -bool YES`.
     /// Default OFF — the legacy path stays the shipping behavior until
     /// Phase 4 parity (docs/foundation-rebuild-plan.md §Phase 4).
@@ -57,6 +62,18 @@ final class SessionCoordinator {
 
     let stateMachine = AppStateMachine()
     private let panelController = PanelController()
+    private let recorder = AudioRecorder()
+    private let screenshotCapture = ScreenshotCaptureService()
+    private let screenshotCaptureCue = ScreenshotCaptureCuePresenter()
+    private let screenshotSelection = ScreenshotSelectionOverlay()
+    private var composeSession: ComposeSession?
+    private var transformSession: TransformSession?
+    private var visionSession: VisionSession?
+    private var summonTargetApp: NSRunningApplication?
+    private var isDictating = false
+    private var transcriptionTask: Task<Void, Never>?
+    private var captureTask: Task<Void, Never>?
+    private var captureGeneration = 0
 
     init() {
         panelController.onCloseRequested = { [weak self] in
@@ -77,7 +94,7 @@ final class SessionCoordinator {
             handleDoubleTap(in: mode)
         case .hotKeyToggle:
             if mode == .idle {
-                summon()
+                summonCompose()
             } else {
                 close(reason: "hotKeyToggle")
             }
@@ -86,10 +103,16 @@ final class SessionCoordinator {
         case .appResignedActive:
             guard let spec = PanelSpec.forMode(mode), spec.closesOnResignActive else { return }
             close(reason: "resignActive")
-        case .singleTap, .longPressBegan, .longPressEnded:
-            // Phase 3: editor focus toggle and dictation arrive with the
-            // ported mode sessions. Traced but inert in the Phase 1 shell.
-            break
+        case .singleTap:
+            guard mode == .compose else { return }
+            composeSession?.toggleFocusedField()
+        case .longPressBegan:
+            if mode == .idle {
+                summonCompose()
+            }
+            startDictation()
+        case .longPressEnded:
+            stopDictationAndTranscribe()
         }
     }
 
@@ -98,13 +121,20 @@ final class SessionCoordinator {
     private func handleDoubleTap(in mode: AppMode) {
         switch mode {
         case .idle:
-            summon()
+            summonSelectionAware()
         case .vision, .navigator, .copilot:
             close(reason: "doubleTapOnVision")
-        case .compose, .transform:
-            // Phase 3: review-on-double-tap / capture entry. Until the mode
-            // sessions are ported, double tap simply closes the shell.
-            close(reason: "doubleTapPhase1Shell")
+        case .compose:
+            guard let composeSession else { return }
+            // A double-tap belongs to the draft editor only.
+            guard composeSession.focusedField == .draft else { return }
+            if composeSession.isEmptyDraft {
+                beginVisionCaptureFromCompose()
+            } else {
+                composeSession.requestReview()
+            }
+        case .transform:
+            close(reason: "doubleTapTransform")
         case .capturing(let returnTo):
             // Abandon the capture session entirely: back to standby.
             _ = returnTo
@@ -112,22 +142,391 @@ final class SessionCoordinator {
         }
     }
 
-    /// Summon. Phase 1: always the compose shell (selection-grab branching
-    /// into transform is ported in Phase 3-b together with the session).
-    private func summon() {
-        guard stateMachine.transition(to: .compose, reason: "summon") else { return }
+    /// Right-Shift double-tap from idle: if text is selected in the front app,
+    /// open the receiving-side transform flow; otherwise open compose.
+    private func summonSelectionAware() {
+        SelectionGrabber.grab { [weak self] selection in
+            Task { @MainActor [weak self] in
+                guard let self, self.stateMachine.mode == .idle else { return }
+                if let selection {
+                    self.presentTransformSession(with: selection)
+                } else {
+                    self.presentComposeSession()
+                }
+            }
+        }
+    }
+
+    /// Idle summon routes that should never inspect the current selection
+    /// (`⌘J`, hold-to-talk bootstrap) always open compose.
+    private func summonCompose() {
+        guard stateMachine.mode == .idle else { return }
+        presentComposeSession()
+    }
+
+    /// Compose summon captures the paste target and L1 context before the
+    /// panel activates and steals focus from the originating app.
+    private func presentComposeSession() {
+        let target = NSWorkspace.shared.frontmostApplication
+        summonTargetApp = target
+        let rootContextTask = SituationalContextService.captureTask()
+        let deployer = PasteDeployer(targetApp: target) { [weak self] in
+            self?.close(reason: "composeDeploy")
+        }
+        let session = ComposeSession(
+            deployer: deployer,
+            contextCaptureTask: Task { await rootContextTask.value }
+        )
+        transformSession?.tearDown()
+        transformSession = nil
+        visionSession?.tearDown()
+        visionSession = nil
+        composeSession = session
+        guard stateMachine.transition(to: .compose, reason: "summon") else {
+            session.tearDown()
+            composeSession = nil
+            summonTargetApp = nil
+            return
+        }
+    }
+
+    /// Transform summon shares the same summon-time context capture, but the
+    /// exit is clipboard-only so no target app handle is retained.
+    private func presentTransformSession(with selection: String) {
+        summonTargetApp = nil
+        let rootContextTask = SituationalContextService.captureTask()
+        let session = TransformSession(
+            receivedText: selection,
+            contextCaptureTask: Task { await rootContextTask.value }
+        )
+        composeSession?.tearDown()
+        composeSession = nil
+        visionSession?.tearDown()
+        visionSession = nil
+        transformSession = session
+        guard stateMachine.transition(to: .transform, reason: "summonSelection") else {
+            session.tearDown()
+            transformSession = nil
+            return
+        }
     }
 
     private func close(reason: String) {
         guard stateMachine.mode != .idle else { return }
+        stopActiveWork()
         stateMachine.transition(to: .idle, reason: reason)
+        screenshotSelection.cancel()
+        composeSession?.tearDown()
+        composeSession = nil
+        transformSession?.tearDown()
+        transformSession = nil
+        visionSession?.tearDown()
+        visionSession = nil
+        summonTargetApp = nil
+    }
+
+    // MARK: - Dictation
+
+    private func startDictation() {
+        guard !isDictating else { return }
+        switch stateMachine.mode {
+        case .compose:
+            guard let composeSession else { return }
+            isDictating = true
+            composeSession.errorMessage = nil
+            composeSession.isRecording = true
+            SoundFeedback.recordingStarted()
+            do {
+                try recorder.start()
+            } catch {
+                isDictating = false
+                composeSession.isRecording = false
+                composeSession.errorMessage =
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        case .vision, .navigator, .copilot:
+            guard let visionSession else { return }
+            guard visionSession.isNavigatorAvailable else { return }
+            isDictating = true
+            visionSession.errorMessage = nil
+            visionSession.isRecording = true
+            visionSession.focusedField = .navigator
+            SoundFeedback.recordingStarted()
+            do {
+                try recorder.start()
+            } catch {
+                isDictating = false
+                visionSession.isRecording = false
+                visionSession.errorMessage =
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        default:
+            return
+        }
+    }
+
+    private func stopDictationAndTranscribe() {
+        guard isDictating else { return }
+        isDictating = false
+        recorder.onFinish = { SoundFeedback.recordingStopped() }
+        guard let url = recorder.stop() else {
+            composeSession?.isRecording = false
+            visionSession?.isRecording = false
+            return
+        }
+
+        enum DictationSink {
+            case compose(ComposeSession)
+            case navigator(VisionSession)
+        }
+
+        let sink: DictationSink?
+        switch stateMachine.mode {
+        case .compose:
+            if let composeSession {
+                composeSession.isRecording = false
+                composeSession.isTranscribing = true
+                sink = .compose(composeSession)
+            } else {
+                sink = nil
+            }
+        case .vision, .navigator, .copilot:
+            if let visionSession {
+                visionSession.isRecording = false
+                visionSession.isTranscribing = true
+                sink = .navigator(visionSession)
+            } else {
+                sink = nil
+            }
+        default:
+            sink = nil
+        }
+        guard let sink else { return }
+
+        let transcriber: any Transcriber = GatewayTranscriber.make() ?? GroqTranscriber()
+
+        transcriptionTask?.cancel()
+        transcriptionTask = Task { [weak self] in
+            defer { try? FileManager.default.removeItem(at: url) }
+            guard let self else { return }
+
+            if let clip = AudioRecorder.inspect(url: url),
+               clip.duration < 0.4 || clip.averagePower < -45 {
+                switch sink {
+                case .compose(let composeSession):
+                    if self.composeSession === composeSession {
+                        composeSession.isTranscribing = false
+                    }
+                case .navigator(let visionSession):
+                    if self.visionSession === visionSession {
+                        visionSession.isTranscribing = false
+                    }
+                }
+                return
+            }
+
+            do {
+                let text = try await transcriber.transcribe(fileURL: url)
+                try Task.checkCancellation()
+                switch sink {
+                case .compose(let composeSession):
+                    guard self.composeSession === composeSession,
+                          self.stateMachine.mode == .compose else { return }
+                    composeSession.appendTranscription(text)
+                    composeSession.isTranscribing = false
+                case .navigator(let visionSession):
+                    guard self.visionSession === visionSession,
+                          self.stateMachine.mode == .vision
+                            || self.stateMachine.mode == .navigator
+                            || self.stateMachine.mode == .copilot
+                    else { return }
+                    visionSession.appendTranscription(text)
+                    visionSession.isTranscribing = false
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                switch sink {
+                case .compose(let composeSession):
+                    guard self.composeSession === composeSession else { return }
+                    composeSession.isTranscribing = false
+                    composeSession.errorMessage =
+                        "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                case .navigator(let visionSession):
+                    guard self.visionSession === visionSession else { return }
+                    visionSession.isTranscribing = false
+                    visionSession.errorMessage =
+                        "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func stopActiveWork() {
+        captureGeneration += 1
+        captureTask?.cancel()
+        captureTask = nil
+        transcriptionTask?.cancel()
+        transcriptionTask = nil
+        if isDictating {
+            isDictating = false
+            recorder.onFinish = { SoundFeedback.recordingStopped() }
+            if let url = recorder.stop() {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        composeSession?.isRecording = false
+        composeSession?.isTranscribing = false
+        visionSession?.isRecording = false
+        visionSession?.isTranscribing = false
+    }
+
+    // MARK: - Vision capture
+
+    private func beginVisionCaptureFromCompose() {
+        guard let composeSession else { return }
+        guard ScreenCapturePermission.isGranted || ScreenCapturePermission.request() else {
+            composeSession.errorMessage = "スクリーンショットには画面収録の許可が必要です。"
+            return
+        }
+        guard stateMachine.transition(to: .capturing(returnTo: .compose), reason: "emptyComposeCapture")
+        else {
+            return
+        }
+
+        captureGeneration += 1
+        let generation = captureGeneration
+        captureTask?.cancel()
+        captureTask = Task { [weak self, weak composeSession] in
+            guard let self, let composeSession else { return }
+
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+            let displayID = screen?.deviceDescription[
+                NSDeviceDescriptionKey("NSScreenNumber")
+            ] as? CGDirectDisplayID
+
+            let completion: CaptureCompletion
+            do {
+                let attachment = try await self.captureAttachment(on: screen, displayID: displayID)
+                completion = .attachment(attachment)
+            } catch ScreenshotCaptureError.cancelled {
+                completion = .cancelled
+            } catch {
+                completion = .failed(
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                )
+            }
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard self.captureGeneration == generation else { return }
+                self.captureTask = nil
+                self.handleVisionCaptureCompletion(completion, composeSession: composeSession)
+            }
+        }
+    }
+
+    private func handleVisionCaptureCompletion(
+        _ completion: CaptureCompletion,
+        composeSession: ComposeSession
+    ) {
+        guard case .capturing(let returnTo) = stateMachine.mode else { return }
+
+        switch completion {
+        case .attachment(let attachment):
+            let deployer = PasteDeployer(targetApp: summonTargetApp) { [weak self] in
+                self?.close(reason: "visionDeploy")
+            }
+            let session = VisionSession(
+                attachment: attachment,
+                deployer: deployer,
+                contextCaptureTask: composeSession.inheritedContextCaptureTask(),
+                fallbackTargetPID: summonTargetApp?.processIdentifier,
+                onRequestModeTransition: { [weak self] mode, reason in
+                    self?.requestModeTransition(mode, reason: reason)
+                },
+                onRequestPanelClose: { [weak self] in
+                    self?.close(reason: "visionRequestedClose")
+                },
+                onHidePanelForAction: { [weak self] in
+                    self?.panelController.hide()
+                },
+                onShowPanelAfterAction: { [weak self] in
+                    self?.panelController.revealAfterAction()
+                }
+            ) { [weak self] text in
+                self?.returnVisionDraftToCompose(text)
+            }
+            visionSession?.tearDown()
+            visionSession = session
+            guard stateMachine.transition(to: .vision, reason: "captureCompleted") else {
+                session.tearDown()
+                visionSession = nil
+                _ = stateMachine.transition(to: returnTo, reason: "captureTransitionFailed")
+                return
+            }
+        case .cancelled:
+            _ = stateMachine.transition(to: returnTo, reason: "captureCancelled")
+        case .failed(let message):
+            composeSession.errorMessage = message
+            _ = stateMachine.transition(to: returnTo, reason: "captureFailed")
+        }
+    }
+
+    private func returnVisionDraftToCompose(_ text: String) {
+        guard let composeSession else { return }
+        composeSession.adoptSuggestedDraft(text)
+        visionSession?.tearDown()
+        visionSession = nil
+        _ = stateMachine.transition(to: .compose, reason: "visionEditAction")
+    }
+
+    private func captureAttachment(
+        on screen: NSScreen?,
+        displayID: CGDirectDisplayID?
+    ) async throws -> ScreenshotAttachment {
+        guard let screen else { throw ScreenshotCaptureError.noCaptureTarget }
+        let outcome = await screenshotSelection.present(on: screen)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+
+        do {
+            switch outcome {
+            case .cancelled:
+                throw ScreenshotCaptureError.cancelled
+            case .fullScreen:
+                return try await screenshotCapture.captureFullScreen(displayID: displayID)
+            case .region(let rect):
+                return try await screenshotCapture.captureRegion(rect, displayID: displayID)
+            }
+        } catch ScreenshotCaptureError.cancelled {
+            throw ScreenshotCaptureError.cancelled
+        } catch {
+            await screenshotCaptureCue.showBriefly()
+            return try await screenshotCapture.captureInteractive()
+        }
     }
 
     // MARK: - Panel
 
     private func applyPanel(for mode: AppMode) {
         if mode.hasPanel {
-            if panelController.isVisible {
+            if mode == .compose, let composeSession {
+                panelController.present(
+                    FoundationComposeRootView(session: composeSession),
+                    for: mode
+                )
+            } else if mode == .transform, let transformSession {
+                panelController.present(
+                    FoundationTransformRootView(session: transformSession),
+                    for: mode
+                )
+            } else if (mode == .vision || mode == .navigator || mode == .copilot), let visionSession {
+                panelController.present(
+                    FoundationVisionRootView(session: visionSession, mode: mode),
+                    for: mode
+                )
+            } else if panelController.isVisible {
                 panelController.applyMode(mode)
             } else {
                 panelController.present(
@@ -140,6 +539,11 @@ final class SessionCoordinator {
         } else {
             panelController.close()
         }
+    }
+
+    private func requestModeTransition(_ mode: AppMode, reason: String) {
+        guard stateMachine.mode != mode else { return }
+        _ = stateMachine.transition(to: mode, reason: reason)
     }
 }
 

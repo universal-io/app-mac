@@ -758,7 +758,7 @@ private struct VisionPane<Content: View>: View {
 /// "See → understand → respond": situation first, then what is being asked,
 /// then prepared actions the user can approve. The raw extracted content comes
 /// last as reference material.
-private struct VisionInterpretationView: View {
+struct VisionInterpretationView: View {
     let result: VisionInterpretationResult
     /// Receiving side (M4-B): approve copies instead of injecting, and the
     /// edit hand-off is hidden (the exit is clipboard-only by principle).

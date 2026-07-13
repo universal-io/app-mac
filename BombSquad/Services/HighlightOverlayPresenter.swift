@@ -11,6 +11,7 @@ final class HighlightOverlayPresenter {
 
     private var window: NSWindow?
     private var dismissTask: Task<Void, Never>?
+    private var interactionMonitors: [Any] = []
 
     private init() {}
 
@@ -57,6 +58,7 @@ final class HighlightOverlayPresenter {
         }
 
         self.window = window
+        installInteractionDismissMonitors()
         if let duration {
             dismissTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
@@ -69,6 +71,7 @@ final class HighlightOverlayPresenter {
     func hide() {
         dismissTask?.cancel()
         dismissTask = nil
+        removeInteractionMonitors()
         window?.orderOut(nil)
         window = nil
     }
@@ -81,6 +84,36 @@ final class HighlightOverlayPresenter {
         }, completionHandler: { [weak self] in
             Task { @MainActor in self?.hide() }
         })
+    }
+
+    private func installInteractionDismissMonitors() {
+        removeInteractionMonitors()
+
+        let masks: [NSEvent.EventTypeMask] = [
+            [.scrollWheel],
+            [.leftMouseDown],
+            [.rightMouseDown],
+            [.otherMouseDown],
+            [.keyDown],
+        ]
+
+        for mask in masks {
+            if let monitor = NSEvent.addGlobalMonitorForEvents(
+                matching: mask,
+                handler: { [weak self] _ in
+                Task { @MainActor in self?.hide() }
+                }
+            ) {
+                interactionMonitors.append(monitor)
+            }
+        }
+    }
+
+    private func removeInteractionMonitors() {
+        for monitor in interactionMonitors {
+            NSEvent.removeMonitor(monitor)
+        }
+        interactionMonitors.removeAll()
     }
 }
 

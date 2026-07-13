@@ -79,19 +79,25 @@ enum AXActionService {
     @discardableResult
     static func press(pid: pid_t, label: String, near globalRect: CGRect?) async throws -> CGRect? {
         guard AXIsProcessTrusted() else { throw ActionError.notPermitted }
-        guard let target = await findActionable(pid: pid, label: label, near: globalRect) else {
-            throw ActionError.notFound(label)
-        }
         NSRunningApplication(processIdentifier: pid)?.activate()
-        if let frame = target.frame, isOnScreen(frame),
-           clickAt(CGPoint(x: frame.midX, y: frame.midY)) {
-            return frame
+        if let target = await findActionable(pid: pid, label: label, near: globalRect) {
+            if let frame = target.frame, isOnScreen(frame),
+               clickAt(CGPoint(x: frame.midX, y: frame.midY)) {
+                return frame
+            }
+            let result = AXUIElementPerformAction(target.element, kAXPressAction as CFString)
+            guard result == .success else {
+                throw ActionError.actionFailed(label)
+            }
+            return target.frame
         }
-        let result = AXUIElementPerformAction(target.element, kAXPressAction as CFString)
-        guard result == .success else {
-            throw ActionError.actionFailed(label)
+
+        if let globalRect, isOnScreen(globalRect),
+           clickAt(CGPoint(x: globalRect.midX, y: globalRect.midY)) {
+            return globalRect
         }
-        return target.frame
+
+        throw ActionError.notFound(label)
     }
 
     /// Whether a global CG rect is visible on any current display.

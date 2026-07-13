@@ -16,7 +16,7 @@
 
 | ドキュメント | 役割 | 状態 |
 |---|---|---|
-| [foundation-rebuild-plan.md](foundation-rebuild-plan.md) | **現行開発の正本**。基盤作り直し（シャーシ交換）の計画と進捗 | Phase 0 進行中 |
+| [foundation-rebuild-plan.md](foundation-rebuild-plan.md) | **現行開発の正本**。基盤作り直し（シャーシ交換）の計画と進捗 | Phase 4 準備中 |
 | [manual-golden-paths.md](manual-golden-paths.md) | 手動検証チェックリスト（GP-01〜26）。フェーズ完了ごとに実施 | 現役 |
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョン・アーキテクチャ・マイルストーン（M1〜M5）の正本 | 現役 |
 | [api-contract.md](api-contract.md) | クライアント⇔Gateway の API 契約の正本 | 現役 |

@@ -1,7 +1,7 @@
 # Foundation Rebuild Plan（シャーシ交換）
 
-最終更新: 2026-07-12
-ステータス: 承認済み（オーナー決定 2026-07-12）・Phase 0 から着手
+最終更新: 2026-07-13
+ステータス: Phase 3 完了・Phase 4 準備中
 
 このドキュメントは macOS アプリの基盤作り直しの**正本**である。
 旧計画 `foundation-redesign-plan.md`（ビッグバン方式、`backup/foundation-bigbang-broken-bc1070e`
@@ -48,6 +48,19 @@
 - スコープ外の機能追加はしない（品質チューニングは
   [navigator-stabilization-followups.md](navigator-stabilization-followups.md) を起点に再開）。
 
+補強ルール（2026-07-12 追加）:
+- **モード移植は「画面1枚」単位ではなく「挙動契約」単位で完了判定する**。
+  例: Vision/Navigator は「説明表示」「初回質問」「panel highlight」「live highlight」
+  「approve action」「Copilot 移行」「hold-to-talk」までを 1 契約として扱う。
+- 各 Phase 3 サブ段は、実装前に **旧経路の所有挙動を列挙**し、実装後に
+  **新経路の所有先へ 1:1 で対応付ける**。移植中に意図的に落とす挙動がある場合は、
+  「未実装」ではなく **明示的な deferred 項目**としてこの文書に残す。
+- `xcodebuild` 成功は「配線が通った」ことしか意味しない。**ビルド成功だけでは段完了にしない**。
+  Phase 3 の「実装・ビルド済み」は「構造移植完了」の意味に限定し、
+  体験パリティの完了は golden paths と実機差分確認でのみ宣言する。
+- cross-cutting な挙動（focus / dictation / highlight / target-app capture / panel close など）は
+  モードごとのローカル実装に閉じず、**移植時に横断チェック項目として毎回照合**する。
+
 ## 4. フェーズ
 
 ### Phase 0: 検証ハーネス（完了 2026-07-12）
@@ -62,8 +75,8 @@
       （遷移表 `canTransition(to:)` ＋ `AppStateMachine`。全遷移が `transition(to:reason:)` を通る。
       不正遷移は DEBUG で assert。旧コードの散在フラグには触れていない＝新経路のみ）。
 - [x] `SessionCoordinator` — [`Core/SessionCoordinator.swift`](../BombSquad/Core/SessionCoordinator.swift)
-      （`AppEvent` → 遷移の唯一の場所。singleTap / 長押し（ASR）は Phase 3 でセッションと共に実装、
-      現状はトレースのみ。summon は Phase 1 では compose シェル固定＝選択分岐は Phase 3-b）。
+      （`AppEvent` → 遷移の唯一の場所。singleTap / 長押し（ASR）は Phase 3 でセッションと共に実装。
+      summon の選択分岐は Phase 3-b で新経路へ移植済み）。
 - [x] `PanelController` + `PanelSpec` — [`Core/PanelController.swift`](../BombSquad/Core/PanelController.swift)
       （サイズ・配置・activate を mode の純関数 `PanelSpec.forMode` に集約。
       resignActive で閉じるか＝copilot 例外も spec の `closesOnResignActive` に一元化）。
@@ -74,9 +87,8 @@
   `xcodebuild -scheme` が SPM 解決込みで通るように。従来はユーザースキーム依存だった）。
 
 ### Phase 2: GatewayClient 統一
-ステータス: 実装済み（2026-07-12、ビルド成功）・**実機確認待ち**
-（確認項目: golden paths のうち Gateway を通る系 = GP-03/04 レビューSSE・GP-10 ASR・
-GP-14〜16 Vision・GP-17〜19 Navigator/Copilot・GP-22 アカウント・GP-23 メモリ）
+ステータス: **完了**（2026-07-12 実装・ビルド成功、オーナー実機確認済み。
+Gateway を通る golden paths = GP-03/04・GP-10・GP-14〜19・GP-22/23 に問題なし）
 - [x] `GatewayClient` コア 1 実装 — [`Core/GatewayClient.swift`](../BombSquad/Core/GatewayClient.swift)
       （可用性ゲート・エンベロープ・JSON/multipart 送信・transport/status/エラー契約の変換・
       SSE フレーミング・context/memory ペイロードを一元化）。
@@ -87,13 +99,46 @@ GP-14〜16 Vision・GP-17〜19 Navigator/Copilot・GP-22 アカウント・GP-23
   同じ `ProviderError.http(-1)` 形式に統一された（従来は生 URLError。ログ文言のみの差）。
 
 ### Phase 3: モード移植（1 モードずつ、各段で golden paths）
+ステータス: **完了**（2026-07-13 オーナー確認ベースで compose / transform / vision / navigator /
+copilot の主要導線を新経路へ移植し、実機で見つかった回帰も順次修正済み。Phase 4 で
+GP-03〜19 を新経路の正式パリティ確認として通す）
+
 順序: 依存が少なく検証しやすい順。各モードは「小さなセッション VM ＋薄い View」として新規に書き、
 末端サービスはそのまま挿す。
-- [ ] 3-a compose（レビュー・SSE・deploy・履歴・ASR 挿入）
-- [ ] 3-b transform(受信整理。出口はコピーのみ)
-- [ ] 3-c vision（選択オーバーレイ→解釈→提案アクション）
-- [ ] 3-d navigator / copilot（マルチターン・ハイライト・タスクプラン・コーナーストリップ）
-- [ ] 3-e 横断: L1 コンテクストチップ、出力言語、メモリ注入・蒸留、管理ウィンドウ連携
+- [x] 3-a compose（レビュー・SSE・deploy・履歴・ASR 挿入）— 完了。
+      [`Core/ComposeSession.swift`](../BombSquad/Core/ComposeSession.swift) が compose 状態と操作を所有し、
+      [`Core/ComposeSessionView.swift`](../BombSquad/Core/ComposeSessionView.swift) はその状態を描画する薄い View。
+      旧 `ReviewViewModel` / `PanelSession` への依存なし。旧経路と同じ draft 永続化キー・末端サービス
+      （GatewayReviewClient / PasteDeployer / LocalHistoryStore / AudioRecorder / Transcriber）を再利用。
+      オーナー実機確認は 3-b と束ねて GP-03〜10 を後段で確認する。
+- [x] 3-b transform（受信整理。出口はコピーのみ）— 完了。
+      [`Core/TransformSession.swift`](../BombSquad/Core/TransformSession.swift) が選択テキスト→解釈→コピーの
+      receiving-side state を所有し、[`Core/TransformSessionView.swift`](../BombSquad/Core/TransformSessionView.swift)
+      が read-only source + interpretation result を描画する薄い View。
+      `SessionCoordinator` の summon 分岐も新経路へ移植済み（右Shift 2回のみ selection-aware。
+      `⌘J` と hold-to-talk 起動は従来どおり compose 固定）。オーナー実機確認は GP-11/12 を後段で確認する。
+- [x] 3-c vision（選択オーバーレイ→解釈→提案アクション）— 完了。
+      [`Core/VisionSession.swift`](../BombSquad/Core/VisionSession.swift) が screenshot attachment →
+      interpretation → action hand-off を所有し、[`Core/VisionSessionView.swift`](../BombSquad/Core/VisionSessionView.swift)
+      が screenshot preview + interpretation result の 2-pane UI を描画する薄い View。
+      `SessionCoordinator` は compose の空 draft から `capturing(returnTo: .compose)` へ遷移し、
+      [`Views/ScreenshotSelectionOverlay.swift`](../BombSquad/Views/ScreenshotSelectionOverlay.swift) と
+      [`Services/ScreenshotCaptureService.swift`](../BombSquad/Services/ScreenshotCaptureService.swift) を使って
+      full-screen / region capture を実行、Esc で compose に戻り、右Shift 2回でセッション破棄。
+- [x] 3-d navigator / copilot（マルチターン・ハイライト・タスクプラン・コーナーストリップ）— 完了。
+      `VisionSession` が one-shot vision に加えて Navigator/Copilot の transcript・highlight・task proposal・
+      progress recapture・approved AX action を所有し、`FoundationVisionRootView` は mode に応じて
+      full panel / corner strip を描画する。最初の質問で `.vision -> .navigator`、案内開始で
+      `.navigator -> .copilot`、完了で `.copilot -> .navigator` を `SessionCoordinator` 経由で遷移する。
+      hold-to-talk は `.vision` / `.navigator` / `.copilot` の質問欄に接続済み。2026-07-12 の実機確認で見つかった
+      回帰（質問開始で one-shot 説明が消える / vision 質問欄で音声入力できない / 実行時の対象 app 解決が
+      L1 context 欠落に弱い）は同日フォローアップで修正済み。live highlight はスクロールやクリック後に
+      stale な位置へ残らないよう、ユーザー操作で自動 dismiss する。オーナー実機確認は GP-17〜19 を後段で確認する。
+- [x] 3-e 横断: L1 コンテクストチップ、出力言語、メモリ注入・蒸留、管理ウィンドウ連携
+      L1 コンテクストチップ / 出力言語 / メモリ注入・蒸留は新セッション群へ移植済み。
+      2026-07-13 時点で Compose / Transform / Vision / Copilot strip から account / settings /
+      history / memory / pricing を開く管理メニューを追加。Phase 4 では残る横断差分が無いことを
+      golden paths と実機差分確認で最終確認する。
 
 ### Phase 4: パリティ切替と旧中枢の削除
 - [ ] golden paths 全シナリオを新経路で通す（ベースラインと比較）

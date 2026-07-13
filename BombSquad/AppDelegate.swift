@@ -118,10 +118,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let commandCenter = AppCommandCenter.shared
             commandCenter.onShowPanelRequested = { [weak self] in
                 self?.trace("command.showPanel")
-                self?.togglePanel()
+                if let coordinator = self?.coreCoordinator {
+                    coordinator.handle(.hotKeyToggle)
+                } else {
+                    self?.togglePanel()
+                }
             }
             commandCenter.onShowManagementRequested = { [weak self] in
                 self?.trace("command.showManagement")
+                self?.coreCoordinator?.handle(.closeRequested)
                 self?.showManagementWindow()
             }
             commandCenter.onScreenshotCaptureRequested = { [weak self] in
