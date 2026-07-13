@@ -199,9 +199,9 @@ enum AXActionService {
     }
 
     /// Label-match quality: 0 = exact, 1 = candidate contains the label,
-    /// 2 = partial (label contains the candidate). nil = no match. Mirrors
-    /// ReviewViewModel.matchTier — "the AI names WHAT, the device resolves
-    /// WHERE" only works when every resolver ranks matches the same way.
+    /// 2 = partial (label contains the candidate). nil = no match. This must
+    /// stay aligned with VisionSession's OCR ranking: the AI names WHAT and
+    /// the device resolves WHERE.
     private static func matchTier(needle: String, candidate: String) -> Int? {
         let key = matchKey(candidate)
         guard !key.isEmpty else { return nil }

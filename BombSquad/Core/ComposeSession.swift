@@ -1,7 +1,7 @@
 import Foundation
 
-/// Persisted compose draft shared with the legacy path during the migration.
-/// Keeping the same key makes flipping the foundation flag lossless.
+/// Persisted compose draft. The key retains its pre-rebuild spelling so an
+/// existing user's unfinished draft survives the architecture replacement.
 private enum FoundationComposeDraftStore {
     private static let key = "ReviewViewModel.composeDraft"
 
@@ -22,9 +22,8 @@ private enum FoundationComposeDraftStore {
     }
 }
 
-/// Phase 3-a compose state. It owns only the outgoing-message workflow and
-/// depends on leaf services; it deliberately has no reference to
-/// ReviewViewModel or PanelSession.
+/// Outgoing-message session state. It owns review, deployment, history, and
+/// dictation insertion while depending only on leaf services.
 @MainActor
 final class ComposeSession: ObservableObject {
     @Published var draft: String {

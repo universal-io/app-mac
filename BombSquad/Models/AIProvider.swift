@@ -148,9 +148,8 @@ enum AppSettings {
         return UserDefaults.standard.bool(forKey: isMemoryEnabledKey)
     }
 
-    /// Screen navigator (streaming chat over screenshots) instead of the
-    /// legacy one-shot vision interpretation. Gateway-only; the legacy path
-    /// also remains the fallback for signed-out/BYOK sessions.
+    /// Screen navigator (streaming chat over screenshots). Gateway-only;
+    /// one-shot Vision remains the fallback for signed-out/BYOK sessions.
     static func isNavigatorEnabled() -> Bool {
         if UserDefaults.standard.object(forKey: isNavigatorEnabledKey) == nil {
             return true

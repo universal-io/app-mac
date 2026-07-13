@@ -2,8 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The window's shape as a pure function of `AppMode`.
-/// One place decides size, placement, and activation behavior — the legacy
-/// path spreads this across AppDelegate and PanelSession.
+/// One place decides size, placement, and activation behavior.
 struct PanelSpec: Equatable {
     enum Placement: Equatable {
         /// Centered on the screen the cursor is on.

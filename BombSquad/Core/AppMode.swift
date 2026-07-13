@@ -2,12 +2,8 @@ import Foundation
 
 /// The single source of truth for "what the app is doing right now".
 ///
-/// Foundation rebuild Phase 1 (docs/foundation-rebuild-plan.md §Phase 1).
-/// The legacy path *infers* this from scattered view-model flags
-/// (`sessionKind`, `navigatorSessionActive`, `navigatorActiveTask`, ...);
-/// the rebuilt core *owns* it here and everything else derives from it.
-/// Core files must not import the legacy center (ReviewViewModel, the old
-/// AppDelegate flow) — leaf services only.
+/// Introduced by the foundation rebuild. The app owns mode explicitly here;
+/// panels, gestures, and session lifetimes all derive from this value.
 enum AppMode: Equatable, CustomStringConvertible {
     /// No panel. Menu-bar resident, waiting for a summon gesture.
     case idle
@@ -111,9 +107,7 @@ final class AppStateMachine: ObservableObject {
     }
 }
 
-/// Debug trace for the rebuilt core. Mirrors the legacy `SessionTrace`
-/// format so Console.app filtering works the same way, but reports the
-/// *owned* mode instead of an inferred one.
+/// Debug trace for lifecycle and state-machine evidence in Console.app.
 enum CoreTrace {
     static func event(
         _ name: String,

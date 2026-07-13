@@ -29,7 +29,7 @@
 | 本番 Gateway（Vercel、`origin/main` = ビッグバン先端 `bc1070e`） | **新世代**（plans.ts / entitlements / admin console / harness packs）で正常稼働 |
 | 本番 Supabase | **新世代**（migration 0003/0004 適用済み。`bs_plans` が正本、`bs_entitlements.plan` は FK） |
 | 本ブランチの `web/` `supabase/` | main から port 済み（`42c644e`）。**Gateway 側の作り直しは不要** |
-| 本ブランチの macOS アプリ | 巻き戻し＋安定化世代。部分的な芽（`TextPanelSession` / `RootPanelView` / `AppCommandCenter` / `SessionTrace`）あり |
+| 本ブランチの macOS アプリ | **新中枢へ切替済み**。`AppMode` / `SessionCoordinator` / モード別 Session が現行経路。旧中枢は削除済み |
 
 ⚠️ `origin/main` にはビッグバンの**アプリ側の壊れたコード**も含まれる。main への次のマージは
 本ブランチの完成後に行い、アプリ側は本ブランチが main を上書きする（web 側は同一になっている）。
@@ -48,7 +48,7 @@
 - スコープ外の機能追加はしない（品質チューニングは
   [navigator-stabilization-followups.md](navigator-stabilization-followups.md) を起点に再開）。
 
-**移植規律（2026-07-13 追加。Phase 3-c で「Vision one-shot と Navigator 初期準備の並行起動」
+**Phase 3 移植時の規律（2026-07-13 追加。Phase 3-c で「Vision one-shot と Navigator 初期準備の並行起動」
 という旧経路に無い挙動を発明した結果、スピナー残留・フォーカス喪失・空パネル残留の競合バグが
 発生した教訓のルール化）:**
 1. **忠実移植の原則**: Phase 3 の間は挙動の変更・最適化・先回り（プリウォーム等）を一切禁止。
@@ -67,7 +67,8 @@
    引用してから着手する。症状だけ消す修正は禁止。
 6. **Phase 3 の仕様の正は「フラグ OFF の旧コードの挙動」ただ一つ**（2026-07-13 追加）。
    README・master-plan の Vision 記述は **M4 世代のまま**で、Navigator 有効時の現挙動と異なる
-   （旧コードの正: [`ReviewViewModel.enterVisionMode`](../BombSquad/ViewModels/ReviewViewModel.swift) —
+   （削除前の旧コードの正は
+   `git show a0f928e:BombSquad/ViewModels/ReviewViewModel.swift` の `enterVisionMode` —
    キャプチャ直後、Navigator 利用可なら **Navigator セッションを即開始**（auto first turn は
    `AppSettings.isNavigatorAutoFirstTurnEnabled()` に従い「軽い現状認識」を返す）。
    `/api/ai/vision` のフル解釈（状況→求められていること→提案アクション）は
@@ -193,8 +194,10 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
 - [x] 上記 Phase 4 パリティ修正をオーナーが実機確認（2026-07-13）。
 - [x] エントリポイントを新 `SessionCoordinator` 経路に固定し、`core.foundation.enabled` 移行フラグを削除。
 - [ ] golden paths 全シナリオを新経路で通す（ベースラインと比較）
-- [ ] 旧 `ReviewViewModel` / 旧パネル経路を削除
-- [ ] `ReviewPanelView.swift` の残骸整理（コンポーネント分割の仕上げ）
+- [x] 旧 `ReviewViewModel` / `PanelSession` / 旧 AppDelegate パネル経路 / 旧 View 群を削除。
+      AppDelegate はプロセス配線と管理・権限ウィンドウだけに縮小。
+- [x] `ReviewPanelView.swift` を削除。新経路も使う `GatewayOverrideBadge` / `ErrorBanner` /
+      `VisionInterpretationView` だけを `FoundationSharedViews.swift` へ分離。
 - [ ] 旧 transform 表示・`transformSystem` プロンプト等の未使用コード掃除（M4-B の積み残し）
 
 ### Phase 5: クローズ
