@@ -91,6 +91,16 @@ struct ComposeSessionView: View {
                     .padding(12)
                 }
 
+                Button {
+                    AppCommandCenter.shared.requestScreenshotCapture()
+                } label: {
+                    Image(systemName: "camera.viewfinder")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .help("ビジョン入力としてスクリーンショットを撮影します")
+                .accessibilityLabel("画面を撮影して読み取る")
+
                 if session.isRecording {
                     Image(systemName: "mic.fill").foregroundStyle(.red)
                     Text("録音中…").font(.caption).foregroundStyle(.secondary)

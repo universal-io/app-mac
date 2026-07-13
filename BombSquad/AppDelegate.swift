@@ -131,7 +131,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             commandCenter.onScreenshotCaptureRequested = { [weak self] in
                 self?.trace("command.captureScreenshot")
-                self?.startScreenshotCapture()
+                if let coordinator = self?.coreCoordinator {
+                    coordinator.handle(.screenshotCaptureRequested)
+                } else {
+                    self?.startScreenshotCapture()
+                }
             }
             commandCenter.onScreenCaptureSettingsRequested = {
                 ScreenCapturePermission.openSettings()

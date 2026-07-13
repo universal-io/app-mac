@@ -1,7 +1,7 @@
 # Foundation Rebuild Plan（シャーシ交換）
 
 最終更新: 2026-07-13
-ステータス: Phase 3 完了・Phase 4 準備中
+ステータス: Phase 3 完了・Phase 4 進行中
 
 このドキュメントは macOS アプリの基盤作り直しの**正本**である。
 旧計画 `foundation-redesign-plan.md`（ビッグバン方式、`backup/foundation-bigbang-broken-bc1070e`
@@ -181,6 +181,11 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
       golden paths と実機差分確認で最終確認する。
 
 ### Phase 4: パリティ切替と旧中枢の削除
+ステータス: **進行中**（2026-07-13 静的パリティ監査を開始）
+- [x] 旧 compose の明示的なカメラボタン経路を新中枢へ移植。
+      `AppCommandCenter.onScreenshotCaptureRequested` がフラグ ON でも旧
+      `AppDelegate.startScreenshotCapture()` へ直結され、新 Compose UI にボタン自体が
+      無かった差分を修正。ボタンからも `SessionCoordinator` の同じ capture 経路へ入る。
 - [ ] golden paths 全シナリオを新経路で通す（ベースラインと比較）
 - [ ] エントリポイントを新経路に固定、旧 `ReviewViewModel` / 旧パネル経路 / 移行フラグを削除
 - [ ] `ReviewPanelView.swift` の残骸整理（コンポーネント分割の仕上げ）

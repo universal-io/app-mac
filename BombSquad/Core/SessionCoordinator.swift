@@ -14,6 +14,8 @@ enum AppEvent: CustomStringConvertible {
     case longPressEnded
     /// ⌘J: plain panel toggle.
     case hotKeyToggle
+    /// Explicit camera button in the compose surface.
+    case screenshotCaptureRequested
     /// Esc or an in-window close request.
     case closeRequested
     /// The app lost active status (another app's window took focus).
@@ -26,6 +28,7 @@ enum AppEvent: CustomStringConvertible {
         case .longPressBegan: return "longPressBegan"
         case .longPressEnded: return "longPressEnded"
         case .hotKeyToggle: return "hotKeyToggle"
+        case .screenshotCaptureRequested: return "screenshotCaptureRequested"
         case .closeRequested: return "closeRequested"
         case .appResignedActive: return "appResignedActive"
         }
@@ -36,9 +39,8 @@ enum AppEvent: CustomStringConvertible {
 /// drives the `PanelController`. This is the ONLY place that decides what a
 /// gesture means in a given mode.
 ///
-/// Phase 1 introduced the machinery; Phase 3 replaces the shell one mode at
-/// a time. Compose / transform / one-shot vision are now owned here while
-/// navigator/copilot still render on the legacy path.
+/// Phase 1 introduced the machinery; Phase 3 moved compose, transform,
+/// Vision, Navigator, and Copilot onto this path behind the migration flag.
 @MainActor
 final class SessionCoordinator {
     private enum CaptureCompletion {
@@ -98,6 +100,9 @@ final class SessionCoordinator {
             } else {
                 close(reason: "hotKeyToggle")
             }
+        case .screenshotCaptureRequested:
+            guard mode == .compose else { return }
+            beginVisionCaptureFromCompose()
         case .closeRequested:
             close(reason: "closeRequested")
         case .appResignedActive:
