@@ -1,7 +1,7 @@
 # Universal I/O (I//O) マスタープラン
 
-最終更新: 2026-07-13（Navigator v3 への相互参照と世代注記を追加。M4 の Vision フル解釈は
-Navigator 利用可時のフォールバックへ降格済み — 詳細は M4 節冒頭の注記）
+最終更新: 2026-07-13（Navigator v3 への相互参照と新中枢切替後のコードマップを反映。
+M4 の Vision フル解釈は Navigator 利用可時のフォールバックへ降格済み）
 ステータス: 承認済み（オーナー承認済みの製品方針。実装はマイルストーン M1 から開始）
 
 このドキュメントは、Bomb Squad から **Universal I/O**（ロゴ: **I//O**）への製品転換の正本である。
@@ -184,11 +184,9 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
 
 ## 4. 現状コードベースの地図（実装者向け）
 
-> ⚠️ 本表は M1〜M4（〜2026-07-04）時点のもの。以降に追加された Navigator/Copilot 関連
-> （`GatewayNavigateClient` / `NavigatorLocator` / `CopilotStripView` / `AXActionService` /
-> `web/lib/server/navigate-engine.ts`・`harness.ts` 等）は
-> [navigator-copilot-plan.md](navigator-copilot-plan.md) を、基盤作り直しで新設された
-> `BombSquad/Core/` は [foundation-rebuild-plan.md](foundation-rebuild-plan.md) を参照。
+> 本表は 2026-07-13 の新中枢切替後を反映。Navigator/Copilot のUX詳細は
+> [navigator-copilot-plan.md](navigator-copilot-plan.md)、基盤作り直しの経緯は
+> [foundation-rebuild-plan.md](foundation-rebuild-plan.md) を参照。
 
 リポジトリ: `git@github.com:universal-io/app-mac.git`（ローカル: `~/projects/universal-io/app-mac`。
 2026-07-02 に GitHub org を `hey-watchme/mac-bomb-squad` から `universal-io/app-mac` へ移行し、
@@ -198,17 +196,18 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
 
 | 責務 | 場所 |
 |---|---|
-| アプリ起動・右Shift ジェスチャのハンドリング・パネル召喚 | `BombSquad/AppDelegate.swift`（`summon()`, `advance()`, `showPanel(prefill:mode:)`, `startScreenshotCapture()`） |
+| アプリ起動・グローバル入力配線 | `BombSquad/AppDelegate.swift` |
 | 右Shift 1回/2回/長押し判定 | `BombSquad/Services/ShiftGestureMonitor.swift` |
-| レビュー状態・実行 | `BombSquad/ViewModels/ReviewViewModel.swift`（`runReview()`, `draft`, `result`, `sessionKind`, `visionResult`） |
-| プロンプト正本 | `BombSquad/Resources/ReviewPrompt.swift`（`system`, `transformSystem`, `languageInstruction`） |
+| 状態機械・セッション遷移 | `BombSquad/Core/AppMode.swift`, `SessionCoordinator.swift` |
+| モード別状態・実行 | `BombSquad/Core/ComposeSession.swift`, `TransformSession.swift`, `VisionSession.swift` |
+| プロンプ正本 | `BombSquad/Resources/ReviewPrompt.swift`（送信レビュー）、`web/lib/server/*-engine.ts`（Gateway経路） |
 | LLM クライアント抽象 | `BombSquad/Services/ReviewProvider.swift`, `OpenAICompatibleClient.swift`, `ClaudeClient.swift`, `VisionProvider.swift`, `OpenAIVisionClient.swift` |
 | モデルカタログ | `BombSquad/Models/AIProvider.swift`（`ReviewModel.catalog`） |
 | 注入・クリップボード | `BombSquad/Services/PasteDeployer.swift`, `Deployer.swift`（`ClipboardBackup`, `ClipboardDeployer`）, `SelectionGrabber.swift` |
-| スクリーンショット | `BombSquad/Services/ScreenshotCaptureService.swift`（現状 `screencapture -i`） |
+| スクリーンショット | `BombSquad/Views/ScreenshotSelectionOverlay.swift`, `Services/ScreenshotCaptureService.swift`（ScreenCaptureKit優先） |
 | 音声 | `BombSquad/Services/AudioRecorder.swift`, `GroqTranscriber.swift` |
 | ローカル履歴 | `BombSquad/Services/LocalHistoryStore.swift`（SQLite `history_entries`: `source_text`, `final_text`, `mode`, `action` 等） |
-| パネル UI | `BombSquad/Views/ReviewPanelView.swift`（`VisionPanelView` 含む）, `StagingEditorView.swift`, `DiffView.swift` |
+| パネル UI | `BombSquad/Core/*SessionView.swift`, `Core/PanelController.swift`, `Views/FoundationSharedViews.swift` |
 | 管理ウィンドウ | `BombSquad/Views/Management/`（`ManagementView`, `AccountView`, `GeneralSettingsView`, `PricingView`, `HistoryPlaceholderView`） |
 | 認証（Supabase） | `BombSquad/Services/BombSquadAuthClient.swift`, `ViewModels/AuthViewModel.swift` |
 | 権限 | `BombSquad/Services/AccessibilityPermission.swift`, `ScreenCapturePermission.swift` |

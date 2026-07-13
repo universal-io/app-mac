@@ -4,10 +4,11 @@
 > 実装マイルストーンの正本は [docs/universal-io-master-plan.md](docs/universal-io-master-plan.md)。
 > 以下はその土台となる現行実装（Bomb Squad 世代）の仕様。
 >
-> **2026-07-12**: macOS アプリの基盤作り直し（シャーシ交換）を進行中。正本は
+> **2026-07-13**: macOS アプリの基盤作り直し（シャーシ交換）は新中枢へ切替済み。正本は
 > [docs/foundation-rebuild-plan.md](docs/foundation-rebuild-plan.md)。経緯: ビッグバン
-> リファクタリング（R0〜R4）が失敗 → 安定版へ巻き戻して安定化（現状）→ 中枢のみ新規実装・
-> 実証済みサービスは移植、の方針で再スタート。Gateway（web/）と本番 DB は
+> リファクタリング（R0〜R4）が失敗 → 安定版へ巻き戻し → 中枢のみ新規実装・
+> 実証済みサービスを移植 → `AppMode` / `SessionCoordinator` / モード別 Session へ切替。
+> Gateway（web/）と本番 DB は
 > リファクタリング後の世代（plan catalog / admin console）が本番稼働中で、作り直し対象外。
 >
 > 📚 **ドキュメントの入口は [docs/README.md](docs/README.md)**（全ドキュメントの索引と
@@ -62,7 +63,7 @@ macOS の画面構成方針:
   見ているものをそのまま見る）、**ドラッグすれば従来どおり範囲選択**。esc でパネルへ戻り、
   **右Shift2回ならセッションごと破棄して待機モード**（パネルが出る前の状態）へ。
   ScreenCaptureKit が失敗した場合のみ `screencapture -i` にフォールバックする。
-- **キャプチャ後の分岐（正: [`ReviewViewModel.enterVisionMode`](BombSquad/ViewModels/ReviewViewModel.swift)）**:
+- **キャプチャ後の分岐（正: [`VisionSession.startInitialFlowIfNeeded`](BombSquad/Core/VisionSession.swift)）**:
   - **画面ナビゲーターが利用可（ログイン済み＋設定 ON）= 既定**: そのまま**ナビゲーター
     セッション**が始まる。初回は**軽い現状認識のみ**（auto first turn、設定で OFF 可）を返し、
     以降は質問チャット（マルチターン SSE）で「どこを押すか」を案内。対象 UI は OCR grounding で
@@ -127,10 +128,16 @@ UserDefaults に永続化され、次にパネルを開いた時から反映）�
 ## 技術スタック
 
 - Swift / SwiftUI（macOS 14+）。**メニューバー常駐（`NSApp.setActivationPolicy(.accessory)` + `MenuBarExtra`）**、起動時ウィンドウなし。
+- **中枢**: [`AppMode`](BombSquad/Core/AppMode.swift) が唯一の状態機械、
+  [`SessionCoordinator`](BombSquad/Core/SessionCoordinator.swift) がジェスチャとセッション遷移、
+  [`PanelController`](BombSquad/Core/PanelController.swift) がパネル形状と配置を所有。Compose / Transform / Vision・Navigator・Copilot は
+  それぞれ専用 Session に分離され、`AppDelegate` はプロセス起動と入力配線のみを担当する。
 - レビュー: OpenAI／Groq は OpenAI 互換 Chat Completions を [`OpenAICompatibleClient`](BombSquad/Services/OpenAICompatibleClient.swift) で共用、Anthropic は [`ClaudeClient`](BombSquad/Services/ClaudeClient.swift)。構造化出力は OpenAI=json_schema strict／Groq=json_object／Claude=Tool Use。`ReviewProvider` で抽象化。
 - **音声入力（ASR）**: [`AudioRecorder`](BombSquad/Services/AudioRecorder.swift)（AVAudioRecorder, 16kHz mono m4a）＋ [`GroqTranscriber`](BombSquad/Services/GroqTranscriber.swift)（Groq `whisper-large-v3`, multipart）。右Shift 長押しで録音→離すと文字起こしして draft に挿入。
 - **ジェスチャ**: [`ShiftGestureMonitor`](BombSquad/Services/ShiftGestureMonitor.swift) が右Shift の 1回タップ（=左右フォーカス切替）、2回タップ（=起動 / レビュー / Vision / 閉じる）、長押し（=音声）を判定する。⌘J は Carbon `RegisterEventHotKey`。
-- **Vision / スクリーンショット**: [`ScreenshotCaptureService`](BombSquad/Services/ScreenshotCaptureService.swift) が `screencapture -i` で範囲撮影し、[`ScreenshotCaptureCuePresenter`](BombSquad/Services/ScreenshotCaptureService.swift) が撮影直前のオーバーレイを描画する。読み取りは [`OpenAIVisionClient`](BombSquad/Services/OpenAIVisionClient.swift)、表示はテキスト用 UI とは分離した [`VisionPanelView`](BombSquad/Views/ReviewPanelView.swift) が担当する。
+- **Vision / スクリーンショット**: [`ScreenshotSelectionOverlay`](BombSquad/Views/ScreenshotSelectionOverlay.swift) で全画面または範囲を選び、
+  [`ScreenshotCaptureService`](BombSquad/Services/ScreenshotCaptureService.swift) が ScreenCaptureKit で撮影する。失敗時のみ `screencapture -i` へフォールバック。
+  [`VisionSession`](BombSquad/Core/VisionSession.swift) が Navigator優先／one-shot Visionフォールバック、ハイライト、Copilot進行を所有する。
 - **注入**: [`PasteDeployer`](BombSquad/Services/PasteDeployer.swift) がクリップボード＋⌘V 合成で元フィールドへ。`Deployer` で抽象化（将来 Accessibility 注入に差し替え可）。
 - **クリップボード退避・復元（暫定）**: 送信の ⌘V（[`PasteDeployer`](BombSquad/Services/PasteDeployer.swift)）と受信取り込みの ⌘C（[`SelectionGrabber`](BombSquad/Services/SelectionGrabber.swift)）はシステムのクリップボードを一時的に借りる。ユーザーが元々コピーしていた内容を壊さないよう、操作の直前に全アイテム・全タイプを退避し、合成ペースト／コピーが処理された後に復元する（[`ClipboardBackup`](BombSquad/Services/Deployer.swift)）。これは TextExpander・Alfred・Raycast・Espanso 等の入力支援ツールで確立した定番パターン。ただし退避・復元も合成ペースト／コピーも遅延ベースのため原理的に 100% 完全ではない（重いアプリでの取りこぼし、一部アプリ独自形式、他のクリップボード管理ツールとの併用など）。**本筋はロードマップの「Accessibility API で実フォームへ直接注入」**で、それが入ればクリップボードを一切触らなくなりこの仕組みは不要になる。なお受信モードの出口（[`ClipboardDeployer`](BombSquad/Services/Deployer.swift)）は「クリップボードへコピー」自体が機能のため復元しない。
 - **履歴**: ローカル履歴は SQLite（`~/Library/Application Support/BombSquad/history.sqlite`）に保存。既定 ON、最新100件まで。設定から OFF にできる。履歴一覧は最終的に注入した文章だけを表示する。
