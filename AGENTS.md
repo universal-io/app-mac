@@ -24,11 +24,11 @@ Rules:
 - If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `main`
+- `feature/copilot-accuracy`
 
-Planned transition:
+Branch origin:
 - foundation rebuild merged into `main` as `8977f57`
-- branch `feature/copilot-accuracy` from this integrated main
+- `feature/copilot-accuracy` branched from integrated main after close commit `fdb8efb`
 
 Current operational note:
 - The foundation rebuild passed GP-01〜27 and was integrated into main on 2026-07-13.

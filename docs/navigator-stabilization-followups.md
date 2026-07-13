@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-13 ／ ステータス: 開始準備完了（基盤 Phase 4 パリティ達成済み）
+最終更新: 2026-07-13 ／ ステータス: **進行中**（`feature/copilot-accuracy`）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -8,7 +8,7 @@
 
 ## 0. 開始条件と作業ブランチ
 
-- `feature/foundation-redesign` を `main` へ統合後、`feature/copilot-accuracy` を作成する。
+- [x] `feature/foundation-redesign` を `main` へ統合し、`feature/copilot-accuracy` を作成。
 - モデル変更・プロンプト変更・キャプチャ判定変更を同時に行わない。
 - 1 実験 = 1 変数 = 1 コミット。同一ゴールデンセットで比較する。
 
