@@ -21,12 +21,12 @@
 
 | ドキュメント | 役割 | 状態 |
 |---|---|---|
-| [foundation-rebuild-plan.md](foundation-rebuild-plan.md) | **現行開発の正本**。基盤作り直し（シャーシ交換）の計画と進捗 | Phase 4 完了・統合待ち |
+| [foundation-rebuild-plan.md](foundation-rebuild-plan.md) | 基盤作り直し（シャーシ交換）の計画と完了記録 | Phase 4 完了・統合待ち |
 | [manual-golden-paths.md](manual-golden-paths.md) | 手動検証チェックリスト（GP-01〜27）。フェーズ完了ごとに実施 | 現役 |
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョン・アーキテクチャ・マイルストーン（M1〜M5）の正本 | 現役 |
 | [api-contract.md](api-contract.md) | クライアント⇔Gateway の API 契約の正本 | 現役 |
 | [navigator-copilot-plan.md](navigator-copilot-plan.md) | Navigator/Copilot 機能の設計正本 | 現役 |
-| [navigator-stabilization-followups.md](navigator-stabilization-followups.md) | Navigator の品質チューニング残項目（TODO リスト） | 現役 |
+| [navigator-stabilization-followups.md](navigator-stabilization-followups.md) | **現行開発の正本**。Copilot のモデル選定・画面遷移検出・精度検証 | 開始準備完了 |
 
 ## 参照資料（安定・変更頻度低）
 

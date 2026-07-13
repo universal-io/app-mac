@@ -4,15 +4,15 @@
 
 1. コードやドキュメントに触る前に **[docs/README.md](docs/README.md)（ドキュメント索引）を読む**。
    どのファイルが正本で、どれがアーカイブかはそこが唯一の答え。
-2. 現行の開発正本は [docs/foundation-rebuild-plan.md](docs/foundation-rebuild-plan.md)。
+2. 現行の開発正本は [docs/navigator-stabilization-followups.md](docs/navigator-stabilization-followups.md)。
    作業の開始・完了・方針変更は**同じコミットで**この正本に反映する。
 3. ドキュメント管理ルール（増やすなら畳む・索引登録必須・old/ 運用）は
    docs/README.md の「ドキュメント管理ルール」に従う。**新規 .md の無断作成は禁止**。
 
 # Worktree Guard
 
-This worktree is the active source of truth for the current foundation redesign
-thread.
+This worktree is the active source of truth for the mainline and the upcoming
+Copilot accuracy work.
 
 Path:
 - `/Users/kaya.matsumoto/projects/universal-io/app-mac`
@@ -26,6 +26,10 @@ Rules:
 Current branch:
 - `feature/foundation-redesign`
 
+Planned transition:
+- merge the validated foundation rebuild into `main`
+- branch `feature/copilot-accuracy` from that merged main
+
 Current operational note:
-- The validated stabilization state was adopted into this branch on 2026-07-11.
-- Continue implementation here unless a new recovery handoff is explicitly documented.
+- The foundation rebuild passed GP-01〜27 on 2026-07-13 and is ready for main integration.
+- After integration, continue Copilot model/workflow evaluation in this worktree.

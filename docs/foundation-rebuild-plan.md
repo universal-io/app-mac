@@ -208,6 +208,10 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
 - [x] `foundation-recovery-handoff.md` をアーカイブ扱いにする（2026-07-12 `docs/old/` へ移動済み）
 - [ ] main へマージ（web は同一なので本番 Gateway に影響なし）
 
+次の開発トラックは
+[navigator-stabilization-followups.md](navigator-stabilization-followups.md)。main 統合後、
+`feature/copilot-accuracy` でモデル選定と画面遷移検出の検証から再開する。
+
 ## 5. 旧計画からの引き継ぎ対応表
 
 | 旧計画 | 本計画での扱い |
