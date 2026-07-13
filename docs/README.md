@@ -14,7 +14,7 @@
 
 1. [../README.md](../README.md) — 製品と現行実装の仕様
 2. このファイル — どのドキュメントが正本かを把握
-3. [foundation-rebuild-plan.md](foundation-rebuild-plan.md) — **今やっている作業の正本**
+3. [navigator-stabilization-followups.md](navigator-stabilization-followups.md) — **今やっている作業の正本**
 4. 作業対象に応じて下表の該当ドキュメント
 
 ## 正本（living documents — 役割ごとに1つだけ）
@@ -26,7 +26,7 @@
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョン・アーキテクチャ・マイルストーン（M1〜M5）の正本 | 現役 |
 | [api-contract.md](api-contract.md) | クライアント⇔Gateway の API 契約の正本 | 現役 |
 | [navigator-copilot-plan.md](navigator-copilot-plan.md) | Navigator/Copilot 機能の設計正本 | 現役 |
-| [navigator-stabilization-followups.md](navigator-stabilization-followups.md) | **現行開発の正本**。Copilot のモデル選定・画面遷移検出・精度検証 | 開始準備完了 |
+| [navigator-stabilization-followups.md](navigator-stabilization-followups.md) | **現行開発の正本**。Copilot のモデル選定・画面遷移検出・精度検証 | 進行中 |
 
 ## 参照資料（安定・変更頻度低）
 

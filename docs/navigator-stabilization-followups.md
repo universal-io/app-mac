@@ -53,6 +53,42 @@
 - 速度基準だけではなく、まず高性能モデルで品質上限を測る。実用精度が上がるなら数秒の追加待ちは許容候補。
 - 同一入力でモデルだけを差し替え、プロンプト・レシピ・画像は固定する。
 
+#### 2026-07-13 公式仕様調査
+
+現行の高速初手 `meta-llama/llama-4-scout-17b-16e-instruct` は、Groq の
+[廃止予定](https://console.groq.com/docs/deprecations)で **2026-07-17 に停止予定**。
+品質改善とは別に置換が必須であり、以降は比較時の期限付き baseline としてのみ扱う。
+
+- Groq 内で同じ「画像を直接受ける高速初手」の比較候補は
+  [`qwen/qwen3.6-27b`](https://console.groq.com/docs/model/qwen/qwen3.6-27b)。画像入力、
+  reasoning / non-reasoning の両モードに対応するが Preview のため、採用時は model ID と
+  廃止予定を運用監視する。
+- Groq が移行候補に挙げる
+  [`openai/gpt-oss-120b`](https://console.groq.com/docs/model/openai/gpt-oss-120b) は text-only。
+  スクリーンショット入力を担う初手の直接置換には使えない。視覚認識と計画を分離した場合の
+  text planner 候補に限る。
+- 現行後続ターンの
+  [`gpt-5.4-mini`](https://developers.openai.com/api/docs/models/gpt-5.4-mini) は画像入力と
+  computer use を対象にした現行モデルであり、比較 baseline として維持する。
+- 品質上限の測定には OpenAI の
+  [現行モデル選択ガイド](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6)に従い、
+  GPT-5.6 系の品質優先モデルとバランス型を候補にする。ただし API 方式・reasoning effort・
+  image detail の差も結果に影響するため、単なる model ID 差し替えと混ぜない。
+- 視覚 grounding / locator は、公式に 0–1000 正規化 bounding box を返せる
+  [Gemini image understanding](https://ai.google.dev/gemini-api/docs/image-understanding)を別候補にする。
+  プランナー全体の置換と locator 単体の置換を分けて評価する。
+
+| 役割 | 現行 baseline | 最初の比較候補 | 判定したいこと |
+|---|---|---|---|
+| 自動初手（画像→1文） | Llama 4 Scout（7/17停止） | Qwen 3.6 27B / `gpt-5.4-mini` | 初手精度を落とさず停止モデルを置換できるか |
+| 通常QA・計画・進捗判定 | `gpt-5.4-mini` | GPT-5.6 品質優先 / バランス型 | 数秒の追加待ちで実用精度が改善するか |
+| text-only planner（分離案） | なし | GPT-OSS 120B | 視覚結果を構造化した後なら有効か |
+| locator / grounding | `gpt-5.4-mini` 補追 | Gemini Flash / Pro 系 | 重複ラベルや座標特定が改善するか |
+
+モデル変更前に admin の「実効モデル設定」で本番環境変数による上書きを確認する。
+ローカルコードの既定値だけを本番値として扱わない。なお現リポジトリには固定入力を反復評価する
+test / eval runner がないため、まずゴールデンセットを再実行可能な形にする。
+
 ### C. 画面遷移検出（モデルと独立に検証）
 
 - クリック直前のキャプチャを baseline とし、まず「変化が始まった」ことを検出する。
