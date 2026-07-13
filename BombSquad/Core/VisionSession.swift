@@ -32,6 +32,18 @@ private struct CoreNavigatorHighlightResolution {
     let liveBox: CGRect?
 }
 
+enum CopilotCaptureState: Equatable {
+    case idle
+    case waitingForChange
+    case settling
+    case timedOut
+}
+
+private enum CopilotProgressCaptureOutcome {
+    case stable(ScreenshotAttachment)
+    case timedOut
+}
+
 /// Phase 3-c/d screenshot interpretation state. It owns the legacy split:
 /// Navigator-first when available, one-shot Vision only as fallback, plus
 /// Copilot on top of the same screenshot session.
@@ -55,6 +67,7 @@ final class VisionSession: ObservableObject {
     @Published private(set) var navigatorActiveTask: NavigatorTask?
     @Published private(set) var isExecutingNavigatorAction = false
     @Published private(set) var isCopilotChecking = false
+    @Published private(set) var copilotCaptureState: CopilotCaptureState = .idle
     @Published var focusedField: FocusField? = nil
     @Published var isRecording = false
     @Published var isTranscribing = false
@@ -85,6 +98,12 @@ final class VisionSession: ObservableObject {
     private var didSaveNavigatorSession = false
 
     let outputLanguage: OutputLanguage
+    private static let copilotCaptureSampleDelayNanoseconds: UInt64 = 350_000_000
+    private static let copilotCaptureSettleComparisons = 1
+    private static let copilotCaptureMaxAttempts = 8
+    private static let copilotChangeThreshold = 0.015
+    private static let copilotStableThreshold = 0.003
+    private static let copilotComparisonSide = 48
 
     init(
         attachment: ScreenshotAttachment,
@@ -466,6 +485,7 @@ final class VisionSession: ObservableObject {
         copilotRecaptureTask = nil
         copilotProgressGeneration += 1
         isCopilotChecking = false
+        setCopilotCaptureState(.idle)
         clearNavigatorHighlights()
         if notifyCoordinator {
             onRequestModeTransition(.navigator, "copilotStopped")
@@ -482,6 +502,8 @@ final class VisionSession: ObservableObject {
         copilotProgressGeneration += 1
         let generation = copilotProgressGeneration
         isCopilotChecking = true
+        errorMessage = nil
+        setCopilotCaptureState(.waitingForChange)
         clearNavigatorHighlights()
         copilotRecaptureTask = Task { [weak self] in
             guard let self else { return }
@@ -518,11 +540,19 @@ final class VisionSession: ObservableObject {
             liveNavigatorHighlight = nil
             HighlightOverlayPresenter.shared.hide()
             try await Task.sleep(nanoseconds: 180_000_000)
-            let capture = try await captureCopilotProgressAttachment()
+            let baseline = attachment
+            let outcome = try await captureCopilotProgressAttachment(baseline: baseline)
             guard isCopilotActive,
                   !Task.isCancelled,
                   generation == copilotProgressGeneration else { return }
-            appendNavigatorCapture(capture)
+            switch outcome {
+            case .stable(let capture):
+                setCopilotCaptureState(.idle)
+                appendNavigatorCapture(capture)
+            case .timedOut:
+                setCopilotCaptureState(.timedOut)
+                errorMessage = "画面の変化が安定する前に確認期限を超えました。反映後に「撮り直す」で再確認してください。"
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -532,26 +562,71 @@ final class VisionSession: ObservableObject {
         }
     }
 
-    private func captureCopilotProgressAttachment() async throws -> ScreenshotAttachment {
+    private func captureCopilotProgressAttachment(
+        baseline: ScreenshotAttachment
+    ) async throws -> CopilotProgressCaptureOutcome {
         let displayID = copilotCaptureDisplayID()
         let captureService = ScreenshotCaptureService()
-        let first = try await captureService.captureFullScreen(displayID: displayID)
-        try Task.checkCancellation()
+        var lastChangedCapture: ScreenshotAttachment?
+        var previousChangedCapture: ScreenshotAttachment?
+        var changeDetected = false
+        var stableComparisons = 0
 
-        try await Task.sleep(nanoseconds: 700_000_000)
-        let second = try await captureService.captureFullScreen(displayID: displayID)
-        try Task.checkCancellation()
-        if await Self.capturePixelsMatch(first.url, second.url) {
-            Self.removeDiscardedCapture(first)
-            return second
+        for attempt in 0..<Self.copilotCaptureMaxAttempts {
+            let current = try await captureService.captureFullScreen(displayID: displayID)
+            try Task.checkCancellation()
+
+            if !changeDetected {
+                let difference = await Self.captureDifferenceRatio(baseline.url, current.url)
+                if difference >= Self.copilotChangeThreshold {
+                    changeDetected = true
+                    lastChangedCapture = current
+                    setCopilotCaptureState(.settling)
+                    NSLog("[Copilot] progress change detected (diff=%.4f, attempt=%d)", difference, attempt + 1)
+                } else {
+                    Self.removeDiscardedCapture(current)
+                }
+            } else if let previousChangedCapture {
+                let difference = await Self.captureDifferenceRatio(previousChangedCapture.url, current.url)
+                if difference <= Self.copilotStableThreshold {
+                    stableComparisons += 1
+                } else {
+                    stableComparisons = 0
+                }
+                if let previous = lastChangedCapture, previous.id != previousChangedCapture.id {
+                    Self.removeDiscardedCapture(previous)
+                }
+                lastChangedCapture = current
+                if stableComparisons >= Self.copilotCaptureSettleComparisons {
+                    Self.removeDiscardedCapture(previousChangedCapture)
+                    NSLog("[Copilot] progress screen stabilized (diff=%.4f, attempt=%d)", difference, attempt + 1)
+                    return .stable(current)
+                }
+            }
+
+            if let changed = lastChangedCapture, changed.id != previousChangedCapture?.id {
+                if let previousChangedCapture {
+                    Self.removeDiscardedCapture(previousChangedCapture)
+                }
+                previousChangedCapture = changed
+            }
+
+            if attempt < Self.copilotCaptureMaxAttempts - 1 {
+                try await Task.sleep(nanoseconds: Self.copilotCaptureSampleDelayNanoseconds)
+            }
         }
 
-        try await Task.sleep(nanoseconds: 700_000_000)
-        let third = try await captureService.captureFullScreen(displayID: displayID)
-        try Task.checkCancellation()
-        Self.removeDiscardedCapture(first)
-        Self.removeDiscardedCapture(second)
-        return third
+        if let lastChangedCapture {
+            Self.removeDiscardedCapture(lastChangedCapture)
+        }
+        if let previousChangedCapture, previousChangedCapture.id != lastChangedCapture?.id {
+            Self.removeDiscardedCapture(previousChangedCapture)
+        }
+        NSLog(
+            "[Copilot] progress capture timed out (%@)",
+            changeDetected ? "screen never settled" : "screen never changed"
+        )
+        return .timedOut
     }
 
     private func copilotCaptureDisplayID() -> CGDirectDisplayID {
@@ -569,12 +644,64 @@ final class VisionSession: ObservableObject {
         return CGMainDisplayID()
     }
 
-    private nonisolated static func capturePixelsMatch(_ lhs: URL, _ rhs: URL) async -> Bool {
+    private func setCopilotCaptureState(_ state: CopilotCaptureState) {
+        guard copilotCaptureState != state else { return }
+        copilotCaptureState = state
+        NSLog("[Copilot] progress state -> %@", String(describing: state))
+    }
+
+    private nonisolated static func captureDifferenceRatio(_ lhs: URL, _ rhs: URL) async -> Double {
         await Task.detached(priority: .utility) {
-            guard let left = try? Data(contentsOf: lhs),
-                  let right = try? Data(contentsOf: rhs) else { return false }
-            return left == right
+            guard let left = grayscalePixels(at: lhs),
+                  let right = grayscalePixels(at: rhs),
+                  left.count == right.count,
+                  !left.isEmpty else { return 1 }
+            let totalDifference = zip(left, right).reduce(0) { partial, pair in
+                partial + abs(Int(pair.0) - Int(pair.1))
+            }
+            let maxDifference = left.count * 255
+            guard maxDifference > 0 else { return 1 }
+            return Double(totalDifference) / Double(maxDifference)
         }.value
+    }
+
+    private nonisolated static func grayscalePixels(at url: URL) -> [UInt8]? {
+        guard let data = try? Data(contentsOf: url),
+              let source = NSBitmapImageRep(data: data),
+              let image = source.cgImage,
+              let context = CGContext(
+                  data: nil,
+                  width: copilotComparisonSide,
+                  height: copilotComparisonSide,
+                  bitsPerComponent: 8,
+                  bytesPerRow: copilotComparisonSide,
+                  space: CGColorSpaceCreateDeviceGray(),
+                  bitmapInfo: CGImageAlphaInfo.none.rawValue
+              )
+        else {
+            return nil
+        }
+        context.interpolationQuality = .low
+        context.draw(
+            image,
+            in: CGRect(
+                x: 0,
+                y: 0,
+                width: copilotComparisonSide,
+                height: copilotComparisonSide
+            )
+        )
+        guard let buffer = context.data else { return nil }
+        let pointer = buffer.bindMemory(
+            to: UInt8.self,
+            capacity: copilotComparisonSide * copilotComparisonSide
+        )
+        return Array(
+            UnsafeBufferPointer(
+                start: pointer,
+                count: copilotComparisonSide * copilotComparisonSide
+            )
+        )
     }
 
     private nonisolated static func removeDiscardedCapture(_ attachment: ScreenshotAttachment) {
@@ -892,6 +1019,7 @@ final class VisionSession: ObservableObject {
         navigatorActiveTask = nil
         isExecutingNavigatorAction = false
         isCopilotChecking = false
+        copilotCaptureState = .idle
         liveNavigatorHighlight = nil
         HighlightOverlayPresenter.shared.hide()
     }
