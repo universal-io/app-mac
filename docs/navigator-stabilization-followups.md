@@ -91,6 +91,10 @@ baseline として維持し、GA4 の1ユースケースだけを新しい実行
 - `eval:navigator:capture-v3` はローカルの既存設定を読み、現行 `runNavigateStream` をそのまま
   通してplanner結果・モデルID・未版管理pack ID・遅延・tokenをresult JSONへ保存する。
   評価用に別promptを複製しないため、将来の比較baselineも実運用経路とのドリフトを避けられる。
+- 初回v3 captureでfixture自体の過剰制約を検出した。画面上で既に展開済みの「レポート」を
+  再度開く期待手順は誤りなので、candidateに `expanded/selected/...` 状態を追加して除外。
+  goalも表層文字列の完全一致ではなく、正解として明示した同義語グループのいずれかで採点する。
+  評価器の誤判定をモデルの失敗として数えないことを、モデル比較より優先する。
 
 ## 1. 現行実装の事実（検証開始点）
 

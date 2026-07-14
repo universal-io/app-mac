@@ -20,7 +20,7 @@
           "transition_state": "stable",
           "ocr_text": "レポート ユーザー属性 テクノロジー 概要",
           "candidates": [
-            { "id": "ax:reports", "source": "ax", "role": "button", "label": "レポート" },
+            { "id": "ax:reports", "source": "ax", "role": "button", "label": "レポート", "states": ["expanded"] },
             { "id": "ax:demographics", "source": "ax", "role": "button", "label": "ユーザー属性" },
             { "id": "ax:tech", "source": "ax", "role": "button", "label": "テクノロジー" }
           ]
@@ -29,8 +29,8 @@
       "expected": {
         "planner": {
           "feasible": true,
-          "goal_contains": ["国", "地域"],
-          "target_sequence": ["レポート", "ユーザー属性", "ユーザー属性の詳細"]
+          "goal_term_groups": [["国"], ["地域"]],
+          "target_sequence": ["ユーザー属性", "ユーザー属性の詳細"]
         }
       }
     },
@@ -51,7 +51,7 @@
           "transition_state": "stable",
           "ocr_text": "レポート ユーザー属性 テクノロジー",
           "candidates": [
-            { "id": "ax:reports", "source": "ax", "role": "button", "label": "レポート" },
+            { "id": "ax:reports", "source": "ax", "role": "button", "label": "レポート", "states": ["expanded"] },
             { "id": "ax:demographics", "source": "ax", "role": "button", "label": "ユーザー属性" },
             { "id": "ax:tech", "source": "ax", "role": "button", "label": "テクノロジー" }
           ]
@@ -60,8 +60,8 @@
       "expected": {
         "planner": {
           "feasible": true,
-          "goal_contains": ["デバイス"],
-          "target_sequence": ["レポート", "テクノロジー", "ユーザーの環境の詳細"]
+          "goal_term_groups": [["デバイス", "mobile", "desktop"]],
+          "target_sequence": ["テクノロジー", "ユーザーの環境の詳細"]
         }
       }
     },

@@ -51,12 +51,13 @@ export function scoreNavigatorSuite(
         expected: expected.feasible,
         actual: actual?.planner?.feasible,
       });
-      for (const fragment of expected.goal_contains) {
+      for (const alternatives of expected.goal_term_groups) {
+        const actualGoal = normalized(actual?.planner?.goal ?? "");
         assertions.push({
           role: "planner",
-          name: `goal_contains:${fragment}`,
-          passed: normalized(actual?.planner?.goal ?? "").includes(normalized(fragment)),
-          expected: fragment,
+          name: `goal_any_of:${alternatives.join("|")}`,
+          passed: alternatives.some((fragment) => actualGoal.includes(normalized(fragment))),
+          expected: alternatives,
           actual: actual?.planner?.goal,
         });
       }

@@ -16,6 +16,9 @@ export const candidateSchema = z.strictObject({
   label: nonEmpty,
   rect: rectSchema.optional(),
   parent_label: nonEmpty.optional(),
+  states: z
+    .array(z.enum(["selected", "expanded", "collapsed", "disabled", "focused", "loading"]))
+    .default([]),
 });
 
 export const observationSchema = z.strictObject({
@@ -33,7 +36,7 @@ export const observationSchema = z.strictObject({
 
 const plannerExpectationSchema = z.strictObject({
   feasible: z.boolean(),
-  goal_contains: z.array(nonEmpty).default([]),
+  goal_term_groups: z.array(z.array(nonEmpty).min(1)).default([]),
   target_sequence: z.array(nonEmpty).default([]),
 });
 
