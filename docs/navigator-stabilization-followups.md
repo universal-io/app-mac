@@ -150,7 +150,9 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
 最初に admin/runtime で実際の値を確認する。
 
 - 自動初手（画面認識1文）: Groq `qwen/qwen3.6-27b`（non-thinking。失敗時はmainへ1回fallback）
-- 通常質問・プランナー・ロケーター補追: OpenAI `gpt-5.4-mini`
+- 通常質問・ロケーター補追: OpenAI `gpt-5.4-mini`
+- Planner / Grounder: 既定では通常質問のvendor/modelを継承する。役割別envで独立上書きでき、
+  実効値・role別tokenはadmin/usage metadataで追跡する。
 
 したがって「Copilot が全て Groq」ではない。速度優先は自動初手に限定され、
 タスク計画と進捗判定は既定でメインモデルが担当する。
@@ -206,8 +208,10 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
 
 #### P1（比較の帰属と再現性を壊す）
 
-- 本文、planner、locator supplement が同じ model ID に束ねられ、役割別の成否を
-  分離できない。step verifier も独立せず本文回答と `[[step:done]]` を兼用。
+- ~~本文、planner、grounderが同じmodel IDに束ねられ、役割別の成否を分離できない。~~
+  **2026-07-14部分解消**: Planner/Grounderは独立env、実効設定、role別token metadataを持つ。
+  locator supplementは本文モデルを継承し、step verifierは未実装のため本文回答と
+  `[[step:done]]` をまだ兼用する。
 - planner と locator の失敗は best-effort で握りつぶされ、planner の token / 成否 / 失敗理由は
   usage に記録されない。比較時のコストと失敗箇所を誤帰属する。
 - クライアントは URL hint を送らず、セッション開始時の app / window title を

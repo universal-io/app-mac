@@ -28,7 +28,7 @@ export async function assertAdmin(request: Request): Promise<{ email: string }> 
 // comes from an env override or the code default — the 2026-07-06 incident
 // (a forgotten navigate model override) is caught at a glance here.
 
-export type ConfigSource = "env" | "default";
+export type ConfigSource = "env" | "default" | "inherited";
 
 export type ModelConfigRow = {
   /** Operation label, e.g. "review（既定）". */
@@ -87,6 +87,20 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
         modelId: env.navigateFastModelId,
         modelSource: sourceOf("BOMB_SQUAD_NAVIGATE_FAST_MODEL_ID"),
       },
+      {
+        label: "navigate（Planner）",
+        vendor: env.navigatePlannerModelVendor,
+        vendorSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_VENDOR"),
+        modelId: env.navigatePlannerModelId,
+        modelSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_ID"),
+      },
+      {
+        label: "navigate（Grounder）",
+        vendor: env.navigateGrounderModelVendor,
+        vendorSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_VENDOR"),
+        modelId: env.navigateGrounderModelId,
+        modelSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID"),
+      },
     ],
     freeMonthlyLimit: {
       value: freePlan?.monthlyUsageLimit ?? null,
@@ -105,4 +119,8 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
  * as getServerEnv), "default" otherwise. */
 function sourceOf(name: string): ConfigSource {
   return process.env[name]?.trim() ? "env" : "default";
+}
+
+function roleSourceOf(name: string): ConfigSource {
+  return process.env[name]?.trim() ? "env" : "inherited";
 }

@@ -91,6 +91,15 @@ Server-only vars:
 - `BOMB_SQUAD_DEFAULT_MODEL_VENDOR`
 - `BOMB_SQUAD_DEFAULT_MODEL_ID`
 - `BOMB_SQUAD_VISION_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_FAST_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_FAST_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_V4_ENABLED`
 - ~~`BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT`~~ **廃止（2026-07-08）**: free 枠上限は DB の
   `bs_plans` テーブルが正本（migration 0004。env にコピーを持たない）
 - `OPENAI_API_KEY`
@@ -108,6 +117,7 @@ Rules:
 - `SUPABASE_ANON_KEY` is available to both product site and client auth flows.
 - `SUPABASE_SERVICE_ROLE_KEY` is server-only.
 - Provider keys stay server-only.
+- Planner/Grounderの役割別model envが未設定なら、通常Navigateのvendor/modelを継承する。
 
 ## API Conventions
 

@@ -120,6 +120,7 @@ function EffectiveConfigSection({ config }: { config: EffectiveConfig }) {
         <tbody>
           {config.models.map((m) => {
             const overridden = m.vendorSource === "env" || m.modelSource === "env";
+            const inherited = m.vendorSource === "inherited" && m.modelSource === "inherited";
             return (
               <tr
                 key={m.label}
@@ -130,7 +131,7 @@ function EffectiveConfigSection({ config }: { config: EffectiveConfig }) {
                 <Cell mono>{m.modelId}</Cell>
                 <Cell>
                   <span className={overridden ? "font-semibold text-iris" : "text-slate"}>
-                    {overridden ? "env 上書き" : "コード既定"}
+                    {overridden ? "env 上書き" : inherited ? "navigate 継承" : "コード既定"}
                   </span>
                 </Cell>
               </tr>
