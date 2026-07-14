@@ -100,6 +100,8 @@ Server-only vars:
 - `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_VENDOR`
 - `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID`
 - `BOMB_SQUAD_NAVIGATE_V4_ENABLED`
+- `BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`（v4 Run snapshot専用、32 byte以上。provider / Supabase
+  keyとの共用禁止。flag有効時に未設定ならfallbackせず`RUN_SIGNING_UNAVAILABLE`）
 - ~~`BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT`~~ **廃止（2026-07-08）**: free 枠上限は DB の
   `bs_plans` テーブルが正本（migration 0004。env にコピーを持たない）
 - `OPENAI_API_KEY`
@@ -721,13 +723,13 @@ v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriter�
 ```json
 {
   "run_snapshot": {
+    "schema_version": 1,
     "run_id": "uuid",
     "pack": { "id": "ga4", "version": "1" },
     "plan": {
       "id": "uuid",
       "version": 1,
       "hash": "sha256:...",
-      "signature": "gateway-signed-token",
       "task": {
         "goal": "...",
         "steps": [
@@ -744,7 +746,8 @@ v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriter�
     "current_step": 0,
     "status": "active",
     "revision": 3,
-    "expires_at": "ISO 8601 UTC"
+    "expires_at": "ISO 8601 UTC",
+    "signature": "v1.base64url-hmac-sha256"
   }
 }
 ```
@@ -754,11 +757,14 @@ v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriter�
   revision / created_at / updated_at / expires_at` だけを保存する。
 - clientが送ったrevision、plan hash/signatureがrun rowと一致しない場合はstepを進めない。
   Gatewayは最新snapshotを返し、clientは再同期する。client単独の`current_step`更新は禁止。
+- signatureはTaskだけでなくpack/plan identity、step、status、revision、expiryを含むsnapshot全体を
+  HMAC-SHA256で保護する。検証は形検査→署名→Task hash→認証scope付きrun row照合の順で行う。
 - `status` は `active / ambiguous / blocked / complete / cancelled / expired`。active/terminalとも
   最終操作から24時間以内にpurgeする。
 - screenshot、OCR、candidate label/rect、会話、モデル自由文はrun row/usage traceへ保存しない。
   signed Task snapshotはclientが輸送し、server rowにはhashだけを置く。
-- `0005_navigator_runs.sql` とGateway内部repositoryまでは実装済み。migration適用、公開route、
+- `0005_navigator_runs.sql`、Gateway内部repository、署名／改ざん検知の純粋契約までは実装済み。
+  migration適用、公開route、
   macOS client接続は未実施であり、現行v3の実行状態にはまだ影響しない。
 - step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
   strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。

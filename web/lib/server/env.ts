@@ -23,6 +23,9 @@ export type ServerEnv = {
   navigateGrounderModelId: string;
   /** Enables additive v4 role outputs; false keeps the v3 UX path intact. */
   navigateV4Enabled: boolean;
+  /** HMAC key for client-carried v4 Run snapshots. Required only when the
+   * shadow Run API is enabled; never reuse a provider or Supabase key. */
+  navigateRunSigningSecret: string | null;
   /** Lowercased emails allowed into /admin (docs/admin-dashboard-plan.md §2). */
   adminEmails: string[];
 };
@@ -84,6 +87,9 @@ export function getServerEnv(): ServerEnv {
       normalize(process.env.BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID) ??
       navigateModelId,
     navigateV4Enabled: parseBoolean(process.env.BOMB_SQUAD_NAVIGATE_V4_ENABLED),
+    navigateRunSigningSecret: normalize(
+      process.env.BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET,
+    ),
     // Comma-separated allowlist for the admin console (v0 authorization;
     // admin-dashboard-plan §2). Empty list means nobody is an admin.
     adminEmails: parseEmailList(process.env.ADMIN_EMAILS),

@@ -158,6 +158,9 @@ GA4 1経路に必要なcreate/read/advance/cancel/expireとtenant隔離、本文
 - [x] Run保存基盤: `0005_navigator_runs.sql` とservice-role専用repositoryを追加。tenant/user scope、
   revisionのcompare-and-swap、最終更新から24時間のTTL、expire/purge、本文非保存、store障害時の
   fail-closedを実装した。migrationはまだ環境へ適用せず、API/clientも未接続。
+- [x] 署名契約: Taskをstrict schemaへ正規化してSHA-256 hashをrowへ固定し、Task本文を含むsnapshot
+  全体を専用HMAC keyで署名する。改ざん、stale revision、rowとのidentity不一致、短い／未設定keyは
+  fail-closed。postconditionは段階Dまで空配列だけを許可する。
 - [ ] Run API接続: feature flag下でcreate/read/cancelと署名付きTask snapshot検証を追加する。
   Verifierによるadvanceが無い段階では、既存Copilotの正本をRunへ切り替えない。
 
