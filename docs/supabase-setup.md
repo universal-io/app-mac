@@ -19,7 +19,7 @@ Database naming rule:
 - Bomb Squad-owned tables use the `bs_` prefix.
 - Existing tables from other projects are left untouched.
 
-## Current Migration Files（本番適用済み: 0001〜0004、0005は未適用）
+## Current Migration Files（本番適用済み: 0001〜0004、0005〜0006は未適用）
 
 - `supabase/migrations/0001_bs_core_schema.sql` — コアスキーマ:
   `bs_tenants` / `bs_profiles` / `bs_tenant_members` / `bs_entitlements` /
@@ -35,6 +35,8 @@ Database naming rule:
   機能ゲート無し。プラン変更はこのテーブルの行を編集する（env・コードにコピーを持たない）**。
 - `supabase/migrations/0005_navigator_runs.sql` — **未適用**。Navigator v4の24時間一時Run状態。
   service-roleだけが使用し、画像・OCR・会話・Task本文は保存しない。v4を有効にする前に適用する。
+- `supabase/migrations/0006_harness_pack_versions.sql` — **未適用**。Capability Packの版・有効版制約と
+  GA4 Pack v1（安定recipe/step ID＋国・地域経路postcondition）。0005の後に適用する。
 
 ## Secrets Needed Later
 
@@ -73,7 +75,7 @@ Optional fallback path when launching the built app outside the repo:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`（Navigator v4専用、32 byte以上。既存keyとの共用禁止）
 
-Navigator v4を検証する時は、0005適用後にGateway環境へ署名鍵を設定・再deployし、最後に
+Navigator v4を検証する時は、0005→0006適用後にGateway環境へ署名鍵を設定・再deployし、最後に
 `BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`を設定する。この順序を逆にするとRunは開始せず、clientは
 `STATE_FALLBACK`警告を表示してv3へ継続する。新規サービス契約は不要。
 

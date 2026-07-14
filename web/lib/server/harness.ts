@@ -16,6 +16,10 @@ import {
   dataFallbackNotice,
   type OperationalNotice,
 } from "@/lib/server/operational-notice";
+import {
+  navigatePostconditionsSchema,
+  type NavigatePostcondition,
+} from "@/lib/server/navigate-postcondition";
 
 export type NavigateHints = {
   app_name?: string;
@@ -26,9 +30,11 @@ export type NavigateHints = {
 /** One step of a task recipe. `target` is the exact on-screen label the
  * client resolves via OCR/AX; `fill` is approval-driven text entry. */
 export type RecipeStep = {
+  id: string;
   verbal: string;
   target?: string;
   fill?: string;
+  postconditions: NavigatePostcondition[];
 };
 
 /** A known multi-step path through the tool's UI. Recipes are deterministic
@@ -37,12 +43,14 @@ export type RecipeStep = {
  * golden-set case. Placeholders like {ページパス} mark values the planner
  * must substitute from the user's actual question. */
 export type Recipe = {
+  id: string;
   goal: string;
   steps: RecipeStep[];
 };
 
 export type Harness = {
   id: string;
+  version: string;
   promptBlock: string;
   recipes?: Recipe[];
   operationalNotices?: OperationalNotice[];
@@ -67,6 +75,7 @@ export async function selectHarness(hints?: NavigateHints): Promise<Harness | nu
     if (pack.matchTerms.some((term) => haystack.includes(term))) {
       return {
         id: pack.id,
+        version: pack.version,
         promptBlock: pack.promptBlock,
         recipes: pack.recipes,
         operationalNotices: loaded.notice ? [loaded.notice] : undefined,
@@ -114,7 +123,7 @@ async function loadGlobalPacks(): Promise<{
     const admin = getSupabaseAdminClient();
     const { data, error } = await admin
       .from("bs_harness_packs")
-      .select("tool_id, match_hints, ui_map, recipes, prompt")
+      .select("tool_id, pack_version, match_hints, ui_map, recipes, prompt")
       .eq("scope", "global")
       .eq("enabled", true);
     if (error) {
@@ -139,6 +148,7 @@ async function loadGlobalPacks(): Promise<{
 
 type PackRow = {
   tool_id: string | null;
+  pack_version: string | null;
   match_hints: unknown;
   ui_map: string | null;
   recipes: unknown;
@@ -149,7 +159,8 @@ type PackRow = {
  * than throwing: one bad row must not disable every pack. */
 function packFromRow(row: PackRow): MatchableHarness | null {
   const id = row.tool_id?.trim();
-  if (!id) return null;
+  const version = row.pack_version?.trim();
+  if (!id || !version) return null;
 
   // match_hints contract: {"contains": ["analytics.google.com", ...]} —
   // case-insensitive substring match, mirroring the historical inline checks.
@@ -161,7 +172,13 @@ function packFromRow(row: PackRow): MatchableHarness | null {
     .join("\n\n");
   if (!promptBlock) return null;
 
-  return { id, promptBlock, matchTerms, recipes: parseRecipes(row.recipes) };
+  return {
+    id,
+    version,
+    promptBlock,
+    matchTerms,
+    recipes: parseRecipes(row.recipes),
+  };
 }
 
 function parseMatchTerms(value: unknown): string[] {
@@ -178,23 +195,36 @@ function parseMatchTerms(value: unknown): string[] {
 function parseRecipes(value: unknown): Recipe[] | undefined {
   if (!Array.isArray(value) || value.length === 0) return undefined;
   const recipes: Recipe[] = [];
-  for (const raw of value) {
+  for (const [recipeIndex, raw] of value.entries()) {
     if (typeof raw !== "object" || raw === null) return undefined;
-    const recipe = raw as { goal?: unknown; steps?: unknown };
+    const recipe = raw as { id?: unknown; goal?: unknown; steps?: unknown };
     if (typeof recipe.goal !== "string" || !recipe.goal.trim()) return undefined;
     if (!Array.isArray(recipe.steps) || recipe.steps.length === 0) return undefined;
-    const steps: RecipeStep[] = [];
+    const recipeId = typeof recipe.id === "string" && recipe.id.trim()
+      ? recipe.id.trim()
+      : `legacy-recipe-${recipeIndex + 1}`;
+    const steps: RecipeStepInput[] = [];
     for (const rawStep of recipe.steps) {
       if (typeof rawStep !== "object" || rawStep === null) return undefined;
-      const step = rawStep as { verbal?: unknown; target?: unknown; fill?: unknown };
+      const step = rawStep as {
+        verbal?: unknown;
+        target?: unknown;
+        fill?: unknown;
+        postconditions?: unknown;
+      };
       if (typeof step.verbal !== "string" || !step.verbal.trim()) return undefined;
+      const parsedPostconditions = navigatePostconditionsSchema.safeParse(
+        step.postconditions ?? [],
+      );
+      if (!parsedPostconditions.success) return undefined;
       steps.push({
         verbal: step.verbal.trim(),
         target: typeof step.target === "string" && step.target.trim() ? step.target.trim() : undefined,
         fill: typeof step.fill === "string" && step.fill ? step.fill : undefined,
+        postconditions: parsedPostconditions.data,
       });
     }
-    recipes.push({ goal: recipe.goal.trim(), steps });
+    recipes.push(versionedRecipe(recipeId, recipe.goal.trim(), steps));
   }
   return recipes;
 }
@@ -204,7 +234,29 @@ function parseRecipes(value: unknown): Recipe[] | undefined {
 // the table is empty or unreachable. Keep them in sync with the seeded data
 // until the admin console owns pack editing (admin-dashboard-plan v1).
 
-// GA4 (Google Analytics 4) pack v0.
+type RecipeStepInput = Omit<RecipeStep, "id" | "postconditions"> & {
+  postconditions?: NavigatePostcondition[];
+};
+
+type RecipeInput = { id: string; goal: string; steps: RecipeStepInput[] };
+
+function versionedRecipe(id: string, goal: string, steps: RecipeStepInput[]): Recipe {
+  return {
+    id,
+    goal,
+    steps: steps.map((step, index) => ({
+      ...step,
+      id: `${id}.step-${index + 1}`,
+      postconditions: step.postconditions ?? [],
+    })),
+  };
+}
+
+function versionedRecipes(recipes: RecipeInput[]): Recipe[] {
+  return recipes.map((recipe) => versionedRecipe(recipe.id, recipe.goal, recipe.steps));
+}
+
+// GA4 (Google Analytics 4) pack v1.
 // UI map + task recipes for the demo scenario ("あるページの直帰率を見たい").
 // Kept compact on purpose: the navigator must stay terse, the pack only has
 // to prevent the classic wrong turns (bounce rate is absent from default
@@ -212,6 +264,7 @@ function parseRecipes(value: unknown): Recipe[] | undefined {
 
 const GA4_HARNESS: MatchableHarness = {
   id: "ga4",
+  version: "1",
   // Chrome's window title for GA4 is just the tab title — "アナリティクス"
   // without "Google" — and the client sends no URL hint yet, so the bare
   // title must match too (the 2026-07-06 harness miss: no recipes, no
@@ -242,8 +295,9 @@ const GA4_HARNESS: MatchableHarness = {
   2. 探索 → 空白 → 指標に「直帰率」、ディメンションに「ページパスとスクリーンクラス」を追加して表を組む。
   3. 目安だけなら: 直帰率 = 100% − エンゲージメント率。
 - 流入元（チャネル別）を見る: レポート → ライフサイクル → 集客 → トラフィック獲得（セッションのデフォルトチャネルグループ）。`,
-  recipes: [
+  recipes: versionedRecipes([
     {
+      id: "page-metrics",
       goal: "特定ページの指標（表示回数・セッション・ユーザー数など）を見る",
       steps: [
         { verbal: "左端のナビで「レポート」を開く", target: "レポート" },
@@ -259,6 +313,7 @@ const GA4_HARNESS: MatchableHarness = {
       ],
     },
     {
+      id: "bounce-rate",
       goal: "直帰率を見る（既定レポートには無い指標）",
       steps: [
         { verbal: "左端のナビで「レポート」を開く", target: "レポート" },
@@ -274,6 +329,7 @@ const GA4_HARNESS: MatchableHarness = {
       ],
     },
     {
+      id: "traffic-acquisition",
       goal: "流入元（チャネル別のセッション数）を見る",
       steps: [
         { verbal: "左端のナビで「レポート」を開く", target: "レポート" },
@@ -283,11 +339,37 @@ const GA4_HARNESS: MatchableHarness = {
       ],
     },
     {
+      id: "demographics",
       goal: "訪問者の国・地域・言語を見る",
       steps: [
-        { verbal: "左端のナビで「レポート」を開く", target: "レポート" },
-        { verbal: "左メニューの「ユーザー属性」を開く", target: "ユーザー属性" },
-        { verbal: "「ユーザー属性の詳細」を開く（国別の表が出る）", target: "ユーザー属性の詳細" },
+        {
+          verbal: "左端のナビで「レポート」を開く",
+          target: "レポート",
+          postconditions: [{
+            kind: "candidate_present",
+            selector: { label: "ユーザー属性" },
+          }],
+        },
+        {
+          verbal: "左メニューの「ユーザー属性」を開く",
+          target: "ユーザー属性",
+          postconditions: [{
+            kind: "candidate_present",
+            selector: { label: "ユーザー属性の詳細", parent_label: "ユーザー属性" },
+          }],
+        },
+        {
+          verbal: "「ユーザー属性の詳細」を開く（国別の表が出る）",
+          target: "ユーザー属性の詳細",
+          postconditions: [
+            { kind: "environment_matches", url_contains: "/reports/demographics-details" },
+            {
+              kind: "candidate_present",
+              selector: { label: "ユーザー属性の詳細", role: "heading" },
+            },
+            { kind: "candidate_present", selector: { label: "国" } },
+          ],
+        },
         {
           verbal:
             "表のディメンション（列見出しのプルダウン）で「国」「地域」「市区町村」「言語」を切り替えて読み取る",
@@ -295,6 +377,7 @@ const GA4_HARNESS: MatchableHarness = {
       ],
     },
     {
+      id: "device-category",
       goal: "デバイス別（モバイル/デスクトップ）の利用状況を見る",
       steps: [
         { verbal: "左端のナビで「レポート」を開く", target: "レポート" },
@@ -306,7 +389,20 @@ const GA4_HARNESS: MatchableHarness = {
         },
       ],
     },
-  ],
+  ]),
 };
 
 const SEED_HARNESSES: MatchableHarness[] = [GA4_HARNESS];
+
+/** Stable built-in Pack access for evals and contract tests. Runtime matching
+ * still goes through selectHarness so DB/fallback notices remain accurate. */
+export function builtInHarness(id: string): Harness | null {
+  const harness = SEED_HARNESSES.find((candidate) => candidate.id === id);
+  if (!harness) return null;
+  return {
+    id: harness.id,
+    version: harness.version,
+    promptBlock: harness.promptBlock,
+    recipes: harness.recipes,
+  };
+}

@@ -146,7 +146,7 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 | A. 計測・入力契約 | eval、Observation、OCR/AX candidate、Grounder shadow | 完了 |
 | B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
 | C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **完了**（shadow、環境は未有効） |
-| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **進行中**（純粋rule実装、Pack ID接続が次） |
+| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **進行中**（Pack ID接続完了、Run shadow判定が次） |
 | E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | 未着手 |
 | F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
 | G. 一般化 | Slack / Notionで同じgateを通し、v3を削除 | GA4合格後 |
@@ -176,8 +176,11 @@ Pack v1 recipeへtyped postconditionを加え、モデルを呼ばない決定�
 - [x] typed postcondition / rule-first純粋契約: URL/title、candidate出現・消失・state、environment変化を
   strict schema化。stable・同一capture scopeだけを決定論評価し、verified/not_changed/ambiguous/
   blocked/completeと非本文reason code、evidence candidate IDを返す。空条件は必ずambiguous。
-- [ ] Pack v1 ID接続: recipe/stepを版付きIDで固定し、Planner自由文ではなく選択されたstep IDから
-  postconditionを署名Taskへ結び付ける。まずGA4国・地域経路だけを縦に通す。
+- [x] Pack v1 ID接続: `pack_version / recipe_id / step.id`を固定。v4 PlannerのID選択からGatewayが
+  正規stepとpostconditionを復元し、ID創作・逆順・別recipe混在を拒否する。GA4国・地域経路へ
+  URL/title/candidate根拠を付与し、DB用`0006_harness_pack_versions.sql`と組み込みfallbackを揃えた。
+- [ ] Run shadow判定: 現在stepのpostconditionとbefore/after Observationをrule Verifierへ渡し、
+  結果をtraceへ記録する。まずはshadow responseだけで、Run revision更新はgate確認後に接続する。
 
 #### v4 Observation実装（2026-07-14開始）
 

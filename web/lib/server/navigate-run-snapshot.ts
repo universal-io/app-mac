@@ -3,6 +3,10 @@ import { z } from "zod";
 
 import { GatewayError } from "@/lib/server/gateway";
 import type { NavigateRun } from "@/lib/server/navigate-run";
+import {
+  navigatePostconditionsSchema,
+  type NavigatePostcondition,
+} from "@/lib/server/navigate-postcondition";
 
 export const NAVIGATE_RUN_PROPOSAL_TTL_MS = 10 * 60 * 1_000;
 
@@ -11,12 +15,11 @@ const taskStepSchema = z.object({
   verbal: z.string().min(1).max(300),
   target: z.string().min(1).max(120).nullable(),
   fill: z.string().max(500).nullable(),
-  // Milestone D replaces this deliberately empty placeholder with typed
-  // postconditions. Arbitrary model objects must never enter a signed Task.
-  postconditions: z.array(z.never()).length(0),
+  postconditions: navigatePostconditionsSchema,
 }).strict();
 
 const taskSchema = z.object({
+  recipe_id: z.string().min(1).max(120).nullable(),
   goal: z.string().min(1).max(200),
   steps: z.array(taskStepSchema).min(1).max(8),
 }).strict();
@@ -65,21 +68,29 @@ export type SignedNavigateRunProposal = z.infer<typeof signedProposalSchema>;
 type ProposalAuth = { tenantId: string; userId: string };
 
 type ProposedTask = {
+  recipeId?: string;
   goal: string;
-  steps: Array<{ verbal: string; target?: string; fill?: string }>;
+  steps: Array<{
+    id?: string;
+    verbal: string;
+    target?: string;
+    fill?: string;
+    postconditions?: NavigatePostcondition[];
+  }>;
 };
 
 /** Converts Planner output into the only Task shape milestone C may sign.
  * Step IDs are positional because a plan is immutable once hashed. */
 export function materializeSnapshotTask(task: ProposedTask): NavigateSnapshotTask {
   return taskSchema.parse({
+    recipe_id: task.recipeId ?? null,
     goal: task.goal,
     steps: task.steps.map((step, index) => ({
-      id: `step-${index + 1}`,
+      id: step.id ?? `step-${index + 1}`,
       verbal: step.verbal,
       target: step.target ?? null,
       fill: step.fill ?? null,
-      postconditions: [],
+      postconditions: step.postconditions ?? [],
     })),
   });
 }

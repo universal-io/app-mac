@@ -14,6 +14,7 @@ import {
   type NavigateHints,
   type Recipe,
 } from "@/lib/server/harness";
+import type { NavigatePostcondition } from "@/lib/server/navigate-postcondition";
 import type { OutputLanguageCode } from "@/lib/server/prompts";
 import {
   groundObservationCandidate,
@@ -56,9 +57,12 @@ export type NavigateMessage = {
 };
 
 export type NavigateTaskStep = {
+  /** Stable Pack v1 identity. Absent on legacy/custom v3 plans. */
+  id?: string;
   verbal: string;
   target?: string;
   fill?: string;
+  postconditions?: NavigatePostcondition[];
 };
 
 /** The session's plan (docs/navigator-copilot-plan.md §3-a). Created once by
@@ -66,6 +70,7 @@ export type NavigateTaskStep = {
  * gateway stays stateless. `currentStep` advances client-side on the
  * [[step:done]] marker. */
 export type NavigateTask = {
+  recipeId?: string;
   goal: string;
   steps: NavigateTaskStep[];
   currentStep: number;
@@ -81,6 +86,7 @@ export type NavigateEngineInput = {
 export type NavigateEngineOutput = {
   text: string;
   harnessId: string | null;
+  harnessVersion: string | null;
   modelVendor: string;
   modelId: string;
   inputTokens: number;
@@ -202,6 +208,7 @@ export async function* runNavigateStream(
         imageDataURL: latestImage(input.messages),
         ocrText: latestOCR(input.messages),
         language: input.language,
+        requireRecipeIds: env.navigateV4Enabled,
       }).catch(() => ({
         ...EMPTY_PLANNER_EXECUTION,
         notices: [roleDegradedNotice("Planner")],
@@ -418,6 +425,7 @@ export async function* runNavigateStream(
     output: {
       text: fullText,
       harnessId: harness?.id ?? null,
+      harnessVersion: harness?.version ?? null,
       modelVendor: vendor,
       modelId,
       inputTokens,
@@ -520,22 +528,43 @@ const LOCATOR_SUPPLEMENT_INSTRUCTION = `あなたの直前の回答が、ユー�
 
 // --- Planner ---------------------------------------------------------------
 
-function plannerSystemPrompt(recipes: Recipe[], language: OutputLanguageCode): string {
+function plannerSystemPrompt(
+  recipes: Recipe[],
+  language: OutputLanguageCode,
+  requireRecipeIds: boolean,
+): string {
+  const promptRecipes = recipes.map((recipe) => ({
+    ...(requireRecipeIds ? { id: recipe.id } : {}),
+    goal: recipe.goal,
+    steps: recipe.steps.map((step) => ({
+      ...(requireRecipeIds ? { id: step.id } : {}),
+      verbal: step.verbal,
+      target: step.target ?? null,
+      fill: step.fill ?? null,
+    })),
+  }));
+  const outputContract = requireRecipeIds
+    ? `{"feasible": true または false, "recipe_id": "採用したrecipe id（独自計画ならnull）", "goal": "達成する目的（1文）", "steps": [{"recipe_step_id": "採用したstep id（独自stepならnull）", "verbal": "ユーザーに見せる1ステップの説明", "target": "対象要素に画面上で表示されている文字列（不明なら null）", "fill": "入力欄に入れる文字列（入力操作でなければ null）"}]}`
+    : `{"feasible": true または false, "goal": "達成する目的（1文）", "steps": [{"verbal": "ユーザーに見せる1ステップの説明", "target": "対象要素に画面上で表示されている文字列（不明なら null）", "fill": "入力欄に入れる文字列（入力操作でなければ null）"}]}`;
+  const idRules = requireRecipeIds
+    ? `- レシピ採用時はrecipe_idと各recipe_step_idを必ず上記のIDからそのまま返す。すでに完了した前半stepのIDは省いてよいが、順序変更・別レシピ混在・ID創作は禁止。\n- 独自計画だけrecipe_id=null、recipe_step_id=nullにする。`
+    : "";
   return `あなたは Universal I/O の画面ナビゲーターのプランナーです。ユーザーの質問と画面から、目的を達成するための操作手順（Task）を作れるか判定し、作れる場合は手順を出力します。
 
 以下の「レシピ」はこのツールで確認済みの正しい手順です。質問に合致するレシピがあれば**そのまま採用**し、{…} のプレースホルダだけをユーザーの質問の値で置き換えてください（例: {ページパス} → /contact）。合致するレシピが無い場合のみ自分で手順を組み立てます。**その際、レシピの経路に引っ張られないこと**: 質問のトピック（何を知りたいか）に正しく対応するセクションを自分の知識で選ぶ。トピックとセクションの対応を間違えた手順（例: 国・地域を知りたいのにデバイス系のセクションへ誘導）は、もっともらしく見えても誤りです。確信が持てなければ feasible=false にする（間違った手順で連れ回すより、その場で質問に答える方がよい）。
 
 レシピ:
-${JSON.stringify(recipes, null, 1)}
+${JSON.stringify(promptRecipes, null, 1)}
 
 出力は次の JSON だけを返す（コードフェンス・前置き・説明文は一切なし）:
-{"feasible": true または false, "goal": "達成する目的（1文）", "steps": [{"verbal": "ユーザーに見せる1ステップの説明", "target": "対象要素に画面上で表示されている文字列（不明なら null）", "fill": "入力欄に入れる文字列（入力操作でなければ null）"}]}
+${outputContract}
 
 - feasible を false にするのは: 単発の説明で足りる質問（操作手順が不要）、この画面のツールと無関係、目的が曖昧で手順化できない場合。
 - steps は2〜8個。1ステップ=1操作。最後のステップは「目的の値・情報を読み取る」で終える。
 - **手順は必ず添付の画面の「今の状態」から始める**。すでに済んでいる操作（展開済みのメニュー・すでに開いているページ・すでに画面内に見えている項目への到達経路）をステップに含めない。レシピを採用する場合も、画面上ですでに満たされている前半のステップは省く。
 - 目的の項目が画面内にすでに見えているなら、最初のステップはそれを直接開くこと。
 - 展開済みのメニュー項目（直下に子項目が字下げされて見えている）を「押す」ステップを作らない（もう一度押すと閉じてしまう）。
+${idRules}
 - verbal は${LANGUAGE_PROMPT_NAMES[language]}で書く。`;
 }
 
@@ -552,6 +581,7 @@ async function planTask(args: {
   imageDataURL?: string;
   ocrText?: string;
   language: OutputLanguageCode;
+  requireRecipeIds: boolean;
 }): Promise<PlannerExecution> {
   const userParts: Array<Record<string, unknown>> = [
     { type: "text", text: `ユーザーの質問: ${args.question}` },
@@ -578,10 +608,13 @@ async function planTask(args: {
       response_format: navigatorResponseFormat(
         args.vendor,
         "navigator_task",
-        PLANNER_RESPONSE_SCHEMA,
+        args.requireRecipeIds ? PLANNER_RESPONSE_SCHEMA_V4 : PLANNER_RESPONSE_SCHEMA,
       ),
       messages: [
-        { role: "system", content: plannerSystemPrompt(args.recipes, args.language) },
+        {
+          role: "system",
+          content: plannerSystemPrompt(args.recipes, args.language, args.requireRecipeIds),
+        },
         { role: "user", content: userParts },
       ],
     }),
@@ -595,26 +628,89 @@ async function planTask(args: {
     usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
   return {
-    task: parsePlannedTask(json.choices?.[0]?.message?.content ?? ""),
+    task: parsePlannedTask(
+      json.choices?.[0]?.message?.content ?? "",
+      args.recipes,
+      args.requireRecipeIds,
+    ),
     inputTokens: json.usage?.prompt_tokens ?? 0,
     outputTokens: json.usage?.completion_tokens ?? 0,
     notices: [],
   };
 }
 
-/** Parse one complete JSON value, then enforce the bounded Task contract. */
-export function parsePlannedTask(content: string): NavigateTask | null {
+/** Parse one complete JSON value, then enforce the bounded Task contract.
+ * v4 recipe plans are reconstructed from Pack IDs; model-authored step prose
+ * is never trusted as the source of postconditions. */
+export function parsePlannedTask(
+  content: string,
+  recipes: Recipe[] = [],
+  requireRecipeIds = false,
+): NavigateTask | null {
   const parsed = parseJSONValue(content);
   if (typeof parsed !== "object" || parsed === null) return null;
-  const root = parsed as { feasible?: unknown; goal?: unknown; steps?: unknown };
+  const root = parsed as {
+    feasible?: unknown;
+    recipe_id?: unknown;
+    goal?: unknown;
+    steps?: unknown;
+  };
   if (root.feasible !== true) return null;
   if (typeof root.goal !== "string" || !root.goal.trim() || root.goal.length > 200) return null;
   if (!Array.isArray(root.steps) || root.steps.length < 2 || root.steps.length > 8) return null;
 
+  if (requireRecipeIds && root.recipe_id === undefined) return null;
+  if (typeof root.recipe_id === "string") {
+    const recipe = recipes.find((candidate) => candidate.id === root.recipe_id);
+    if (!recipe) return null;
+    const selected: Array<{ index: number; step: NavigateTaskStep }> = [];
+    for (const raw of root.steps) {
+      if (typeof raw !== "object" || raw === null) return null;
+      const modelStep = raw as { recipe_step_id?: unknown; fill?: unknown };
+      if (typeof modelStep.recipe_step_id !== "string") return null;
+      const index = recipe.steps.findIndex((step) => step.id === modelStep.recipe_step_id);
+      if (index < 0 || selected.some((item) => item.index >= index)) return null;
+      const canonical = recipe.steps[index];
+      let fill = canonical.fill;
+      if (fill?.includes("{")) {
+        if (
+          typeof modelStep.fill !== "string" ||
+          !modelStep.fill.trim() ||
+          modelStep.fill.length > 500 ||
+          modelStep.fill.includes("{")
+        ) return null;
+        fill = modelStep.fill;
+      }
+      selected.push({
+        index,
+        step: {
+          id: canonical.id,
+          verbal: canonical.verbal,
+          target: canonical.target,
+          fill,
+          postconditions: canonical.postconditions,
+        },
+      });
+    }
+    return {
+      recipeId: recipe.id,
+      goal: recipe.goal,
+      steps: selected.map((item) => item.step),
+      currentStep: 0,
+    };
+  }
+  if (requireRecipeIds && root.recipe_id !== null) return null;
+
   const steps: NavigateTaskStep[] = [];
   for (const raw of root.steps) {
     if (typeof raw !== "object" || raw === null) return null;
-    const step = raw as { verbal?: unknown; target?: unknown; fill?: unknown };
+    const step = raw as {
+      recipe_step_id?: unknown;
+      verbal?: unknown;
+      target?: unknown;
+      fill?: unknown;
+    };
+    if (requireRecipeIds && step.recipe_step_id !== null) return null;
     if (typeof step.verbal !== "string" || !step.verbal.trim() || step.verbal.length > 300) {
       return null;
     }
@@ -626,7 +722,12 @@ export function parsePlannedTask(content: string): NavigateTask | null {
       typeof step.fill === "string" && step.fill.trim() && step.fill.length <= 500
         ? step.fill
         : undefined;
-    steps.push({ verbal: step.verbal.trim(), target, fill });
+    steps.push({
+      verbal: step.verbal.trim(),
+      target,
+      fill,
+      ...(requireRecipeIds ? { postconditions: [] } : {}),
+    });
   }
   return { goal: root.goal.trim(), steps, currentStep: 0 };
 }
@@ -653,6 +754,33 @@ const PLANNER_RESPONSE_SCHEMA = {
     },
   },
   required: ["feasible", "goal", "steps"],
+  additionalProperties: false,
+};
+
+const PLANNER_RESPONSE_SCHEMA_V4 = {
+  type: "object",
+  properties: {
+    feasible: { type: "boolean" },
+    recipe_id: { type: ["string", "null"], maxLength: 120 },
+    goal: { type: "string", maxLength: 200 },
+    steps: {
+      type: "array",
+      minItems: 0,
+      maxItems: 8,
+      items: {
+        type: "object",
+        properties: {
+          recipe_step_id: { type: ["string", "null"], maxLength: 160 },
+          verbal: { type: "string", maxLength: 300 },
+          target: { type: ["string", "null"], maxLength: 120 },
+          fill: { type: ["string", "null"], maxLength: 500 },
+        },
+        required: ["recipe_step_id", "verbal", "target", "fill"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["feasible", "recipe_id", "goal", "steps"],
   additionalProperties: false,
 };
 

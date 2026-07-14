@@ -15,9 +15,18 @@ const SECRET = "test-only-signing-secret-with-at-least-32-bytes";
 
 function fixture() {
   const task = materializeSnapshotTask({
+    recipeId: "demographics",
     goal: "国別のユーザー数を見る",
     steps: [
-      { verbal: "ユーザー属性を開く", target: "ユーザー属性" },
+      {
+        id: "demographics.step-1",
+        verbal: "ユーザー属性を開く",
+        target: "ユーザー属性",
+        postconditions: [{
+          kind: "candidate_present",
+          selector: { label: "ユーザー属性の詳細" },
+        }],
+      },
       { verbal: "ユーザー属性の概要を開く", target: "概要" },
     ],
   });
@@ -91,10 +100,14 @@ describe("signed Navigator Run snapshot", () => {
     const verified = verifyNavigateRunSnapshot(signed, SECRET);
 
     expect(verified.plan.task.steps[0]).toMatchObject({
-      id: "step-1",
+      id: "demographics.step-1",
       target: "ユーザー属性",
-      postconditions: [],
+      postconditions: [{
+        kind: "candidate_present",
+        selector: { label: "ユーザー属性の詳細" },
+      }],
     });
+    expect(verified.plan.task.recipe_id).toBe("demographics");
     expect(() => assertSnapshotMatchesRun(verified, run)).not.toThrow();
   });
 

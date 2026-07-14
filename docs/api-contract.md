@@ -738,6 +738,7 @@ PlannerがTaskを提案したSSE resultには、flag有効時だけ`result.run_p
       "version": 1,
       "hash": "sha256:...",
       "task": {
+        "recipe_id": "demographics",
         "goal": "...",
         "steps": [
           {
@@ -790,6 +791,11 @@ rule-first Verifierはafterが`stable`かつbefore/afterのcapture scopeが同�
 満たせば`verified`（最終stepは`complete`）、disabled targetは`blocked`、可視状態が同一なら
 `not_changed`、不安定・矛盾・情報不足は`ambiguous`。`ambiguous`だけが将来のmodel Verifier対象で、
 空のpostconditionを完了扱いしてはならない。
+
+Pack v1では`pack_version / recipe_id / step.id`を安定IDとして固定する。v4 Plannerはrecipe採用時に
+これらのIDだけを選び、GatewayがPackの正規step（verbal/target/fill/postconditions）を復元する。
+モデルが返した同名の自由文からpostconditionを推測しない。ID創作、順序逆転、別recipe混在は
+Planner失敗として明示的にdegradeし、署名Taskへ入れない。
 
 #### POST /api/ai/navigate/run
 

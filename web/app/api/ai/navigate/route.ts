@@ -284,16 +284,19 @@ function streamingResponse(input: StreamingResponseInput): Response {
         const notices = [...finalOutput.notices];
         let runProposal: ReturnType<typeof createNavigateRunProposal> | null = null;
         const env = getServerEnv();
-        if (env.navigateV4Enabled && finalOutput.proposedTask && finalOutput.harnessId) {
+        if (
+          env.navigateV4Enabled &&
+          finalOutput.proposedTask &&
+          finalOutput.harnessId &&
+          finalOutput.harnessVersion
+        ) {
           try {
             runProposal = createNavigateRunProposal({
               tenantId: input.tenantId,
               userId: input.userId,
             }, {
               packId: finalOutput.harnessId,
-              // The existing harness schema is intentionally labelled as
-              // legacy until milestone D introduces typed Pack v1.
-              packVersion: "unversioned-v3",
+              packVersion: finalOutput.harnessVersion,
               task: finalOutput.proposedTask,
             }, env.navigateRunSigningSecret ?? "");
           } catch (error) {
@@ -321,6 +324,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
           metadata: {
             ...input.metadata,
             harness: finalOutput.harnessId,
+            harness_version: finalOutput.harnessVersion,
             // Marker adherence metrics (docs/navigator-copilot-plan.md §2-d):
             // has_locator tracks the highlight rate, locator_supplemented how
             // often the model missed the contract and enforcement kicked in.
