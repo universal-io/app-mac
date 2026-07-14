@@ -297,6 +297,11 @@ function streamingResponse(input: StreamingResponseInput): Response {
             // often the model missed the contract and enforcement kicked in.
             has_locator: finalOutput.hasLocator,
             locator_supplemented: finalOutput.locatorSupplemented,
+            grounder_attempted: finalOutput.groundingAttempted,
+            grounding_selected: Boolean(finalOutput.grounding),
+            grounding_method: finalOutput.grounding?.method,
+            grounding_input_tokens: finalOutput.groundingInputTokens,
+            grounding_output_tokens: finalOutput.groundingOutputTokens,
             task_proposed: Boolean(finalOutput.proposedTask),
           },
         });
@@ -316,6 +321,13 @@ function streamingResponse(input: StreamingResponseInput): Response {
                     fill: step.fill ?? null,
                   })),
                   current_step: finalOutput.proposedTask.currentStep,
+                }
+              : null,
+            grounding: finalOutput.grounding
+              ? {
+                  candidate_id: finalOutput.grounding.candidateId,
+                  confidence: finalOutput.grounding.confidence,
+                  method: finalOutput.grounding.method,
                 }
               : null,
           },

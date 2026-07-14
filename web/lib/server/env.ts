@@ -16,6 +16,8 @@ export type ServerEnv = {
   navigateModelId: string;
   navigateFastModelVendor: string;
   navigateFastModelId: string;
+  /** Enables additive v4 role outputs; false keeps the v3 UX path intact. */
+  navigateV4Enabled: boolean;
   /** Lowercased emails allowed into /admin (docs/admin-dashboard-plan.md §2). */
   adminEmails: string[];
 };
@@ -61,6 +63,7 @@ export function getServerEnv(): ServerEnv {
     navigateFastModelId:
       normalize(process.env.BOMB_SQUAD_NAVIGATE_FAST_MODEL_ID) ??
       "meta-llama/llama-4-scout-17b-16e-instruct",
+    navigateV4Enabled: parseBoolean(process.env.BOMB_SQUAD_NAVIGATE_V4_ENABLED),
     // Comma-separated allowlist for the admin console (v0 authorization;
     // admin-dashboard-plan §2). Empty list means nobody is an admin.
     adminEmails: parseEmailList(process.env.ADMIN_EMAILS),
@@ -77,4 +80,8 @@ function parseEmailList(value: string | undefined): string[] {
 function normalize(value: string | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
 }

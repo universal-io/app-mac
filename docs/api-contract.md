@@ -676,7 +676,10 @@ Expected future use:
   transition state、candidate件数/sourceだけを記録する。
 
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
-（`{"result": {"text", "harness", "task"}, "meta": {"model_id"}}`）。エラーは `error` イベント
+（`{"result": {"text", "harness", "task", "grounding"}, "meta": {"model_id"}}`）。
+feature flag下の `grounding` は `{candidate_id, confidence, method}` または `null` の加算フィールドで、
+`BOMB_SQUAD_NAVIGATE_V4_ENABLED` が未設定／falseの間は常に `null`。shadow期間は従来markerを
+置き換えない。エラーは `error` イベント
 または非 2xx の JSON（共通エラー契約）。`result.text` には決定論マーカー
 `[[target:ラベル]]` / `[[loc:x0,y0,x1,y1]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
 クライアント（`NavigatorLocator`）が抽出して OCR grounding と突き合わせる

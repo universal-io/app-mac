@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、v4 eval契約とGA4 smoke fixture作成済み）
+最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、v4 Observation/AXとGrounder shadow実装中）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -97,7 +97,11 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
   対象appのfocused windowを最大1秒／2,000 node／250候補で列挙し、実際の撮影範囲と交差する
   可視要素だけを正規化する。secure text fieldは読まず、AX権限・座標が得られない場合はOCR-onlyへ
   degradeする。候補総数はAX優先で最大500に制限し、provider promptは引き続きshadow mode。
-- [ ] Grounder/Verifier: candidate ID選択とbefore/after構造化判定をprovider roleとして接続する。
+- [x] Grounder: `BOMB_SQUAD_NAVIGATE_V4_ENABLED`（既定OFF）でcandidate ID選択を独立roleとして接続。
+  exact labelが一意なら決定論的に選び、同名・意味一致だけを最大200候補のmodel callへ送る。
+  結果・方式・role別tokenは加算レスポンス／usageへ記録するが、shadow期間はv3 markerが正本。
+- [ ] Grounder client projection: confidence閾値を満たすcandidate rectをmacOS highlightへ接続する。
+- [ ] Verifier: before/after Observationの構造化判定を独立provider roleとして接続する。
 
 #### eval基盤の開始点（2026-07-14）
 
