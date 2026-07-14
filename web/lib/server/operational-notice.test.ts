@@ -43,4 +43,11 @@ describe("operational notices", () => {
       "署名済み状態が期限切れです。",
     ).message).toContain("理由: 署名済み状態が期限切れです。");
   });
+
+  test("includes the role failure reason instead of hiding degraded execution", () => {
+    expect(roleDegradedNotice(
+      "Verifier",
+      "モデル応答がstrict schemaに一致しませんでした。",
+    ).message).toContain("理由: モデル応答がstrict schemaに一致しませんでした。");
+  });
 });

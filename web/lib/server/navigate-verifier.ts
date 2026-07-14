@@ -31,6 +31,22 @@ export type RuleVerifierResult = {
   evidenceCandidateIds: string[];
 };
 
+export type ModelVerifierReason =
+  | "MODEL_POSTCONDITIONS_SUPPORTED"
+  | "MODEL_NO_VISIBLE_CHANGE"
+  | "MODEL_TARGET_BLOCKED"
+  | "MODEL_INSUFFICIENT_EVIDENCE";
+
+export type ModelVerifierResult = {
+  source: "model";
+  status: RuleVerifierStatus;
+  reason: ModelVerifierReason;
+  evidenceCandidateIds: string[];
+  confidence: number;
+};
+
+export type NavigateVerifierResult = RuleVerifierResult | ModelVerifierResult;
+
 type ConditionResult = {
   outcome: "met" | "unmet" | "unknown" | "blocked";
   evidenceCandidateIds: string[];

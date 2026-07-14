@@ -99,6 +99,8 @@ Server-only vars:
 - `BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_ID`
 - `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_VENDOR`
 - `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_ID`
 - `BOMB_SQUAD_NAVIGATE_V4_ENABLED`
 - `BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`（v4 Run snapshot専用、32 byte以上。provider / Supabase
   keyとの共用禁止。flag有効時に未設定ならfallbackせず`RUN_SIGNING_UNAVAILABLE`）
@@ -119,7 +121,7 @@ Rules:
 - `SUPABASE_ANON_KEY` is available to both product site and client auth flows.
 - `SUPABASE_SERVICE_ROLE_KEY` is server-only.
 - Provider keys stay server-only.
-- Planner/Grounderの役割別model envが未設定なら、通常Navigateのvendor/modelを継承する。
+- Planner/Grounder/Verifierの役割別model envが未設定なら、通常Navigateのvendor/modelを継承する。
 
 ## API Conventions
 
@@ -163,7 +165,7 @@ responseの`meta.notices`へ全件を入れ、clientは通常結果と同時にd
   client内のCloud→BYOK、撮影engine切替は同じUIへ`CLIENT_PROVIDER_FALLBACK /
   CAPTURE_FALLBACK`として発行する。
 - model/provider fallbackは失敗したrouteと実際に使ったrouteの両方をmessageへ含める。
-- Planner/Grounder/Locator等の補助roleだけが失敗し、主結果を返す場合も`ROLE_DEGRADED`を返す。
+- Planner/Grounder/Verifier/Locator等の補助roleだけが失敗し、主結果を返す場合も`ROLE_DEGRADED`を返す。
 - v4 Runを開始できずv3状態管理で回答を継続する場合は`STATE_FALLBACK`で、使えなかった方式と
   実際に継続した方式を示す。状態更新API自体はfallbackせずfail-closedする。
 - fallback不能なerrorは従来どおり非2xxまたはSSE `error`。raw provider本文やsecretは表示せず、
@@ -834,12 +836,15 @@ feature flag下の `grounding` は `{capture_id, candidate_id, confidence, metho
 クライアント（`NavigatorLocator`）が抽出して OCR grounding と突き合わせる
 （詳細は [navigator-copilot-plan.md](navigator-copilot-plan.md)）。
 `result.meta.notices`は共通規約どおり表示する。初手main fallback、role別model fallback、
-Planner/Grounder/Locatorの部分失敗も成功結果から隠さない。
+Planner/Grounder/Verifier/Locatorの部分失敗も成功結果から隠さない。
 
 `verification`はRun shadow inputを送った時だけ
-`{source:"rule", status, reason, evidence_candidate_ids}`、それ以外は`null`。statusは
+`{source:"rule|model", status, reason, evidence_candidate_ids, confidence}`、それ以外は`null`。statusは
 `verified / not_changed / ambiguous / blocked / complete`。現段階ではresponseとusage trace
-（status/reason/evidence件数）へ記録するだけで、Run revisionもv3 Taskも更新しない。署名検証・
+（ruleのstatus/reason、最終source/status/reason/evidence件数、model route/token/failure reason）へ記録するだけで、
+Run revisionもv3 Taskも更新しない。ruleが安定済み・同一capture scopeでなお証拠不足／矛盾の場合だけ
+独立Verifier modelへstrict schemaで昇格する。撮影不安定、scope変更、空postconditionをモデルで
+推測補完しない。`confidence`はmodel結果だけ0〜1、rule結果は`null`。署名検証・
 Run store・rule evaluationが利用不能でも主回答を返せる場合は`STATE_FALLBACK`で
 「新しい検証を使えず従来判定を表示した」ことをユーザーへ明示する。
 

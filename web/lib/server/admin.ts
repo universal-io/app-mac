@@ -101,6 +101,13 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
         modelId: env.navigateGrounderModelId,
         modelSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID"),
       },
+      {
+        label: "navigate（Verifier）",
+        vendor: env.navigateVerifierModelVendor,
+        vendorSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_VENDOR"),
+        modelId: env.navigateVerifierModelId,
+        modelSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_ID"),
+      },
     ],
     freeMonthlyLimit: {
       value: freePlan?.monthlyUsageLimit ?? null,

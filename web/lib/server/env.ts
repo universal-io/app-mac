@@ -21,6 +21,8 @@ export type ServerEnv = {
   navigatePlannerModelId: string;
   navigateGrounderModelVendor: string;
   navigateGrounderModelId: string;
+  navigateVerifierModelVendor: string;
+  navigateVerifierModelId: string;
   /** Enables additive v4 role outputs; false keeps the v3 UX path intact. */
   navigateV4Enabled: boolean;
   /** HMAC key for client-carried v4 Run snapshots. Required only when the
@@ -85,6 +87,12 @@ export function getServerEnv(): ServerEnv {
       navigateModelVendor,
     navigateGrounderModelId:
       normalize(process.env.BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID) ??
+      navigateModelId,
+    navigateVerifierModelVendor:
+      normalize(process.env.BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_VENDOR) ??
+      navigateModelVendor,
+    navigateVerifierModelId:
+      normalize(process.env.BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_ID) ??
       navigateModelId,
     navigateV4Enabled: parseBoolean(process.env.BOMB_SQUAD_NAVIGATE_V4_ENABLED),
     navigateRunSigningSecret: normalize(

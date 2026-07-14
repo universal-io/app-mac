@@ -825,7 +825,7 @@ final class VisionSession: ObservableObject {
             var plannedTask: NavigatorTask?
             var candidateGrounding: NavigatorCandidateGrounding?
             var runProposal: NavigatorRunProposal?
-            var runVerification: NavigatorRuleVerification?
+            var runVerification: NavigatorVerification?
             for try await event in stream {
                 guard generation == navigatorGeneration, !Task.isCancelled else { return }
                 switch event {
@@ -959,9 +959,10 @@ final class VisionSession: ObservableObject {
         }
     }
 
-    private func handleNavigatorRunVerification(_ verification: NavigatorRuleVerification) {
+    private func handleNavigatorRunVerification(_ verification: NavigatorVerification) {
         NSLog(
-            "[Copilot] v4 Run shadow verification status=%@ reason=%@ evidence=%d",
+            "[Copilot] v4 Run shadow verification source=%@ status=%@ reason=%@ evidence=%d",
+            verification.source.rawValue,
             verification.status.rawValue,
             verification.reason.rawValue,
             verification.evidenceCandidateIDs.count

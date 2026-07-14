@@ -5,7 +5,7 @@
 // Output is plain text, not JSON — nothing to parse means the first token is
 // the first visible character.
 
-import { getServerEnv, type ServerEnv } from "@/lib/server/env";
+import { getServerEnv } from "@/lib/server/env";
 import { ProviderCallError } from "@/lib/server/review-engine";
 import type { VisionObservation } from "@/lib/context/observation";
 import {
@@ -30,16 +30,11 @@ import {
   roleDegradedNotice,
   type OperationalNotice,
 } from "@/lib/server/operational-notice";
-
-const VENDOR_ENDPOINTS: Record<string, string> = {
-  groq: "https://api.groq.com/openai/v1/chat/completions",
-  openai: "https://api.openai.com/v1/chat/completions",
-  // Gemini via its OpenAI-compatible layer. Candidate for the navigator:
-  // Gemini is natively trained to emit bounding boxes on a 0-1000 grid, so
-  // its [[loc:…]] should be tighter. Switch with the BOMB_SQUAD_NAVIGATE_*
-  // env vars once GEMINI_API_KEY is configured.
-  gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-};
+import {
+  navigateAPIKey,
+  navigateEndpoint,
+  resolveNavigateRoleRoute,
+} from "@/lib/server/navigate-provider-route";
 
 const LANGUAGE_PROMPT_NAMES: Record<OutputLanguageCode, string> = {
   japanese: "日本語",
@@ -119,14 +114,6 @@ export type NavigateStreamEvent =
   | { type: "delta"; text: string }
   | { type: "final"; output: NavigateEngineOutput };
 
-type ProviderRoute = {
-  vendor: string;
-  modelId: string;
-  apiKey: string;
-  endpoint: string;
-  fallbackFrom?: { vendor: string; modelId: string };
-};
-
 type PlannerExecution = {
   task: NavigateTask | null;
   inputTokens: number;
@@ -163,13 +150,13 @@ export async function* runNavigateStream(
   let vendor = firstTurn ? env.navigateFastModelVendor : env.navigateModelVendor;
   let modelId = firstTurn ? env.navigateFastModelId : env.navigateModelId;
   let modelFallbackFrom: string | null = null;
-  if (!apiKeyFor(vendor, env)) {
+  if (!navigateAPIKey(vendor, env)) {
     if (firstTurn) modelFallbackFrom = `${vendor}:${modelId}`;
     vendor = env.navigateModelVendor;
     modelId = env.navigateModelId;
   }
-  let apiKey = apiKeyFor(vendor, env);
-  let endpoint = VENDOR_ENDPOINTS[vendor];
+  let apiKey = navigateAPIKey(vendor, env);
+  let endpoint = navigateEndpoint(vendor);
   if (!apiKey || !endpoint) {
     throw new ProviderCallError(`No provider key configured for vendor "${vendor}".`);
   }
@@ -189,7 +176,7 @@ export async function* runNavigateStream(
     Boolean(harness?.recipes?.length) &&
     Boolean(lastMessage.text?.trim());
   const plannerRoute = shouldPlan
-    ? resolveRoleRoute(
+    ? resolveNavigateRoleRoute(
         env,
         env.navigatePlannerModelVendor,
         env.navigatePlannerModelId,
@@ -238,8 +225,8 @@ export async function* runNavigateStream(
     if (!firstTurn) return false;
     const nextVendor = env.navigateModelVendor;
     const nextModelId = env.navigateModelId;
-    const nextKey = apiKeyFor(nextVendor, env);
-    const nextEndpoint = VENDOR_ENDPOINTS[nextVendor];
+    const nextKey = navigateAPIKey(nextVendor, env);
+    const nextEndpoint = navigateEndpoint(nextVendor);
     if (!nextKey || !nextEndpoint || (nextVendor === vendor && nextModelId === modelId)) {
       return false;
     }
@@ -369,7 +356,7 @@ export async function* runNavigateStream(
   const targetLabel = groundingTarget(input.task, fullText);
   const shouldGround = env.navigateV4Enabled && !firstTurn && Boolean(observation && targetLabel);
   const grounderRoute = shouldGround
-    ? resolveRoleRoute(
+    ? resolveNavigateRoleRoute(
         env,
         env.navigateGrounderModelVendor,
         env.navigateGrounderModelId,
@@ -827,49 +814,6 @@ async function fetchLocatorSupplement(args: {
     inputTokens: json.usage?.prompt_tokens ?? 0,
     outputTokens: json.usage?.completion_tokens ?? 0,
   };
-}
-
-function resolveRoleRoute(
-  env: ServerEnv,
-  preferredVendor: string,
-  preferredModelId: string,
-  fallbackVendor: string,
-  fallbackModelId: string,
-): ProviderRoute | null {
-  const choices = [
-    { vendor: preferredVendor, modelId: preferredModelId, isFallback: false },
-    { vendor: fallbackVendor, modelId: fallbackModelId, isFallback: true },
-  ];
-  for (const { vendor, modelId, isFallback } of choices) {
-    const apiKey = apiKeyFor(vendor, env);
-    const endpoint = VENDOR_ENDPOINTS[vendor];
-    if (apiKey && endpoint) {
-      return {
-        vendor,
-        modelId,
-        apiKey,
-        endpoint,
-        fallbackFrom: isFallback
-          && (vendor !== preferredVendor || modelId !== preferredModelId)
-          ? { vendor: preferredVendor, modelId: preferredModelId }
-          : undefined,
-      };
-    }
-  }
-  return null;
-}
-
-function apiKeyFor(vendor: string, env: ServerEnv): string | null {
-  switch (vendor) {
-    case "groq":
-      return env.groqApiKey;
-    case "openai":
-      return env.openaiApiKey;
-    case "gemini":
-      return env.geminiApiKey;
-    default:
-      return null;
-  }
 }
 
 // Adaptive first turn (docs/navigator-copilot-plan.md §9-b): a tool screen gets one

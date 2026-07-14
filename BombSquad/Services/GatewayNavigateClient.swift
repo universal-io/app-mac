@@ -53,9 +53,14 @@ struct NavigatorRunSnapshot: Equatable {
     fileprivate let json: Data
 }
 
-/// Rule-first result for one before/after Observation pair. During shadow it
-/// is diagnostic only; it must not advance the client-owned v3 task.
-struct NavigatorRuleVerification: Equatable {
+/// Rule-first or escalated model result for one before/after Observation pair.
+/// During shadow it is diagnostic only and cannot advance the v3 task.
+struct NavigatorVerification: Equatable {
+    enum Source: String {
+        case rule
+        case model
+    }
+
     enum Status: String {
         case verified
         case notChanged = "not_changed"
@@ -72,11 +77,17 @@ struct NavigatorRuleVerification: Equatable {
         case targetDisabled = "TARGET_DISABLED"
         case noVisibleChange = "NO_VISIBLE_CHANGE"
         case insufficientOrConflictingEvidence = "INSUFFICIENT_OR_CONFLICTING_EVIDENCE"
+        case modelPostconditionsSupported = "MODEL_POSTCONDITIONS_SUPPORTED"
+        case modelNoVisibleChange = "MODEL_NO_VISIBLE_CHANGE"
+        case modelTargetBlocked = "MODEL_TARGET_BLOCKED"
+        case modelInsufficientEvidence = "MODEL_INSUFFICIENT_EVIDENCE"
     }
 
+    let source: Source
     let status: Status
     let reason: Reason
     let evidenceCandidateIDs: [String]
+    let confidence: Double?
 }
 
 /// One event of a streaming navigation answer (SSE from the gateway).
@@ -92,7 +103,7 @@ enum NavigateStreamEvent {
         task: NavigatorTask?,
         grounding: NavigatorCandidateGrounding?,
         runProposal: NavigatorRunProposal?,
-        verification: NavigatorRuleVerification?
+        verification: NavigatorVerification?
     )
 }
 
@@ -223,24 +234,39 @@ struct GatewayNavigateClient {
         )
     }
 
-    private static func parseVerification(_ value: Any?) throws -> NavigatorRuleVerification? {
+    private static func parseVerification(_ value: Any?) throws -> NavigatorVerification? {
         guard let value, !(value is NSNull) else { return nil }
         guard
             let dict = value as? [String: Any],
-            dict["source"] as? String == "rule",
+            let rawSource = dict["source"] as? String,
+            let source = NavigatorVerification.Source(rawValue: rawSource),
             let rawStatus = dict["status"] as? String,
-            let status = NavigatorRuleVerification.Status(rawValue: rawStatus),
+            let status = NavigatorVerification.Status(rawValue: rawStatus),
             let rawReason = dict["reason"] as? String,
-            let reason = NavigatorRuleVerification.Reason(rawValue: rawReason),
+            let reason = NavigatorVerification.Reason(rawValue: rawReason),
             let evidence = dict["evidence_candidate_ids"] as? [String],
             evidence.allSatisfy({ !$0.isEmpty })
         else {
             throw ProviderError.decoding("ナビゲーション検証結果の形式が不正です")
         }
-        return NavigatorRuleVerification(
+        let confidence: Double?
+        if source == .model {
+            guard
+                let number = dict["confidence"] as? NSNumber,
+                (0...1).contains(number.doubleValue)
+            else {
+                throw ProviderError.decoding("モデル検証結果に信頼度がありません")
+            }
+            confidence = number.doubleValue
+        } else {
+            confidence = nil
+        }
+        return NavigatorVerification(
+            source: source,
             status: status,
             reason: reason,
-            evidenceCandidateIDs: evidence
+            evidenceCandidateIDs: evidence,
+            confidence: confidence
         )
     }
 

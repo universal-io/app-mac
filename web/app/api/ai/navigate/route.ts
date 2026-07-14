@@ -32,8 +32,10 @@ import type { OutputLanguageCode } from "@/lib/server/prompts";
 import { getServerEnv } from "@/lib/server/env";
 import { stateFallbackNotice } from "@/lib/server/operational-notice";
 import { createNavigateRunProposal } from "@/lib/server/navigate-run-snapshot";
-import { verifyNavigateRunInShadow } from "@/lib/server/navigate-run-verifier";
-import type { RuleVerifierResult } from "@/lib/server/navigate-verifier";
+import {
+  verifyNavigateRunInShadow,
+  type NavigateRunVerificationExecution,
+} from "@/lib/server/navigate-run-verifier";
 
 // Vercel rejects bodies past ~4.5MB; the client keeps history light by
 // sending at most the first and the latest screenshot.
@@ -320,7 +322,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
           throw new ProviderCallError("Provider stream ended without a result.");
         }
         const notices = [...finalOutput.notices];
-        let verification: RuleVerifierResult | null = null;
+        let verification: NavigateRunVerificationExecution | null = null;
         let runProposal: ReturnType<typeof createNavigateRunProposal> | null = null;
         const env = getServerEnv();
         if (
@@ -357,6 +359,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
               userId: input.userId,
               ...input.runVerification,
             });
+            notices.push(...verification.notices);
           } catch (error) {
             console.error(
               `[/api/ai/navigate] Run verification unavailable (request ${input.requestId}):`,
@@ -377,8 +380,8 @@ function streamingResponse(input: StreamingResponseInput): Response {
           status: "success",
           modelVendor: finalOutput.modelVendor,
           modelId: finalOutput.modelId,
-          inputUnits: finalOutput.inputTokens,
-          outputUnits: finalOutput.outputTokens,
+          inputUnits: finalOutput.inputTokens + (verification?.modelInputTokens ?? 0),
+          outputUnits: finalOutput.outputTokens + (verification?.modelOutputTokens ?? 0),
           latencyMs,
           metadata: {
             ...input.metadata,
@@ -403,9 +406,18 @@ function streamingResponse(input: StreamingResponseInput): Response {
             model_fallback_from: finalOutput.modelFallbackFrom,
             operational_notice_codes: notices.map((notice) => notice.code),
             task_proposed: Boolean(finalOutput.proposedTask),
-            verifier_status: verification?.status,
-            verifier_reason: verification?.reason,
-            verifier_evidence_count: verification?.evidenceCandidateIds.length,
+            verifier_source: verification?.result.source,
+            verifier_status: verification?.result.status,
+            verifier_reason: verification?.result.reason,
+            verifier_evidence_count: verification?.result.evidenceCandidateIds.length,
+            verifier_rule_status: verification?.ruleResult.status,
+            verifier_rule_reason: verification?.ruleResult.reason,
+            verifier_model_attempted: verification?.modelAttempted,
+            verifier_model_vendor: verification?.modelVendor,
+            verifier_model_id: verification?.modelId,
+            verifier_model_input_tokens: verification?.modelInputTokens,
+            verifier_model_output_tokens: verification?.modelOutputTokens,
+            verifier_model_failure_reason: verification?.modelFailureReason,
           },
         });
         send("result", {
@@ -431,10 +443,13 @@ function streamingResponse(input: StreamingResponseInput): Response {
             run_proposal: runProposal,
             verification: verification
               ? {
-                  source: verification.source,
-                  status: verification.status,
-                  reason: verification.reason,
-                  evidence_candidate_ids: verification.evidenceCandidateIds,
+                  source: verification.result.source,
+                  status: verification.result.status,
+                  reason: verification.result.reason,
+                  evidence_candidate_ids: verification.result.evidenceCandidateIds,
+                  confidence: verification.result.source === "model"
+                    ? verification.result.confidence
+                    : null,
                 }
               : null,
             grounding: finalOutput.grounding

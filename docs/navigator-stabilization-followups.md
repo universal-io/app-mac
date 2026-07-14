@@ -146,32 +146,32 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 | A. 計測・入力契約 | eval、Observation、OCR/AX candidate、Grounder shadow | 完了 |
 | B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
 | C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **完了**（shadow、環境は未有効） |
-| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **進行中**（決定論shadow判定完了、model escalationが次） |
-| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | 未着手（D完了後） |
+| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **完了**（shadow、状態更新なし） |
+| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | **次** |
 | F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
 | G. 一般化 | Slack / Notionで同じgateを通し、v3を削除 | GA4合格後 |
 
-現在はDの**判定契約**。モデル選定の前に、どの画面差分を誰がどの条件でstep完了と判定したかを
-構造化して再現可能にする工程で、全体ではv4縦切りの判定層に当たる。Run revision更新はまだ接続せず、
-GA4 1経路のrule結果をshadow計測してからmodel escalationと状態更新gateへ進む。
+段階Dの**判定契約**まで完了した。次はEで、GA4 1経路をRun→Grounder→Verifier→template Rendererの
+構造化データだけでshadow完走させる。まず確定Task/Verifierから帯表示を作り、自由文markerと並べて
+差分計測する。Run revision更新とv3削除はまだ行わない。
 
 - [x] Run保存基盤: `0005_navigator_runs.sql` とservice-role専用repositoryを追加。tenant/user scope、
   revisionのcompare-and-swap、最終更新から24時間のTTL、expire/purge、本文非保存、store障害時の
   fail-closedを実装した。migrationはまだ環境へ適用せず、API/clientも未接続。
 - [x] 署名契約: Taskをstrict schemaへ正規化してSHA-256 hashをrowへ固定し、Task本文を含むsnapshot
   全体を専用HMAC keyで署名する。改ざん、stale revision、rowとのidentity不一致、短い／未設定keyは
-  fail-closed。postconditionは段階Dまで空配列だけを許可する。
+  fail-closed。段階Dでstrict typed postconditionへ拡張済み。
 - [x] Run Gateway API: Planner結果を10分有効・認証identity束縛の署名済みproposalとしてSSEへ加算。
   ユーザー開始時だけ冪等にrowを作る`start`、authoritative rowへ戻す`sync`、最新revisionだけの
-  `cancel`をfeature flag下に追加した。Verifierが無いため`advance`はまだ提供しない。
+  `cancel`をfeature flag下に追加した。shadow計測gate前のため`advance`はまだ提供しない。
 - [x] macOS shadow接続: proposalをopaque JSONとして保持し、ユーザーの既存「開始」操作でRun
-  startを並行実行する。成功snapshotはshadow保持だけとし、Verifier導入まではv3 Taskが表示の正本。
+  startを並行実行する。成功snapshotはshadow保持だけとし、段階E完了まではv3 Taskが表示の正本。
   start失敗時は理由とv3継続を`STATE_FALLBACK`で表示する。
 
-段階Cのコードは完了。実環境でshadowを有効にする時だけ、既存Supabaseへ`0005`を適用し、Gatewayへ
+段階C/Dのコードは完了。実環境でshadowを有効にする時だけ、既存Supabaseへ`0005`、続けて`0006`を適用し、Gatewayへ
 32 byte以上の専用`BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`を設定して再deployした後、最後に
-`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`へ切り替える。新規サービス契約は不要。次は段階Dで、GA4
-Pack v1 recipeへtyped postconditionを加え、モデルを呼ばない決定論Verifierから実装する。
+`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`へ切り替える。新規サービス契約は不要。段階Eのローカル実装と
+自動検証を終えるまでは、migration適用とflag切替を保留する。
 
 - [x] typed postcondition / rule-first純粋契約: URL/title、candidate出現・消失・state、environment変化を
   strict schema化。stable・同一capture scopeだけを決定論評価し、verified/not_changed/ambiguous/
@@ -183,8 +183,10 @@ Pack v1 recipeへtyped postconditionを加え、モデルを呼ばない決定�
   認証scope付きrowとの一致を確認してから、現在stepのpostconditionを最新Observationへ適用する。
   status/reason/evidence件数をtrace、構造化結果をSSEへ返すが、Run revisionとv3 Taskは更新しない。
   検証不能は`STATE_FALLBACK`で従来判定へ移った理由を表示し、改ざん・入力片落ちはfail-closed。
-- [ ] ambiguous model escalation: ruleで情報不足／矛盾の時だけ独立Verifier roleをstrict schemaで呼び、
-  rule結果と混同しないtraceを追加する。危険操作やstep advanceはmodel判定単独では確定しない。
+- [x] ambiguous model escalation: stable・同一scopeでもrule証拠が不足／矛盾する時だけ独立Verifier roleを
+  strict schemaで呼び、rule判定とmodelのroute/token/resultを分離してtraceする。不安定capture、
+  scope変更、空条件はmodelへ送らない。role失敗／model fallbackは警告表示し、model判定単独では
+  危険操作もstep advanceも確定しない。役割env未設定時はmain modelを継承する。
 
 #### v4 Observation実装（2026-07-14開始）
 
@@ -209,10 +211,10 @@ Pack v1 recipeへtyped postconditionを加え、モデルを呼ばない決定�
   互換providerではJSON object modeを要求する。コードフェンスや説明文からJSONをregex抽出する
   救済は廃止し、契約違反を安全なfallbackとして扱う。本文回答のSSE契約は変更しない。
 - [x] Recovered error transparency: Navigate/Review/Vision/Transcribeの`meta.notices`とmacOS共通警告
-  バナーを追加。main/role model fallback、provider retry、Planner/Grounder/Locator部分失敗、
+  バナーを追加。main/role model fallback、provider retry、Planner/Grounder/Verifier/Locator部分失敗、
   Cloud→BYOK切替を成功結果から隠さない。
-- [ ] Verifier: typed postconditionの決定論判定とRun shadow接続は完了。次はambiguous時だけ独立provider
-  roleへstrict schemaでescalateする。状態遷移はその計測gate後にGateway run revision更新で確定する。
+- [x] Verifier: typed postconditionの決定論判定、Run shadow、限定的な独立model escalationまで完了。
+  状態遷移は段階Eの縦切り計測gate後にGateway run revision更新で確定する。
 
 #### eval基盤の開始点（2026-07-14）
 
@@ -257,7 +259,7 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。当時のbaseline resul
 
 - 自動初手（画面認識1文）: Groq `qwen/qwen3.6-27b`（non-thinking。失敗時はmainへ1回fallback）
 - 通常質問・ロケーター補追: OpenAI `gpt-5.4-mini`
-- Planner / Grounder: 既定では通常質問のvendor/modelを継承する。役割別envで独立上書きでき、
+- Planner / Grounder / Verifier: 既定では通常質問のvendor/modelを継承する。役割別envで独立上書きでき、
   実効値・role別tokenはadmin/usage metadataで追跡する。
 
 したがって「Copilot が全て Groq」ではない。速度優先は自動初手に限定され、
@@ -315,10 +317,9 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。当時のbaseline resul
 #### P1（比較の帰属と再現性を壊す）
 
 - ~~本文、planner、grounderが同じmodel IDに束ねられ、役割別の成否を分離できない。~~
-  **2026-07-14部分解消**: Planner/Grounderは独立env、実効設定、role別token metadataを持つ。
-  locator supplementは本文モデルを継承し、step verifierは未実装のため本文回答と
-  `[[step:done]]` をまだ兼用する。
-- Planner/Grounderのtokenとmodel routeはusageへ分離済み。残課題はPlanner/locatorの成否・
+  **2026-07-14解消**: Planner/Grounder/Verifierは独立env、実効設定、role別token metadataを持つ。
+  locator supplementだけは本文モデルを継承し、v3 UXは本文の`[[step:done]]`をまだ兼用する。
+- Planner/Grounder/Verifierのtokenとmodel routeはusageへ分離済み。残課題はPlanner/locatorの成否・
   timeout・schema違反などの失敗理由をbest-effortの`null`へ潰さずrole resultとして記録すること。
 - クライアントは URL hint を送らず、セッション開始時の app / window title を
   再キャプチャ後も使い続ける。タブ・ウィンドウ・アプリが変わると harness が stale になる。

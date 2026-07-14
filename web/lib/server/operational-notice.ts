@@ -24,11 +24,13 @@ export function modelFallbackNotice(args: {
   };
 }
 
-export function roleDegradedNotice(role: string): OperationalNotice {
+export function roleDegradedNotice(role: string, reason?: string): OperationalNotice {
   return {
     severity: "warning",
     code: "ROLE_DEGRADED",
-    message: `${role}の処理に失敗したため、その補助機能なしで結果を表示しています。`,
+    message:
+      `${role}の処理に失敗したため、その補助機能なしで結果を表示しています。` +
+      (reason ? ` 理由: ${reason}` : ""),
   };
 }
 
