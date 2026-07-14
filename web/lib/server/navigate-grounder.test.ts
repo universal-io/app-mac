@@ -29,6 +29,7 @@ describe("Navigator v4 grounder contract", () => {
     expect(result).toEqual({
       attempted: true,
       selection: {
+        captureId: "11111111-1111-4111-8111-111111111111",
         candidateId: "ax:demographics",
         confidence: 1,
         method: "exact_unique",

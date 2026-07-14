@@ -100,7 +100,9 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 - [x] Grounder: `BOMB_SQUAD_NAVIGATE_V4_ENABLED`（既定OFF）でcandidate ID選択を独立roleとして接続。
   exact labelが一意なら決定論的に選び、同名・意味一致だけを最大200候補のmodel callへ送る。
   結果・方式・role別tokenは加算レスポンス／usageへ記録するが、shadow期間はv3 markerが正本。
-- [ ] Grounder client projection: confidence閾値を満たすcandidate rectをmacOS highlightへ接続する。
+- [x] Grounder client projection: responseのcapture IDが最新Observationと一致し、confidence 0.85以上の
+  candidateだけをmacOS highlight/action labelへ接続。rect無し・低confidence・不明IDはv3 OCR/markerへ
+  fallbackし、step完了turnはVerifier導入までcandidate projectionの対象外とする。
 - [ ] Verifier: before/after Observationの構造化判定を独立provider roleとして接続する。
 
 #### eval基盤の開始点（2026-07-14）

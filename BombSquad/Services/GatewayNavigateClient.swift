@@ -36,13 +36,26 @@ struct NavigatorTask: Equatable {
     var isFinished: Bool { currentStep >= steps.count }
 }
 
+struct NavigatorCandidateGrounding {
+    let captureID: UUID
+    let candidateID: String
+    let confidence: Double
+    let method: String
+}
+
 /// One event of a streaming navigation answer (SSE from the gateway).
 enum NavigateStreamEvent {
     /// A plain-text increment of the answer as the model produces it.
     case delta(String)
     /// The full answer; always the last event of a successful stream.
     /// `task` is a freshly planned step sequence awaiting the user's consent.
-    case result(text: String, harness: String?, modelID: String?, task: NavigatorTask?)
+    case result(
+        text: String,
+        harness: String?,
+        modelID: String?,
+        task: NavigatorTask?,
+        grounding: NavigatorCandidateGrounding?
+    )
 }
 
 /// Client for the screen navigator (POST /api/ai/navigate, always SSE).
@@ -102,7 +115,8 @@ struct GatewayNavigateClient {
                                 text: text,
                                 harness: result["harness"] as? String,
                                 modelID: meta?["model_id"] as? String,
-                                task: Self.parseTask(result["task"])
+                                task: Self.parseTask(result["task"]),
+                                grounding: Self.parseGrounding(result["grounding"])
                             ))
                         default:
                             break
@@ -138,6 +152,25 @@ struct GatewayNavigateClient {
             goal: goal,
             steps: steps,
             currentStep: max(0, (dict["current_step"] as? Int) ?? 0)
+        )
+    }
+
+    private static func parseGrounding(_ value: Any?) -> NavigatorCandidateGrounding? {
+        guard
+            let dict = value as? [String: Any],
+            let capture = dict["capture_id"] as? String,
+            let captureID = UUID(uuidString: capture),
+            let candidateID = dict["candidate_id"] as? String, !candidateID.isEmpty,
+            let confidence = dict["confidence"] as? NSNumber,
+            (0...1).contains(confidence.doubleValue),
+            let method = dict["method"] as? String,
+            method == "exact_unique" || method == "model"
+        else { return nil }
+        return NavigatorCandidateGrounding(
+            captureID: captureID,
+            candidateID: candidateID,
+            confidence: confidence.doubleValue,
+            method: method
         )
     }
 

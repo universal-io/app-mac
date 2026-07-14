@@ -340,6 +340,9 @@ function latestObservation(messages: NavigateMessage[]): VisionObservation | und
 }
 
 function groundingTarget(task: NavigateTask | undefined, answer: string): string | null {
+  // Until the structured Verifier owns step advancement, do not project a
+  // candidate from a turn whose free-text marker claims the step completed.
+  if (answer.includes("[[step:done]]")) return null;
   const stepTarget = task?.steps[task.currentStep]?.target?.trim();
   if (stepTarget) return stepTarget;
   return answer.match(/\[\[target:([^\]]{1,120})\]\]/)?.[1]?.trim() ?? null;

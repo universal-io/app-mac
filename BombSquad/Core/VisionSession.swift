@@ -88,6 +88,7 @@ final class VisionSession: ObservableObject {
     private var navigatorWireTurns: [NavigateTurn] = []
     private var navigatorPendingCapture: NavigateTurn?
     private var navigatorOCRFragments: [RecognizedTextFragment] = []
+    private var navigatorObservation: VisionObservation?
     private var navigatorTask: Task<Void, Never>?
     private var navigatorGeneration = 0
     private var queuedNavigatorQuestion: String?
@@ -450,6 +451,7 @@ final class VisionSession: ObservableObject {
                     axCandidates: observationSnapshot.axCandidates
                 )
             )
+            self.navigatorObservation = turn.observation
             if autoRun {
                 self.navigatorWireTurns.append(turn)
                 await self.runNavigatorStream()
@@ -755,6 +757,7 @@ final class VisionSession: ObservableObject {
             var harness: String?
             var modelID: String?
             var plannedTask: NavigatorTask?
+            var candidateGrounding: NavigatorCandidateGrounding?
             for try await event in stream {
                 guard generation == navigatorGeneration, !Task.isCancelled else { return }
                 switch event {
@@ -764,11 +767,18 @@ final class VisionSession: ObservableObject {
                         lastDurationMs = firstTokenMs
                     }
                     navigatorStreamingText = (navigatorStreamingText ?? "") + text
-                case .result(let text, let resultHarness, let resultModelID, let resultTask):
+                case .result(
+                    let text,
+                    let resultHarness,
+                    let resultModelID,
+                    let resultTask,
+                    let resultGrounding
+                ):
                     finalText = text
                     harness = resultHarness
                     modelID = resultModelID
                     plannedTask = resultTask
+                    candidateGrounding = resultGrounding
                 }
             }
             guard let finalText else {
@@ -777,6 +787,7 @@ final class VisionSession: ObservableObject {
             guard generation == navigatorGeneration, !Task.isCancelled else { return }
 
             let (displayText, vlmBox, target, fill, stepDone) = NavigatorLocator.extract(from: finalText)
+            let groundedCandidate = stepDone ? nil : resolveGroundedCandidate(candidateGrounding)
             navigatorWireTurns.append(NavigateTurn(role: .assistant, text: finalText))
             navigatorTurns.append(CoreNavigatorDisplayTurn(role: .assistant, text: displayText))
 
@@ -820,10 +831,26 @@ final class VisionSession: ObservableObject {
                         resolveHighlight(target: expectedTarget, vlmBox: trustedVLMBox)
                     )
                 } else {
-                    grounding = (target, resolveHighlight(target: target, vlmBox: vlmBox))
+                    let groundedTarget = groundedCandidate?.label ?? target
+                    grounding = (
+                        groundedTarget,
+                        resolveHighlight(
+                            target: groundedTarget,
+                            vlmBox: groundedCandidate?.rect ?? vlmBox,
+                            trustedCandidateRect: groundedCandidate?.rect
+                        )
+                    )
                 }
             } else {
-                grounding = (target, resolveHighlight(target: target, vlmBox: vlmBox))
+                let groundedTarget = groundedCandidate?.label ?? target
+                grounding = (
+                    groundedTarget,
+                    resolveHighlight(
+                        target: groundedTarget,
+                        vlmBox: groundedCandidate?.rect ?? vlmBox,
+                        trustedCandidateRect: groundedCandidate?.rect
+                    )
+                )
             }
 
             panelNavigatorHighlight = grounding.resolution.panelBox
@@ -914,7 +941,29 @@ final class VisionSession: ObservableObject {
         return true
     }
 
-    private func resolveHighlight(target: String?, vlmBox: CGRect?) -> CoreNavigatorHighlightResolution {
+    private func resolveGroundedCandidate(
+        _ grounding: NavigatorCandidateGrounding?
+    ) -> VisionObservation.Candidate? {
+        guard
+            let grounding,
+            grounding.confidence >= 0.85,
+            let observation = navigatorObservation,
+            grounding.captureID == observation.captureID
+        else { return nil }
+        return observation.candidates.first { $0.id == grounding.candidateID }
+    }
+
+    private func resolveHighlight(
+        target: String?,
+        vlmBox: CGRect?,
+        trustedCandidateRect: CGRect? = nil
+    ) -> CoreNavigatorHighlightResolution {
+        if let trustedCandidateRect {
+            return CoreNavigatorHighlightResolution(
+                panelBox: trustedCandidateRect,
+                liveBox: trustedCandidateRect
+            )
+        }
         guard let target, !navigatorOCRFragments.isEmpty else {
             return CoreNavigatorHighlightResolution(panelBox: vlmBox, liveBox: vlmBox)
         }
@@ -1025,6 +1074,7 @@ final class VisionSession: ObservableObject {
         isNavigating = false
         panelNavigatorHighlight = nil
         navigatorOCRFragments = []
+        navigatorObservation = nil
         navigatorProposedAction = nil
         navigatorProposedTask = nil
         navigatorActiveTask = nil

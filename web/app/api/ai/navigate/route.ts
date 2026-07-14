@@ -325,6 +325,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
               : null,
             grounding: finalOutput.grounding
               ? {
+                  capture_id: finalOutput.grounding.captureId,
                   candidate_id: finalOutput.grounding.candidateId,
                   confidence: finalOutput.grounding.confidence,
                   method: finalOutput.grounding.method,

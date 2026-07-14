@@ -4,6 +4,7 @@ import type {
 } from "@/lib/context/observation";
 
 export type CandidateGrounding = {
+  captureId: string;
   candidateId: string;
   confidence: number;
   method: "exact_unique" | "model";
@@ -40,6 +41,7 @@ export async function groundObservationCandidate(args: {
     return {
       attempted: true,
       selection: {
+        captureId: args.observation.capture_id,
         candidateId: exact[0].id,
         confidence: 1,
         method: "exact_unique",
@@ -99,7 +101,12 @@ export async function groundObservationCandidate(args: {
   return {
     attempted: true,
     selection: parsed
-      ? { candidateId: parsed.candidateId, confidence: parsed.confidence, method: "model" }
+      ? {
+          captureId: args.observation.capture_id,
+          candidateId: parsed.candidateId,
+          confidence: parsed.confidence,
+          method: "model",
+        }
       : null,
     inputTokens: json.usage?.prompt_tokens ?? 0,
     outputTokens: json.usage?.completion_tokens ?? 0,
