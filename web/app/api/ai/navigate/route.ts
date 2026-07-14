@@ -30,7 +30,7 @@ import {
 import type { NavigateHints } from "@/lib/server/harness";
 import type { OutputLanguageCode } from "@/lib/server/prompts";
 import { getServerEnv } from "@/lib/server/env";
-import { stateFallbackNotice } from "@/lib/server/operational-notice";
+import { stateFallbackNotice, runSnapshotMissingNotice } from "@/lib/server/operational-notice";
 import { createNavigateRunProposal } from "@/lib/server/navigate-run-snapshot";
 import {
   verifyNavigateRunInShadow,
@@ -72,6 +72,9 @@ type NavigateRequestBody = {
     task?: WireTask;
     run_snapshot?: unknown;
     previous_observation?: unknown;
+    /** Client-declared reason for legitimately omitting run_snapshot on a
+     * Copilot turn. Unknown values are treated as missing (fail-noisy). */
+    run_shadow_inactive_reason?: string;
   };
   preferences?: {
     output_language?: string;
@@ -271,6 +274,10 @@ export async function POST(request: Request): Promise<Response> {
             after: latestObservation,
           }
         : undefined,
+      runShadowInactiveReason:
+        typeof body.input?.run_shadow_inactive_reason === "string"
+          ? body.input.run_shadow_inactive_reason
+          : undefined,
     });
   } catch (error) {
     if (error instanceof GatewayError) {
@@ -293,6 +300,7 @@ type StreamingResponseInput = {
     before: VisionObservation;
     after: VisionObservation;
   };
+  runShadowInactiveReason?: string;
 };
 
 /**
@@ -390,6 +398,32 @@ function streamingResponse(input: StreamingResponseInput): Response {
             ));
           }
         }
+        // Makes v4 shadow's per-turn execution explicit (usage metadata +
+        // notices) instead of leaving verifier/grounder fields silently
+        // undefined when the client fails to carry the Run snapshot. The
+        // client may legitimately stop carrying it (verification finished,
+        // or Run start failed and it already warned); anything else is a
+        // wiring bug and stays fail-noisy.
+        let runShadowState:
+          | "executed"
+          | "skipped_no_snapshot"
+          | "inactive_verification_finished"
+          | "inactive_start_failed"
+          | "not_applicable";
+        if (input.runVerification) {
+          runShadowState = "executed";
+        } else if (env.navigateV4Enabled && input.engineInput.task) {
+          if (input.runShadowInactiveReason === "verification_finished") {
+            runShadowState = "inactive_verification_finished";
+          } else if (input.runShadowInactiveReason === "start_failed") {
+            runShadowState = "inactive_start_failed";
+          } else {
+            runShadowState = "skipped_no_snapshot";
+            notices.push(runSnapshotMissingNotice());
+          }
+        } else {
+          runShadowState = "not_applicable";
+        }
         const latencyMs = Date.now() - started;
         await recordUsage(input.tenantId, input.userId, {
           operation: "navigate",
@@ -428,6 +462,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
             model_fallback_from: finalOutput.modelFallbackFrom,
             operational_notice_codes: notices.map((notice) => notice.code),
             task_proposed: Boolean(finalOutput.proposedTask),
+            run_shadow_state: runShadowState,
             verifier_source: verification?.result.source,
             verifier_status: verification?.result.status,
             verifier_reason: verification?.result.reason,
