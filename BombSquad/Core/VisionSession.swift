@@ -95,6 +95,9 @@ final class VisionSession: ObservableObject {
     /// visible v3 Task until the rule-first Verifier is authoritative.
     private var navigatorProposedRun: NavigatorRunProposal?
     private var navigatorRunSnapshot: NavigatorRunSnapshot?
+    private var navigatorRunBeforeObservation: VisionObservation?
+    private var navigatorRunVerificationFinished = false
+    private var navigatorRunFallbackActive = false
     private var navigatorRunTask: Task<Void, Never>?
     private var navigatorRunGeneration = 0
     private var queuedNavigatorQuestion: String?
@@ -292,8 +295,17 @@ final class VisionSession: ObservableObject {
             text: "案内を開始します。現在の画面に対して次に取るべき操作を案内してください。"
         ))
         enterCopilotMode()
-        if let runProposal {
+        if let runProposal, let navigatorObservation {
+            navigatorRunBeforeObservation = navigatorObservation
+            navigatorRunVerificationFinished = false
+            navigatorRunFallbackActive = false
             startNavigatorRunShadow(runProposal)
+        } else if runProposal != nil {
+            navigatorRunFallbackActive = true
+            OperationalNoticeCenter.shared.publish(
+                code: "STATE_FALLBACK",
+                message: "新しいナビゲーション検証に必要な開始画面がないため、従来のステップ判定で案内しています。画面を撮り直して新しい計画を開始してください。"
+            )
         }
         navigatorTask?.cancel()
         navigatorTask = Task { [weak self] in
@@ -313,6 +325,7 @@ final class VisionSession: ObservableObject {
         navigatorRunTask = Task { [weak self] in
             guard let self else { return }
             guard let client = GatewayNavigateClient.make() else {
+                self.navigatorRunFallbackActive = true
                 OperationalNoticeCenter.shared.publish(
                     code: "STATE_FALLBACK",
                     message: "新しいナビゲーション状態を開始できなかったため、従来のクライアント管理方式で案内しています。I//O Cloudへのログインを確認してください。"
@@ -323,9 +336,11 @@ final class VisionSession: ObservableObject {
                 let snapshot = try await client.startRun(proposal)
                 guard generation == self.navigatorRunGeneration, !Task.isCancelled else { return }
                 self.navigatorRunSnapshot = snapshot
+                self.navigatorRunFallbackActive = false
                 NSLog("[Copilot] v4 Run shadow started")
             } catch {
                 guard generation == self.navigatorRunGeneration, !Task.isCancelled else { return }
+                self.navigatorRunFallbackActive = true
                 OperationalNoticeCenter.shared.publish(
                     code: "STATE_FALLBACK",
                     message: "新しいナビゲーション状態を開始できなかったため、従来のクライアント管理方式で案内しています。理由: \(error.localizedDescription)"
@@ -765,7 +780,7 @@ final class VisionSession: ObservableObject {
 
     private func runNavigatorStream(preservingRunFallback: Bool = false) async {
         var preservingCodes: Set<String> = ["CAPTURE_FALLBACK"]
-        if preservingRunFallback {
+        if preservingRunFallback || navigatorRunFallbackActive {
             preservingCodes.insert("STATE_FALLBACK")
         }
         OperationalNoticeCenter.shared.beginOperation(preservingCodes: preservingCodes)
@@ -794,11 +809,15 @@ final class VisionSession: ObservableObject {
         let context = await resolveContext()
         guard generation == navigatorGeneration, !Task.isCancelled else { return }
         do {
+            let shadowSnapshot = navigatorRunVerificationFinished ? nil : navigatorRunSnapshot
+            let shadowBefore = shadowSnapshot == nil ? nil : navigatorRunBeforeObservation
             let stream = try await client.navigateStream(
                 turns: navigatorWireTurns,
                 hints: isContextExcluded ? nil : context,
                 language: outputLanguage,
-                task: navigatorActiveTask
+                task: navigatorActiveTask,
+                runSnapshot: shadowSnapshot,
+                previousObservation: shadowBefore
             )
             var finalText: String?
             var harness: String?
@@ -806,6 +825,7 @@ final class VisionSession: ObservableObject {
             var plannedTask: NavigatorTask?
             var candidateGrounding: NavigatorCandidateGrounding?
             var runProposal: NavigatorRunProposal?
+            var runVerification: NavigatorRuleVerification?
             for try await event in stream {
                 guard generation == navigatorGeneration, !Task.isCancelled else { return }
                 switch event {
@@ -821,7 +841,8 @@ final class VisionSession: ObservableObject {
                     let resultModelID,
                     let resultTask,
                     let resultGrounding,
-                    let resultRunProposal
+                    let resultRunProposal,
+                    let resultVerification
                 ):
                     finalText = text
                     harness = resultHarness
@@ -829,12 +850,17 @@ final class VisionSession: ObservableObject {
                     plannedTask = resultTask
                     candidateGrounding = resultGrounding
                     runProposal = resultRunProposal
+                    runVerification = resultVerification
                 }
             }
             guard let finalText else {
                 throw ProviderError.decoding("stream ended without a result")
             }
             guard generation == navigatorGeneration, !Task.isCancelled else { return }
+
+            if let runVerification {
+                handleNavigatorRunVerification(runVerification)
+            }
 
             let (displayText, vlmBox, target, fill, stepDone) = NavigatorLocator.extract(from: finalText)
             let groundedCandidate = stepDone ? nil : resolveGroundedCandidate(candidateGrounding)
@@ -930,6 +956,28 @@ final class VisionSession: ObservableObject {
         } catch {
             guard generation == navigatorGeneration, !Task.isCancelled else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func handleNavigatorRunVerification(_ verification: NavigatorRuleVerification) {
+        NSLog(
+            "[Copilot] v4 Run shadow verification status=%@ reason=%@ evidence=%d",
+            verification.status.rawValue,
+            verification.reason.rawValue,
+            verification.evidenceCandidateIDs.count
+        )
+        switch verification.status {
+        case .verified, .complete:
+            navigatorRunVerificationFinished = true
+        case .blocked:
+            navigatorRunVerificationFinished = true
+            navigatorRunFallbackActive = true
+            OperationalNoticeCenter.shared.publish(
+                code: "STATE_FALLBACK",
+                message: "新しいナビゲーション検証で操作対象を利用できないと判定したため、Runは進めず従来のステップ判定を表示しています。"
+            )
+        case .notChanged, .ambiguous:
+            break
         }
     }
 
@@ -1133,6 +1181,9 @@ final class VisionSession: ObservableObject {
         navigatorProposedTask = nil
         navigatorProposedRun = nil
         navigatorRunSnapshot = nil
+        navigatorRunBeforeObservation = nil
+        navigatorRunVerificationFinished = false
+        navigatorRunFallbackActive = false
         navigatorActiveTask = nil
         isExecutingNavigatorAction = false
         isCopilotChecking = false

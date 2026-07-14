@@ -50,11 +50,17 @@ export function dataFallbackNotice(component: string, fallback: string): Operati
   };
 }
 
-export function stateFallbackNotice(component: string, fallback: string): OperationalNotice {
+export function stateFallbackNotice(
+  component: string,
+  fallback: string,
+  reason?: string,
+): OperationalNotice {
   return {
     severity: "warning",
     code: "STATE_FALLBACK",
-    message: `${component}を開始できなかったため、${fallback}で案内しています。`,
+    message:
+      `${component}を開始できなかったため、${fallback}で案内しています。` +
+      (reason ? ` 理由: ${reason}` : ""),
   };
 }
 

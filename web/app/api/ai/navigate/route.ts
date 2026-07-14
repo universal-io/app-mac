@@ -32,6 +32,8 @@ import type { OutputLanguageCode } from "@/lib/server/prompts";
 import { getServerEnv } from "@/lib/server/env";
 import { stateFallbackNotice } from "@/lib/server/operational-notice";
 import { createNavigateRunProposal } from "@/lib/server/navigate-run-snapshot";
+import { verifyNavigateRunInShadow } from "@/lib/server/navigate-run-verifier";
+import type { RuleVerifierResult } from "@/lib/server/navigate-verifier";
 
 // Vercel rejects bodies past ~4.5MB; the client keeps history light by
 // sending at most the first and the latest screenshot.
@@ -62,6 +64,8 @@ type NavigateRequestBody = {
     messages?: WireMessage[];
     hints?: NavigateHints;
     task?: WireTask;
+    run_snapshot?: unknown;
+    previous_observation?: unknown;
   };
   preferences?: {
     output_language?: string;
@@ -196,6 +200,28 @@ export async function POST(request: Request): Promise<Response> {
     await enforceQuota(tenantId, entitlement);
 
     const latestObservation = messages.find((message) => message.observation)?.observation;
+    let previousObservation: VisionObservation | undefined;
+    if (body.input?.run_snapshot !== undefined) {
+      const parsedPrevious = visionObservationSchema.safeParse(
+        body.input.previous_observation,
+      );
+      if (!parsedPrevious.success || !latestObservation) {
+        return errorResponse(
+          400,
+          "BAD_REQUEST",
+          "run_snapshotにはprevious_observationと最新observationが必要です。",
+          requestId,
+        );
+      }
+      previousObservation = parsedPrevious.data;
+    } else if (body.input?.previous_observation !== undefined) {
+      return errorResponse(
+        400,
+        "BAD_REQUEST",
+        "previous_observationにはrun_snapshotが必要です。",
+        requestId,
+      );
+    }
     const observationSources = latestObservation
       ? [...new Set(latestObservation.candidates.map((candidate) => candidate.source))]
       : [];
@@ -232,6 +258,13 @@ export async function POST(request: Request): Promise<Response> {
         task,
       },
       metadata,
+      runVerification: body.input?.run_snapshot !== undefined && previousObservation && latestObservation
+        ? {
+            snapshot: body.input.run_snapshot,
+            before: previousObservation,
+            after: latestObservation,
+          }
+        : undefined,
     });
   } catch (error) {
     if (error instanceof GatewayError) {
@@ -249,6 +282,11 @@ type StreamingResponseInput = {
   language: string;
   engineInput: Parameters<typeof runNavigateStream>[0];
   metadata: Record<string, unknown>;
+  runVerification?: {
+    snapshot: unknown;
+    before: VisionObservation;
+    after: VisionObservation;
+  };
 };
 
 /**
@@ -282,6 +320,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
           throw new ProviderCallError("Provider stream ended without a result.");
         }
         const notices = [...finalOutput.notices];
+        let verification: RuleVerifierResult | null = null;
         let runProposal: ReturnType<typeof createNavigateRunProposal> | null = null;
         const env = getServerEnv();
         if (
@@ -307,6 +346,26 @@ function streamingResponse(input: StreamingResponseInput): Response {
             notices.push(stateFallbackNotice(
               "新しいナビゲーション状態",
               "従来のクライアント管理方式",
+              fallbackReason(error),
+            ));
+          }
+        }
+        if (input.runVerification) {
+          try {
+            verification = await verifyNavigateRunInShadow({
+              tenantId: input.tenantId,
+              userId: input.userId,
+              ...input.runVerification,
+            });
+          } catch (error) {
+            console.error(
+              `[/api/ai/navigate] Run verification unavailable (request ${input.requestId}):`,
+              error instanceof Error ? error.message : error,
+            );
+            notices.push(stateFallbackNotice(
+              "新しいナビゲーション状態の検証",
+              "従来のステップ判定",
+              fallbackReason(error),
             ));
           }
         }
@@ -344,6 +403,9 @@ function streamingResponse(input: StreamingResponseInput): Response {
             model_fallback_from: finalOutput.modelFallbackFrom,
             operational_notice_codes: notices.map((notice) => notice.code),
             task_proposed: Boolean(finalOutput.proposedTask),
+            verifier_status: verification?.status,
+            verifier_reason: verification?.reason,
+            verifier_evidence_count: verification?.evidenceCandidateIds.length,
           },
         });
         send("result", {
@@ -367,6 +429,14 @@ function streamingResponse(input: StreamingResponseInput): Response {
             // Shadow-only until the macOS client explicitly starts v4. The
             // proposal creates no DB row and expires after ten minutes.
             run_proposal: runProposal,
+            verification: verification
+              ? {
+                  source: verification.source,
+                  status: verification.status,
+                  reason: verification.reason,
+                  evidence_candidate_ids: verification.evidenceCandidateIds,
+                }
+              : null,
             grounding: finalOutput.grounding
               ? {
                   capture_id: finalOutput.grounding.captureId,
@@ -437,4 +507,11 @@ function streamingResponse(input: StreamingResponseInput): Response {
       connection: "keep-alive",
     },
   });
+}
+
+/** Exposes actionable state failures without leaking raw provider/database details. */
+function fallbackReason(error: unknown): string {
+  return error instanceof GatewayError
+    ? error.message
+    : "内部処理で予期しないエラーが発生しました。再試行しても続く場合は管理者へ連絡してください。";
 }

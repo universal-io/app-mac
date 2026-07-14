@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、v4 Observation/AXとGrounder shadow実装中）
+最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、v4 Run/Verifier shadow実装中）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -146,14 +146,14 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 | A. 計測・入力契約 | eval、Observation、OCR/AX candidate、Grounder shadow | 完了 |
 | B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
 | C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **完了**（shadow、環境は未有効） |
-| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **進行中**（Pack ID接続完了、Run shadow判定が次） |
-| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | 未着手 |
+| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **進行中**（決定論shadow判定完了、model escalationが次） |
+| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | 未着手（D完了後） |
 | F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
 | G. 一般化 | Slack / Notionで同じgateを通し、v3を削除 | GA4合格後 |
 
-次の作業はCの**最小Run contract**。モデル選定の前に「誰がstepを進めたか」をGateway revisionで
-証明できるようにする工程で、全体ではv4縦切りの実行制御層に当たる。Runだけを先に肥大化させず、
-GA4 1経路に必要なcreate/read/advance/cancel/expireとtenant隔離、本文非保存だけを実装する。
+現在はDの**判定契約**。モデル選定の前に、どの画面差分を誰がどの条件でstep完了と判定したかを
+構造化して再現可能にする工程で、全体ではv4縦切りの判定層に当たる。Run revision更新はまだ接続せず、
+GA4 1経路のrule結果をshadow計測してからmodel escalationと状態更新gateへ進む。
 
 - [x] Run保存基盤: `0005_navigator_runs.sql` とservice-role専用repositoryを追加。tenant/user scope、
   revisionのcompare-and-swap、最終更新から24時間のTTL、expire/purge、本文非保存、store障害時の
@@ -179,8 +179,12 @@ Pack v1 recipeへtyped postconditionを加え、モデルを呼ばない決定�
 - [x] Pack v1 ID接続: `pack_version / recipe_id / step.id`を固定。v4 PlannerのID選択からGatewayが
   正規stepとpostconditionを復元し、ID創作・逆順・別recipe混在を拒否する。GA4国・地域経路へ
   URL/title/candidate根拠を付与し、DB用`0006_harness_pack_versions.sql`と組み込みfallbackを揃えた。
-- [ ] Run shadow判定: 現在stepのpostconditionとbefore/after Observationをrule Verifierへ渡し、
-  結果をtraceへ記録する。まずはshadow responseだけで、Run revision更新はgate確認後に接続する。
+- [x] Run shadow判定: macOSが署名済みsnapshotとstep開始時Observationを編集せず輸送し、Gatewayが
+  認証scope付きrowとの一致を確認してから、現在stepのpostconditionを最新Observationへ適用する。
+  status/reason/evidence件数をtrace、構造化結果をSSEへ返すが、Run revisionとv3 Taskは更新しない。
+  検証不能は`STATE_FALLBACK`で従来判定へ移った理由を表示し、改ざん・入力片落ちはfail-closed。
+- [ ] ambiguous model escalation: ruleで情報不足／矛盾の時だけ独立Verifier roleをstrict schemaで呼び、
+  rule結果と混同しないtraceを追加する。危険操作やstep advanceはmodel判定単独では確定しない。
 
 #### v4 Observation実装（2026-07-14開始）
 
@@ -207,8 +211,8 @@ Pack v1 recipeへtyped postconditionを加え、モデルを呼ばない決定�
 - [x] Recovered error transparency: Navigate/Review/Vision/Transcribeの`meta.notices`とmacOS共通警告
   バナーを追加。main/role model fallback、provider retry、Planner/Grounder/Locator部分失敗、
   Cloud→BYOK切替を成功結果から隠さない。
-- [ ] Verifier: typed postconditionの決定論判定を先に実装し、ambiguous時だけ独立provider roleへ
-  strict schemaでescalateする。状態遷移はGateway run revisionの更新で確定する。
+- [ ] Verifier: typed postconditionの決定論判定とRun shadow接続は完了。次はambiguous時だけ独立provider
+  roleへstrict schemaでescalateする。状態遷移はその計測gate後にGateway run revision更新で確定する。
 
 #### eval基盤の開始点（2026-07-14）
 

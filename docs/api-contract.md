@@ -695,7 +695,9 @@ Expected future use:
       "goal": "...",
       "steps": [{ "verbal": "...", "target": "画面上の正確なラベル", "fill": "任意" }],
       "current_step": 0
-    }
+    },
+    "run_snapshot": "v4 shadow中の署名済みsnapshot（任意）",
+    "previous_observation": "現在step開始時のObservation（run_snapshotと対で必須）"
   },
   "preferences": { "output_language": "japanese" },
   "client": { "platform": "macos", "app_version": "...", "build_number": "..." }
@@ -717,6 +719,10 @@ Expected future use:
   provider/harnessの挙動を変えないため従来hintsも併送する。
 - Gateway usage metadataには本文を保存せず、Observation有無、schema version、capture scope、
   transition state、candidate件数/sourceだけを記録する。
+- `run_snapshot`を送る場合は`previous_observation`と、messages内の最新`observation`が必須。
+  Gatewayは署名・認証scope・authoritative run rowを照合してから、snapshotの現在stepに署名された
+  postconditionだけを前後Observationへ適用する。片方だけ、または最新Observation無しは
+  `BAD_REQUEST`であり、別の状態を推測して継続しない。
 
 ### v4 Run proposal / snapshot（Gateway API実装済み・既定OFF）
 
@@ -772,8 +778,8 @@ PlannerがTaskを提案したSSE resultには、flag有効時だけ`result.run_p
 - screenshot、OCR、candidate label/rect、会話、モデル自由文はrun row/usage traceへ保存しない。
   signed Task snapshotはclientが輸送し、server rowにはhashだけを置く。
 - `0005_navigator_runs.sql`、Gateway内部repository、署名／改ざん検知、下記control API、macOSの
-  shadow start接続は実装済み。migrationと環境変数は未適用で、Verifier導入までは現行v3 Taskが
-  表示・step進行の正本であり続ける。
+  shadow start／rule-first verification接続は実装済み。migrationと環境変数は未適用で、shadow中は
+  現行v3 Taskが表示・step進行の正本であり続ける。
 - step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
   strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
 
@@ -818,7 +824,7 @@ Planner失敗として明示的にdegradeし、署名Taskへ入れない。
 ```
 
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
-（`{"result": {"text", "harness", "task", "grounding", "run_proposal"}, "meta": {"model_id"}}`）。
+（`{"result": {"text", "harness", "task", "grounding", "run_proposal", "verification"}, "meta": {"model_id"}}`）。
 feature flag下の `grounding` は `{capture_id, candidate_id, confidence, method}` または `null` の
 加算フィールドで、
 `BOMB_SQUAD_NAVIGATE_V4_ENABLED` が未設定／falseの間は常に `null`。shadow期間は従来markerを
@@ -829,6 +835,13 @@ feature flag下の `grounding` は `{capture_id, candidate_id, confidence, metho
 （詳細は [navigator-copilot-plan.md](navigator-copilot-plan.md)）。
 `result.meta.notices`は共通規約どおり表示する。初手main fallback、role別model fallback、
 Planner/Grounder/Locatorの部分失敗も成功結果から隠さない。
+
+`verification`はRun shadow inputを送った時だけ
+`{source:"rule", status, reason, evidence_candidate_ids}`、それ以外は`null`。statusは
+`verified / not_changed / ambiguous / blocked / complete`。現段階ではresponseとusage trace
+（status/reason/evidence件数）へ記録するだけで、Run revisionもv3 Taskも更新しない。署名検証・
+Run store・rule evaluationが利用不能でも主回答を返せる場合は`STATE_FALLBACK`で
+「新しい検証を使えず従来判定を表示した」ことをユーザーへ明示する。
 
 ## Account / Admin（実装済み・簡易記載）
 

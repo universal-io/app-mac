@@ -35,4 +35,12 @@ describe("operational notices", () => {
       message: "新しいナビゲーション状態を開始できなかったため、従来方式で案内しています。",
     });
   });
+
+  test("includes an actionable reason when state recovery has one", () => {
+    expect(stateFallbackNotice(
+      "新しいナビゲーション検証",
+      "従来判定",
+      "署名済み状態が期限切れです。",
+    ).message).toContain("理由: 署名済み状態が期限切れです。");
+  });
 });

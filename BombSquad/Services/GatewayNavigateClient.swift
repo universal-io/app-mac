@@ -53,6 +53,32 @@ struct NavigatorRunSnapshot: Equatable {
     fileprivate let json: Data
 }
 
+/// Rule-first result for one before/after Observation pair. During shadow it
+/// is diagnostic only; it must not advance the client-owned v3 task.
+struct NavigatorRuleVerification: Equatable {
+    enum Status: String {
+        case verified
+        case notChanged = "not_changed"
+        case ambiguous
+        case blocked
+        case complete
+    }
+
+    enum Reason: String {
+        case allPostconditionsMet = "ALL_POSTCONDITIONS_MET"
+        case noPostconditions = "NO_POSTCONDITIONS"
+        case observationUnstable = "OBSERVATION_UNSTABLE"
+        case captureScopeChanged = "CAPTURE_SCOPE_CHANGED"
+        case targetDisabled = "TARGET_DISABLED"
+        case noVisibleChange = "NO_VISIBLE_CHANGE"
+        case insufficientOrConflictingEvidence = "INSUFFICIENT_OR_CONFLICTING_EVIDENCE"
+    }
+
+    let status: Status
+    let reason: Reason
+    let evidenceCandidateIDs: [String]
+}
+
 /// One event of a streaming navigation answer (SSE from the gateway).
 enum NavigateStreamEvent {
     /// A plain-text increment of the answer as the model produces it.
@@ -65,7 +91,8 @@ enum NavigateStreamEvent {
         modelID: String?,
         task: NavigatorTask?,
         grounding: NavigatorCandidateGrounding?,
-        runProposal: NavigatorRunProposal?
+        runProposal: NavigatorRunProposal?,
+        verification: NavigatorRuleVerification?
     )
 }
 
@@ -100,11 +127,20 @@ struct GatewayNavigateClient {
         turns: [NavigateTurn],
         hints: SituationalContext?,
         language: OutputLanguage,
-        task: NavigatorTask? = nil
+        task: NavigatorTask? = nil,
+        runSnapshot: NavigatorRunSnapshot? = nil,
+        previousObservation: VisionObservation? = nil
     ) async throws -> AsyncThrowingStream<NavigateStreamEvent, Error> {
         let events = try await client.postSSE(
             "ai/navigate",
-            body: requestBody(turns: turns, hints: hints, language: language, task: task)
+            body: try requestBody(
+                turns: turns,
+                hints: hints,
+                language: language,
+                task: task,
+                runSnapshot: runSnapshot,
+                previousObservation: previousObservation
+            )
         )
 
         return AsyncThrowingStream { continuation in
@@ -128,7 +164,8 @@ struct GatewayNavigateClient {
                                 modelID: meta?["model_id"] as? String,
                                 task: Self.parseTask(result["task"]),
                                 grounding: Self.parseGrounding(result["grounding"]),
-                                runProposal: Self.parseRunProposal(result["run_proposal"])
+                                runProposal: Self.parseRunProposal(result["run_proposal"]),
+                                verification: try Self.parseVerification(result["verification"])
                             ))
                         default:
                             break
@@ -183,6 +220,27 @@ struct GatewayNavigateClient {
             candidateID: candidateID,
             confidence: confidence.doubleValue,
             method: method
+        )
+    }
+
+    private static func parseVerification(_ value: Any?) throws -> NavigatorRuleVerification? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard
+            let dict = value as? [String: Any],
+            dict["source"] as? String == "rule",
+            let rawStatus = dict["status"] as? String,
+            let status = NavigatorRuleVerification.Status(rawValue: rawStatus),
+            let rawReason = dict["reason"] as? String,
+            let reason = NavigatorRuleVerification.Reason(rawValue: rawReason),
+            let evidence = dict["evidence_candidate_ids"] as? [String],
+            evidence.allSatisfy({ !$0.isEmpty })
+        else {
+            throw ProviderError.decoding("ナビゲーション検証結果の形式が不正です")
+        }
+        return NavigatorRuleVerification(
+            status: status,
+            reason: reason,
+            evidenceCandidateIDs: evidence
         )
     }
 
@@ -346,8 +404,10 @@ struct GatewayNavigateClient {
         turns: [NavigateTurn],
         hints: SituationalContext?,
         language: OutputLanguage,
-        task: NavigatorTask?
-    ) -> [String: Any] {
+        task: NavigatorTask?,
+        runSnapshot: NavigatorRunSnapshot?,
+        previousObservation: VisionObservation?
+    ) throws -> [String: Any] {
         // An active copilot already carries its complete goal and plan in
         // `task`. Its request contract is history-free: latest capture plus an
         // optional direct user utterance after that capture. Assistant history
@@ -442,6 +502,22 @@ struct GatewayNavigateClient {
                 },
                 "current_step": task.currentStep,
             ] as [String: Any]
+        }
+        switch (runSnapshot, previousObservation) {
+        case let (.some(snapshot), .some(observation)):
+            input["run_snapshot"] = try Self.object(
+                from: snapshot.json,
+                label: "run snapshot"
+            )
+            input["previous_observation"] = observation.wirePayload(
+                includeEnvironment: hints != nil
+            )
+        case (nil, nil):
+            break
+        default:
+            throw ProviderError.decoding(
+                "ナビゲーション検証には署名済み状態と直前の画面情報の両方が必要です"
+            )
         }
 
         return GatewayClient.envelope(operation: "navigate", input: input, language: language)
