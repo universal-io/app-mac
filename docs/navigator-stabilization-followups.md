@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、v4 実行契約への並走移行準備）
+最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、v4 eval契約とGA4 smoke fixture作成済み）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -71,12 +71,23 @@ baseline として維持し、GA4 の1ユースケースだけを新しい実行
 
 ### 並走移行の順序
 
-1. 固定fixtureを検証できる eval runner と trace schema を作る（挙動変更なし）。
+1. [x] 固定fixtureを検証できる eval runner と trace schema を作る（挙動変更なし）。
 2. Observation / candidate ID / structured Verifier の契約を追加する。
 3. pack v1（version、app vendor、tenant overlay、継承、適用証跡）を追加する。
 4. GA4 の代表経路を feature flag 下で v4 に通し、現行v3と同じfixtureで比較する。
 5. OpenAI Responses API + GPT-5.6 品質上限を役割別に測る。
 6. GA4 合格後、Slack、Notionの一般利用タスクへ広げる。その後にfreeeや個社ERPを扱う。
+
+#### eval基盤の開始点（2026-07-14）
+
+- `web/evals/navigator` に strict schema、採点器、CLI、Vitest を追加。
+- 最初の `ga4-smoke-v1` は planner 2件（国・地域／デバイス）、重複する「概要」の
+  candidate ID grounding 1件、before/after Observation の verifier 1件。計9 assertion。
+- 人手確認referenceは `npm run eval:navigator:check` で 9/9。既知の「国・地域を
+  テクノロジー→概要へ誤誘導」を混ぜたunit testが失敗を検出する。
+- 現時点のObservationは合成データで、実画像とモデルAPIは未接続。これは採点契約だけを先に
+  固定し、モデル・prompt・入力品質を同時変更しないため。次に実画面captureをfixtureへ追加し、
+  現行v3の出力をbaseline resultとして保存する。
 
 ## 1. 現行実装の事実（検証開始点）
 

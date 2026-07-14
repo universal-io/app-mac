@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "run": {
+    "run_id": "ga4-reference-v1",
+    "created_at": "2026-07-14T00:10:00.000Z",
+    "implementation": "human-reviewed-reference",
+    "model_provider": "none",
+    "model_id": "reference",
+    "pack_versions": ["generic@draft-v1", "ga4@seed-v0"]
+  },
+  "cases": [
+    {
+      "case_id": "ga4-plan-country-region",
+      "planner": {
+        "feasible": true,
+        "goal": "訪問者を国・地域別に確認する",
+        "steps": [
+          { "verbal": "レポートを開く", "target": "レポート" },
+          { "verbal": "ユーザー属性を開く", "target": "ユーザー属性" },
+          { "verbal": "ユーザー属性の詳細を開く", "target": "ユーザー属性の詳細" },
+          { "verbal": "表を国または地域へ切り替えて読む" }
+        ]
+      }
+    },
+    {
+      "case_id": "ga4-plan-device-category",
+      "planner": {
+        "feasible": true,
+        "goal": "デバイス別の利用数を比較する",
+        "steps": [
+          { "verbal": "レポートを開く", "target": "レポート" },
+          { "verbal": "テクノロジーを開く", "target": "テクノロジー" },
+          { "verbal": "ユーザーの環境の詳細を開く", "target": "ユーザーの環境の詳細" },
+          { "verbal": "デバイスカテゴリ別の表を読む" }
+        ]
+      }
+    },
+    {
+      "case_id": "ga4-ground-duplicate-overview",
+      "grounding": {
+        "candidate_id": "ax:demographics-overview",
+        "confidence": 1
+      }
+    },
+    {
+      "case_id": "ga4-verify-country-page",
+      "verifier": {
+        "status": "verified",
+        "confidence": 1,
+        "evidence_candidate_ids": ["ax:page-title", "ax:country-dimension"]
+      }
+    }
+  ]
+}
