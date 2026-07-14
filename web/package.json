@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "eval:navigator": "tsx evals/navigator/run.ts",
+    "eval:navigator:capture-v3": "tsx evals/navigator/capture-current-v3.ts",
     "eval:navigator:check": "npm run eval:navigator -- --fixtures evals/navigator/fixtures/ga4-smoke.v1.json --results evals/navigator/results/ga4-reference.v1.json"
   },
   "dependencies": {

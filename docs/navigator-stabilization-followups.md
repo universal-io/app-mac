@@ -88,6 +88,9 @@ baseline として維持し、GA4 の1ユースケースだけを新しい実行
 - 現時点のObservationは合成データで、実画像とモデルAPIは未接続。これは採点契約だけを先に
   固定し、モデル・prompt・入力品質を同時変更しないため。次に実画面captureをfixtureへ追加し、
   現行v3の出力をbaseline resultとして保存する。
+- `eval:navigator:capture-v3` はローカルの既存設定を読み、現行 `runNavigateStream` をそのまま
+  通してplanner結果・モデルID・未版管理pack ID・遅延・tokenをresult JSONへ保存する。
+  評価用に別promptを複製しないため、将来の比較baselineも実運用経路とのドリフトを避けられる。
 
 ## 1. 現行実装の事実（検証開始点）
 
