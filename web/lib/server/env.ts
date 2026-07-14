@@ -62,7 +62,7 @@ export function getServerEnv(): ServerEnv {
       normalize(process.env.BOMB_SQUAD_NAVIGATE_FAST_MODEL_VENDOR) ?? "groq",
     navigateFastModelId:
       normalize(process.env.BOMB_SQUAD_NAVIGATE_FAST_MODEL_ID) ??
-      "meta-llama/llama-4-scout-17b-16e-instruct",
+      "qwen/qwen3.6-27b",
     navigateV4Enabled: parseBoolean(process.env.BOMB_SQUAD_NAVIGATE_V4_ENABLED),
     // Comma-separated allowlist for the admin console (v0 authorization;
     // admin-dashboard-plan §2). Empty list means nobody is an admin.

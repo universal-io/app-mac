@@ -146,7 +146,7 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
 `web/lib/server/env.ts` の既定値は次の2段構成。本番は環境変数で上書きできるため、
 最初に admin/runtime で実際の値を確認する。
 
-- 自動初手（画面認識1文）: Groq `meta-llama/llama-4-scout-17b-16e-instruct`
+- 自動初手（画面認識1文）: Groq `qwen/qwen3.6-27b`（non-thinking。失敗時はmainへ1回fallback）
 - 通常質問・プランナー・ロケーター補追: OpenAI `gpt-5.4-mini`
 
 したがって「Copilot が全て Groq」ではない。速度優先は自動初手に限定され、
@@ -230,9 +230,11 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
 
 #### 2026-07-13 公式仕様調査
 
-現行の高速初手 `meta-llama/llama-4-scout-17b-16e-instruct` は、Groq の
+旧高速初手 `meta-llama/llama-4-scout-17b-16e-instruct` は、Groq の
 [廃止予定](https://console.groq.com/docs/deprecations)で **2026-07-17 に停止予定**。
-品質改善とは別に置換が必須であり、以降は比較時の期限付き baseline としてのみ扱う。
+2026-07-14にコード既定を画像対応の `qwen/qwen3.6-27b`（non-thinking）へ置換した。
+fast routeがnetwork error／非2xx／body無しになった場合は、初手に限りmain modelへ1回fallbackする。
+本番envが旧modelを明示上書きしていても停止で初手全体を失敗させない。旧modelは比較用baselineに限る。
 
 - Groq 内で同じ「画像を直接受ける高速初手」の比較候補は
   [`qwen/qwen3.6-27b`](https://console.groq.com/docs/model/qwen/qwen3.6-27b)。画像入力、
@@ -255,7 +257,7 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
 
 | 役割 | 現行 baseline | 最初の比較候補 | 判定したいこと |
 |---|---|---|---|
-| 自動初手（画像→1文） | Llama 4 Scout（7/17停止） | Qwen 3.6 27B / `gpt-5.4-mini` | 初手精度を落とさず停止モデルを置換できるか |
+| 自動初手（画像→1文） | Qwen 3.6 27B（non-thinking、main fallback付き） | `gpt-5.4-mini` | 初手精度・TTFTとPreview運用リスクを比較 |
 | 通常QA・計画・進捗判定 | `gpt-5.4-mini` | GPT-5.6 品質優先 / バランス型 | 数秒の追加待ちで実用精度が改善するか |
 | text-only planner（分離案） | なし | GPT-OSS 120B | 視覚結果を構造化した後なら有効か |
 | locator / grounding | `gpt-5.4-mini` 補追 | Gemini Flash / Pro 系 | 重複ラベルや座標特定が改善するか |

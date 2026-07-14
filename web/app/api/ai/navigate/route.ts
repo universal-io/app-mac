@@ -302,6 +302,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
             grounding_method: finalOutput.grounding?.method,
             grounding_input_tokens: finalOutput.groundingInputTokens,
             grounding_output_tokens: finalOutput.groundingOutputTokens,
+            model_fallback_from: finalOutput.modelFallbackFrom,
             task_proposed: Boolean(finalOutput.proposedTask),
           },
         });
