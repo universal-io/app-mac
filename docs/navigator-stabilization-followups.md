@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-13 ／ ステータス: **進行中**（`feature/copilot-accuracy`、`main` の keyboard bindings 統合済み）
+最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、現行経路監査と品質上限モデル選定済み）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -39,6 +39,54 @@
 
 差分判定はフル解像度の完全一致ではなく、縮小グレースケール画像の平均差分で行う。
 これにより「遷移開始前の2枚が偶然一致」「変化中の3枚目を無条件採用」の両方を避ける。
+
+### 2026-07-14 現行経路監査
+
+モデル差し替えの前に、macOS の状態遷移から Gateway の本文・プランナー・
+ロケーター補追までを終端間で監査した。結論は、**モデルだけを高性能化しても品質上限を
+正しく測れない**。比較開始前に次の評価ブロッカーを分離する。
+
+#### P0（品質上限の測定を壊す）
+
+1. **Task が決定論データになっていない**
+   - Gateway の `taskBlock` は `steps[].verbal` しかモデルに渡さず、Task に保存した
+     `target` / `fill` を落としている。
+   - クライアントも未完了ターンでは Task の `target` ではなく、毎回モデルが返す
+     `[[target]]` を信頼してハイライトする。帯の指示文も Task 本体ではなくモデル回答。
+   - そのため「プランはデータ、LLM は現在ステップの確認だけ」という設計契約が
+     実行時に崩れている。
+2. **GPT-5.6 の品質上限は現行 API 実装では出ない**
+   - 現行は OpenAI-compatible Chat Completions のみ。OpenAI の現行ガイドは推論・
+     マルチターンに Responses API を推奨し、最高品質の `reasoning.mode: "pro"` も
+     Responses API 限定。
+   - 現行上限は本文 1,200 / planner 1,500 / locator 400 `max_completion_tokens`。
+     推論トークンもこの上限を消費するため、高い reasoning effort では表示文より前に
+     上限到達する可能性がある。公式の初期検証目安は reasoning + output に 25,000 以上。
+3. **古いタスク提案が次の質問に残る**
+   - `sendNavigatorQuestion` は `navigatorProposedTask` を消さない。次の planner が
+     `null` または失敗した場合、前の質問の「ナビゲーション開始」が残る。
+4. **遷移検出の baseline と candidate が同じ撮影範囲とは限らない**
+   - 初回が範囲選択でも、Copilot 再キャプチャは常にディスプレイ全体。画面が
+     変わっていなくても「変化開始」と判定しうる。
+   - 撮影ディスプレイも直前 attachment の中心に固定。クリック後に別ディスプレイへ
+     ウィンドウが開いた場合は古い側を撮り続ける。
+   - 撮影自体の失敗はログのみで、`waitingForChange` が残る可能性がある。
+
+#### P1（比較の帰属と再現性を壊す）
+
+- 本文、planner、locator supplement が同じ model ID に束ねられ、役割別の成否を
+  分離できない。step verifier も独立せず本文回答と `[[step:done]]` を兼用。
+- planner と locator の失敗は best-effort で握りつぶされ、planner の token / 成否 / 失敗理由は
+  usage に記録されない。比較時のコストと失敗箇所を誤帰属する。
+- クライアントは URL hint を送らず、セッション開始時の app / window title を
+  再キャプチャ後も使い続ける。タブ・ウィンドウ・アプリが変わると harness が stale になる。
+- 通常 Navigator Q&A は全履歴を残すが Gateway は 24 messages 上限。クライアント側に
+  上限前の切り詰めがなく、長い通常 Q&A は 400 で終了する。
+- モデルに届く画像は長辺 1,600px / JPEG 0.7 へ事前縮小済み。API で
+  `detail: original` にしても失われた細かい UI 文字は戻らない。「モデルの公平比較」と
+  「入力を含むシステム品質上限」は別実験にする。
+- 固定入力の eval runner と fixture がない。プロンプト、画像、モデル、キャプチャ判定を
+  同時に変えると改善要因を証明できない。
 
 ## 2. 検証順序
 
@@ -85,6 +133,32 @@
 | 通常QA・計画・進捗判定 | `gpt-5.4-mini` | GPT-5.6 品質優先 / バランス型 | 数秒の追加待ちで実用精度が改善するか |
 | text-only planner（分離案） | なし | GPT-OSS 120B | 視覚結果を構造化した後なら有効か |
 | locator / grounding | `gpt-5.4-mini` 補追 | Gemini Flash / Pro 系 | 重複ラベルや座標特定が改善するか |
+
+#### 2026-07-14 選定結果（品質上限の最初の候補）
+
+**最初は OpenAI [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol)
+（alias: `gpt-5.6`）を品質上限 baseline にする。**
+これは「全社比較で必ず一位」と先に決める意味ではない。現行 Gateway が OpenAI を
+持ち、画像入力・推論・computer-use 系能力を持つ公式の最上位モデルを最小の
+移行幅で検証できるため、最初のフィジビリティ測定に最適と判断した。
+
+品質上限構成:
+
+- API: OpenAI Responses API（Chat Completions の model ID 差し替えで終わらせない）
+- model: `gpt-5.6-sol`
+- image: `detail: original`。モデル公平比較では現行 1,600px 入力を固定し、
+  別の「システム上限」実験で未縮小入力を比較する。
+- planner / step verifier: `reasoning.mode: "pro"`, `reasoning.effort: "max"`, 構造化出力。
+- 本文: まず standard + `reasoning.effort: "max"` でストリーミングを保つ。
+  同一 eval で pro + max（単一最終回答）も比較し、品質差があれば上限値に採用。
+- output budget: 少なくとも初期検証は reasoning + visible output に 25,000 tokens を予約。
+
+次の challenger は、空間理解を比較する Google
+[`gemini-3.1-pro-preview`](https://ai.google.dev/gemini-api/docs/gemini-3)、その後に Anthropic の最上位
+[`claude-fable-5`](https://platform.claude.com/docs/en/about-claude/models/overview)。
+後者は現行 `VENDOR_ENDPOINTS` では呼べず専用 adapter が
+必要なため、GPT baseline の後にする。「最も正確」の最終判定は公式の序列ではなく、
+本プロダクトの同一 golden set の task / step / completion / locator 合格率で決める。
 
 モデル変更前に admin の「実効モデル設定」で本番環境変数による上書きを確認する。
 2026-07-13 時点で `web/.env.local` にモデル上書きはなく、ローカルはコード既定値どおり。

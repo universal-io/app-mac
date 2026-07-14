@@ -622,7 +622,7 @@ Expected future use:
       "current_step": 0
     }
   },
-  "preferences": { "output_language": "ja" },
+  "preferences": { "output_language": "japanese" },
   "client": { "platform": "macos", "app_version": "...", "build_number": "..." }
 }
 ```
@@ -634,7 +634,7 @@ Expected future use:
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
 （`{"result": {"text", "harness", "task"}, "meta": {"model_id"}}`）。エラーは `error` イベント
 または非 2xx の JSON（共通エラー契約）。`result.text` には決定論マーカー
-`[[target:ラベル]]` / `[[loc:x,y,w,h]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
+`[[target:ラベル]]` / `[[loc:x0,y0,x1,y1]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
 クライアント（`NavigatorLocator`）が抽出して OCR grounding と突き合わせる
 （詳細は [navigator-copilot-plan.md](navigator-copilot-plan.md)）。
 
