@@ -33,7 +33,11 @@ struct ScreenshotCaptureService {
     /// the model. Throws `noCaptureTarget` when no display can be resolved.
     func captureFullScreen(displayID: CGDirectDisplayID?) async throws -> ScreenshotAttachment {
         let (image, _, resolvedID) = try await captureDisplayImage(displayID: displayID)
-        return try Self.writeAttachment(image, captureRect: CGDisplayBounds(resolvedID))
+        return try Self.writeAttachment(
+            image,
+            captureScope: .display,
+            captureRect: CGDisplayBounds(resolvedID)
+        )
     }
 
     /// Capture a region of the display, given in screen-local points with a
@@ -63,7 +67,7 @@ struct ScreenshotCaptureService {
             width: rect.width,
             height: rect.height
         )
-        return try Self.writeAttachment(cropped, captureRect: globalRect)
+        return try Self.writeAttachment(cropped, captureScope: .region, captureRect: globalRect)
     }
 
     private func captureDisplayImage(
@@ -109,6 +113,7 @@ struct ScreenshotCaptureService {
 
     private static func writeAttachment(
         _ image: CGImage,
+        captureScope: ScreenshotCaptureScope,
         captureRect: CGRect?
     ) throws -> ScreenshotAttachment {
         let outputURL = try makeCaptureOutputURL()
@@ -122,6 +127,7 @@ struct ScreenshotCaptureService {
             url: outputURL,
             pixelWidth: image.width,
             pixelHeight: image.height,
+            captureScope: captureScope,
             captureRect: captureRect
         )
     }
@@ -158,7 +164,8 @@ struct ScreenshotCaptureService {
                     continuation.resume(returning: ScreenshotAttachment(
                         url: outputURL,
                         pixelWidth: size?.width,
-                        pixelHeight: size?.height
+                        pixelHeight: size?.height,
+                        captureScope: .unknown
                     ))
                 } catch {
                     continuation.resume(throwing: error)

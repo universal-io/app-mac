@@ -89,7 +89,10 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 - [x] Gateway/API: `message.observation` v1のstrict schema、最新1件制約、後方互換受理、
   非本文usage metadataを追加。provider promptはまだv3のまま（shadow mode）。
 - [x] Eval: fixture独自schemaを廃止し、本番 `lib/context/observation.ts` を正本として共有。
-- [ ] macOS: attachment + capture時点environment + OCR候補からObservationを生成し、最新turnだけ送る。
+- [x] macOS: attachment + capture時点environment + OCR候補からObservationを生成し、最新turnだけ送る。
+  capture ID／撮影時刻／範囲／pixel・screen座標をattachmentから引き継ぎ、OCR候補には
+  同一capture内で安定する `ocr:<index>` IDを付ける。app/windowは再キャプチャごとに取得し、
+  context除外時はenvironmentだけを送らない。URL、AX候補、実遷移状態は後続実装。
 - [ ] AX候補: OCRとは別sourceでrole/state/親文脈を収集し、同一capture内の安定IDを付ける。
 - [ ] Grounder/Verifier: candidate ID選択とbefore/after構造化判定をprovider roleとして接続する。
 

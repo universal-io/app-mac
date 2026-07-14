@@ -13,6 +13,7 @@ struct NavigateTurn {
     var imageBase64: String?
     var mediaType: String?
     var ocrText: String?
+    var observation: VisionObservation? = nil
 }
 
 /// The session's step plan (docs/navigator-copilot-plan.md §3-a). Generated
@@ -237,7 +238,9 @@ struct GatewayNavigateClient {
         let effectiveTurns: [NavigateTurn]
         if task != nil {
             let latestCaptureIndex = turns.indices.last {
-                turns[$0].imageBase64 != nil || turns[$0].ocrText != nil
+                turns[$0].imageBase64 != nil
+                    || turns[$0].ocrText != nil
+                    || turns[$0].observation != nil
             }
             let tailStart = max(0, turns.count - 2)
             var keptIndices = Set(tailStart..<turns.count)
@@ -257,7 +260,9 @@ struct GatewayNavigateClient {
         // an OCR-only turn as a capture too, so a failed image encode cannot
         // accidentally resurrect the previous screenshot.
         let captureIndices = effectiveTurns.indices.filter {
-            effectiveTurns[$0].imageBase64 != nil || effectiveTurns[$0].ocrText != nil
+            effectiveTurns[$0].imageBase64 != nil
+                || effectiveTurns[$0].ocrText != nil
+                || effectiveTurns[$0].observation != nil
         }
         let latestCaptureIndex = captureIndices.last
 
@@ -266,7 +271,7 @@ struct GatewayNavigateClient {
             if let text = turn.text, !text.isEmpty {
                 payload["text"] = text
             } else if index != latestCaptureIndex,
-                      turn.imageBase64 != nil || turn.ocrText != nil {
+                      turn.imageBase64 != nil || turn.ocrText != nil || turn.observation != nil {
                 // Without a neutral text payload the gateway treats every
                 // image-stripped historical capture as another fresh
                 // re-capture instruction. Preserve the turn boundary while
@@ -279,6 +284,14 @@ struct GatewayNavigateClient {
             }
             if index == latestCaptureIndex, let ocr = turn.ocrText, !ocr.isEmpty {
                 payload["ocr_text"] = ocr
+            }
+            if index == latestCaptureIndex, let observation = turn.observation {
+                // Context exclusion applies to capture-time app/window identity
+                // as well as legacy hints. OCR candidates remain part of the
+                // explicitly captured screen and are still sent.
+                payload["observation"] = observation.wirePayload(
+                    includeEnvironment: hints != nil
+                )
             }
             return payload
         }
