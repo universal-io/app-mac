@@ -20,6 +20,10 @@ import {
   type CandidateGrounding,
   type GrounderExecution,
 } from "@/lib/server/navigate-grounder";
+import {
+  navigatorResponseFormat,
+  parseJSONValue,
+} from "@/lib/server/navigate-structured-output";
 
 const VENDOR_ENDPOINTS: Record<string, string> = {
   groq: "https://api.groq.com/openai/v1/chat/completions",
@@ -147,6 +151,7 @@ export async function* runNavigateStream(
     ? planTask({
         endpoint,
         apiKey,
+        vendor,
         modelId,
         recipes: harness!.recipes!,
         question: lastMessage.text!.trim(),
@@ -310,6 +315,7 @@ export async function* runNavigateStream(
       grounding = await groundObservationCandidate({
         endpoint,
         apiKey,
+        vendor,
         modelId,
         observation,
         targetLabel,
@@ -447,6 +453,7 @@ ${JSON.stringify(recipes, null, 1)}
 async function planTask(args: {
   endpoint: string;
   apiKey: string;
+  vendor: string;
   modelId: string;
   recipes: Recipe[];
   question: string;
@@ -476,6 +483,11 @@ async function planTask(args: {
     body: JSON.stringify({
       model: args.modelId,
       max_completion_tokens: 1500,
+      response_format: navigatorResponseFormat(
+        args.vendor,
+        "navigator_task",
+        PLANNER_RESPONSE_SCHEMA,
+      ),
       messages: [
         { role: "system", content: plannerSystemPrompt(args.recipes, args.language) },
         { role: "user", content: userParts },
@@ -490,17 +502,9 @@ async function planTask(args: {
   return parsePlannedTask(json.choices?.[0]?.message?.content ?? "");
 }
 
-/** Lenient parse + hard validation: whatever shape the model returns, only a
- * well-formed bounded task ever reaches the client. */
+/** Parse one complete JSON value, then enforce the bounded Task contract. */
 export function parsePlannedTask(content: string): NavigateTask | null {
-  const blob = content.match(/\{[\s\S]*\}/)?.[0];
-  if (!blob) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(blob);
-  } catch {
-    return null;
-  }
+  const parsed = parseJSONValue(content);
   if (typeof parsed !== "object" || parsed === null) return null;
   const root = parsed as { feasible?: unknown; goal?: unknown; steps?: unknown };
   if (root.feasible !== true) return null;
@@ -526,6 +530,31 @@ export function parsePlannedTask(content: string): NavigateTask | null {
   }
   return { goal: root.goal.trim(), steps, currentStep: 0 };
 }
+
+const PLANNER_RESPONSE_SCHEMA = {
+  type: "object",
+  properties: {
+    feasible: { type: "boolean" },
+    goal: { type: "string", maxLength: 200 },
+    steps: {
+      type: "array",
+      minItems: 0,
+      maxItems: 8,
+      items: {
+        type: "object",
+        properties: {
+          verbal: { type: "string", maxLength: 300 },
+          target: { type: ["string", "null"], maxLength: 120 },
+          fill: { type: ["string", "null"], maxLength: 500 },
+        },
+        required: ["verbal", "target", "fill"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["feasible", "goal", "steps"],
+  additionalProperties: false,
+};
 
 /** One non-streaming mini-call that turns a marker-less answer into a
  * locator. Returns null when the model answers NONE or emits no marker. */

@@ -103,6 +103,9 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 - [x] Grounder client projection: responseのcapture IDが最新Observationと一致し、confidence 0.85以上の
   candidateだけをmacOS highlight/action labelへ接続。rect無し・低confidence・不明IDはv3 OCR/markerへ
   fallbackし、step完了turnはVerifier導入までcandidate projectionの対象外とする。
+- [x] Structured role output: 非streamingのPlanner/Grounderは、OpenAIではstrict JSON Schema、
+  互換providerではJSON object modeを要求する。コードフェンスや説明文からJSONをregex抽出する
+  救済は廃止し、契約違反を安全なfallbackとして扱う。本文回答のSSE契約は変更しない。
 - [ ] Verifier: before/after Observationの構造化判定を独立provider roleとして接続する。
 
 #### eval基盤の開始点（2026-07-14）

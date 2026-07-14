@@ -10,6 +10,7 @@ describe("Navigator v4 grounder contract", () => {
     const result = await groundObservationCandidate({
       endpoint: "https://provider.invalid",
       apiKey: "unused",
+      vendor: "openai",
       modelId: "unused",
       targetLabel: "ユーザー属性",
       context: "GA4 navigation",
@@ -56,6 +57,13 @@ describe("Navigator v4 grounder contract", () => {
   test("rejects an out-of-range confidence", () => {
     expect(parseGrounderResponse(
       '{"candidate_id":"ax:demographics-overview","confidence":1.2}',
+      new Set(["ax:demographics-overview"]),
+    )).toBeNull();
+  });
+
+  test("rejects decorated JSON instead of extracting a blob", () => {
+    expect(parseGrounderResponse(
+      '```json\n{"candidate_id":"ax:demographics-overview","confidence":0.9}\n```',
       new Set(["ax:demographics-overview"]),
     )).toBeNull();
   });
