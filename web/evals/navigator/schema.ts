@@ -1,37 +1,16 @@
 import { z } from "zod";
 
+import {
+  observationCandidateSchema,
+  visionObservationSchema,
+} from "../../lib/context/observation";
+
 const nonEmpty = z.string().trim().min(1);
 
-export const rectSchema = z.strictObject({
-  x: z.number().min(0),
-  y: z.number().min(0),
-  width: z.number().positive(),
-  height: z.number().positive(),
-});
-
-export const candidateSchema = z.strictObject({
-  id: nonEmpty,
-  source: z.enum(["ocr", "ax", "dom", "vendor_api"]),
-  role: nonEmpty.optional(),
-  label: nonEmpty,
-  rect: rectSchema.optional(),
-  parent_label: nonEmpty.optional(),
-  states: z
-    .array(z.enum(["selected", "expanded", "collapsed", "disabled", "focused", "loading"]))
-    .default([]),
-});
-
-export const observationSchema = z.strictObject({
-  capture_id: nonEmpty,
-  captured_at: z.iso.datetime(),
-  app_name: nonEmpty,
-  bundle_id: nonEmpty.optional(),
-  window_title: nonEmpty.optional(),
-  url: z.url().optional(),
-  transition_state: z.enum(["stable", "waiting_for_change", "settling", "timed_out"]),
+export const evalObservationSchema = visionObservationSchema.extend({
   image_path: nonEmpty.optional(),
   ocr_text: z.string().optional(),
-  candidates: z.array(candidateSchema),
+  candidates: z.array(observationCandidateSchema),
 });
 
 const plannerExpectationSchema = z.strictObject({
@@ -63,8 +42,8 @@ export const navigatorFixtureCaseSchema = z.strictObject({
   input: z.strictObject({
     language: z.enum(["japanese", "english"]),
     question: nonEmpty,
-    observation: observationSchema,
-    previous_observation: observationSchema.optional(),
+    observation: evalObservationSchema,
+    previous_observation: evalObservationSchema.optional(),
   }),
   expected: z.strictObject({
     planner: plannerExpectationSchema.optional(),

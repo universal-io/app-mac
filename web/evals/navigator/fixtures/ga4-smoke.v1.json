@@ -11,12 +11,17 @@
         "language": "japanese",
         "question": "訪問者を国や地域別に見たい",
         "observation": {
-          "capture_id": "ga4-country-start",
+          "schema_version": 1,
+          "capture_id": "11111111-1111-4111-8111-111111111111",
           "captured_at": "2026-07-14T00:00:00.000Z",
-          "app_name": "Google Chrome",
-          "bundle_id": "com.google.Chrome",
-          "window_title": "アナリティクス",
-          "url": "https://analytics.google.com/",
+          "capture_scope": "display",
+          "coordinate_space": "normalized_top_left",
+          "environment": {
+            "app_name": "Google Chrome",
+            "bundle_id": "com.google.Chrome",
+            "window_title": "アナリティクス",
+            "url": "https://analytics.google.com/"
+          },
           "transition_state": "stable",
           "ocr_text": "レポート ユーザー属性 テクノロジー 概要",
           "candidates": [
@@ -42,12 +47,17 @@
         "language": "japanese",
         "question": "mobileとdesktopの利用数を比べたい",
         "observation": {
-          "capture_id": "ga4-device-start",
+          "schema_version": 1,
+          "capture_id": "22222222-2222-4222-8222-222222222222",
           "captured_at": "2026-07-14T00:00:01.000Z",
-          "app_name": "Google Chrome",
-          "bundle_id": "com.google.Chrome",
-          "window_title": "アナリティクス",
-          "url": "https://analytics.google.com/",
+          "capture_scope": "display",
+          "coordinate_space": "normalized_top_left",
+          "environment": {
+            "app_name": "Google Chrome",
+            "bundle_id": "com.google.Chrome",
+            "window_title": "アナリティクス",
+            "url": "https://analytics.google.com/"
+          },
           "transition_state": "stable",
           "ocr_text": "レポート ユーザー属性 テクノロジー",
           "candidates": [
@@ -73,12 +83,17 @@
         "language": "japanese",
         "question": "ユーザー属性の下にある概要を開きたい",
         "observation": {
-          "capture_id": "ga4-duplicate-overview",
+          "schema_version": 1,
+          "capture_id": "33333333-3333-4333-8333-333333333333",
           "captured_at": "2026-07-14T00:00:02.000Z",
-          "app_name": "Google Chrome",
-          "bundle_id": "com.google.Chrome",
-          "window_title": "アナリティクス",
-          "url": "https://analytics.google.com/",
+          "capture_scope": "display",
+          "coordinate_space": "normalized_top_left",
+          "environment": {
+            "app_name": "Google Chrome",
+            "bundle_id": "com.google.Chrome",
+            "window_title": "アナリティクス",
+            "url": "https://analytics.google.com/"
+          },
           "transition_state": "stable",
           "ocr_text": "ユーザー属性 概要 テクノロジー 概要 ビジネス目標 概要",
           "candidates": [
@@ -100,12 +115,17 @@
         "language": "japanese",
         "question": "ユーザー属性の詳細を開いたか確認して",
         "previous_observation": {
-          "capture_id": "ga4-country-before",
+          "schema_version": 1,
+          "capture_id": "44444444-4444-4444-8444-444444444444",
           "captured_at": "2026-07-14T00:00:03.000Z",
-          "app_name": "Google Chrome",
-          "bundle_id": "com.google.Chrome",
-          "window_title": "アナリティクス",
-          "url": "https://analytics.google.com/",
+          "capture_scope": "display",
+          "coordinate_space": "normalized_top_left",
+          "environment": {
+            "app_name": "Google Chrome",
+            "bundle_id": "com.google.Chrome",
+            "window_title": "アナリティクス",
+            "url": "https://analytics.google.com/"
+          },
           "transition_state": "stable",
           "ocr_text": "ユーザー属性 ユーザー属性の詳細",
           "candidates": [
@@ -113,12 +133,17 @@
           ]
         },
         "observation": {
-          "capture_id": "ga4-country-after",
+          "schema_version": 1,
+          "capture_id": "55555555-5555-4555-8555-555555555555",
           "captured_at": "2026-07-14T00:00:05.000Z",
-          "app_name": "Google Chrome",
-          "bundle_id": "com.google.Chrome",
-          "window_title": "ユーザー属性の詳細 - アナリティクス",
-          "url": "https://analytics.google.com/analytics/web/#/reports/demographics-details",
+          "capture_scope": "display",
+          "coordinate_space": "normalized_top_left",
+          "environment": {
+            "app_name": "Google Chrome",
+            "bundle_id": "com.google.Chrome",
+            "window_title": "ユーザー属性の詳細 - アナリティクス",
+            "url": "https://analytics.google.com/analytics/web/#/reports/demographics-details"
+          },
           "transition_state": "stable",
           "ocr_text": "ユーザー属性の詳細 国 ユーザー 新規ユーザー",
           "candidates": [

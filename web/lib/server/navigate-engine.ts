@@ -7,6 +7,7 @@
 
 import { getServerEnv } from "@/lib/server/env";
 import { ProviderCallError } from "@/lib/server/review-engine";
+import type { VisionObservation } from "@/lib/context/observation";
 import {
   selectHarness,
   type Harness,
@@ -35,6 +36,9 @@ export type NavigateMessage = {
   text?: string;
   imageDataURL?: string;
   ocrText?: string;
+  /** Versioned capture snapshot. Accepted and traced in v4 shadow mode;
+   * provider prompting still follows the v3 image/OCR contract for now. */
+  observation?: VisionObservation;
 };
 
 export type NavigateTaskStep = {

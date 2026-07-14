@@ -602,6 +602,11 @@ Expected future use:
 実装: `web/app/api/ai/navigate/route.ts` + `web/lib/server/navigate-engine.ts`（プロンプト・
 モデル段階選択・ハーネス選択はサーバー所有）。クライアント: `GatewayNavigateClient`。
 
+**2026-07-14 v4 shadow contract**: user messageは、従来の画像/OCRに加えて同じcaptureの
+`observation` v1を任意で送れる。Gatewayはstrictに検証して計測するが、現段階のprovider promptと
+レスポンスはv3のまま。旧クライアントは`observation`無しで引き続き動く。1リクエストに送れるのは
+最新Observation 1件だけで、assistant messageには付けられない。
+
 リクエスト（共通エンベロープ準拠）:
 
 ```json
@@ -613,7 +618,34 @@ Expected future use:
       { "role": "user",
         "text": "任意（auto first turn は text 無しの画像のみ）",
         "image_base64": "最新キャプチャのみ", "media_type": "image/jpeg",
-        "ocr_text": "最新キャプチャのローカルOCR全文" }
+        "ocr_text": "最新キャプチャのローカルOCR全文",
+        "observation": {
+          "schema_version": 1,
+          "capture_id": "uuid",
+          "captured_at": "ISO 8601 UTC",
+          "capture_scope": "display | region | unknown",
+          "coordinate_space": "normalized_top_left",
+          "pixel_size": { "width": 1600, "height": 1000 },
+          "screen_rect": { "x": 0, "y": 0, "width": 1440, "height": 900 },
+          "environment": {
+            "app_name": "Google Chrome",
+            "bundle_id": "com.google.Chrome",
+            "window_title": "アナリティクス",
+            "url": "https://analytics.google.com/"
+          },
+          "transition_state": "stable",
+          "candidates": [
+            {
+              "id": "ocr:0",
+              "source": "ocr",
+              "role": "text",
+              "label": "ユーザー属性",
+              "rect": { "x": 0.1, "y": 0.2, "width": 0.2, "height": 0.05 },
+              "parent_label": "任意",
+              "states": ["selected | expanded | collapsed | disabled | focused | loading"]
+            }
+          ]
+        } }
     ],
     "hints": { "app_name": "...", "window_title": "..." },
     "task": {
@@ -630,6 +662,16 @@ Expected future use:
 - `input.task` はクライアント所有のステッププラン（プランはデータであり、モデルが毎ターン
   再導出しない）。無ければ通常の Q&A ターン。
 - 画像・OCR は**最新キャプチャの1つだけ**が乗る（過去分はテキストプレースホルダ化）。
+- `observation.capture_id` はcaptureのUUID。candidate IDは同一capture内で安定し、別captureを
+  またいだ同一性は保証しない。
+- candidate `rect` は画像左上原点、0〜1正規化。画像外にはみ出すrect、500件超のcandidate、
+  未知フィールドは`BAD_REQUEST`。
+- `environment` は画面認識の状況であり、認証identityではない。`tenant_id` / `user_id` は
+  クライアントObservationから絶対に受け取らず、従来どおりJWTからGatewayが確定する。
+- `hints` はv3互換の移行用。v4ではObservation environmentからContextを解決するが、shadow期間は
+  provider/harnessの挙動を変えないため従来hintsも併送する。
+- Gateway usage metadataには本文を保存せず、Observation有無、schema version、capture scope、
+  transition state、candidate件数/sourceだけを記録する。
 
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
 （`{"result": {"text", "harness", "task"}, "meta": {"model_id"}}`）。エラーは `error` イベント

@@ -15,6 +15,10 @@ import {
   GatewayError,
   recordUsage,
 } from "@/lib/server/gateway";
+import {
+  visionObservationSchema,
+  type VisionObservation,
+} from "@/lib/context/observation";
 import { ProviderCallError } from "@/lib/server/review-engine";
 import {
   isAutoFirstTurn,
@@ -39,6 +43,7 @@ type WireMessage = {
   image_base64?: string;
   media_type?: string;
   ocr_text?: string;
+  observation?: unknown;
 };
 
 type WireTask = {
@@ -95,6 +100,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const messages: NavigateMessage[] = [];
     let totalImageChars = 0;
+    let observationCount = 0;
     for (const message of wire) {
       if (message.role !== "user" && message.role !== "assistant") {
         return errorResponse(400, "BAD_REQUEST", "message.role must be 'user' or 'assistant'.", requestId);
@@ -117,11 +123,27 @@ export async function POST(request: Request): Promise<Response> {
         }
         imageDataURL = `data:${mediaType};base64,${message.image_base64}`;
       }
+      let observation: VisionObservation | undefined;
+      if (message.observation !== undefined) {
+        if (message.role !== "user") {
+          return errorResponse(400, "BAD_REQUEST", "Only user messages may carry an observation.", requestId);
+        }
+        const parsed = visionObservationSchema.safeParse(message.observation);
+        if (!parsed.success) {
+          return errorResponse(400, "BAD_REQUEST", "message.observation is malformed.", requestId);
+        }
+        observationCount += 1;
+        if (observationCount > 1) {
+          return errorResponse(400, "BAD_REQUEST", "Only the latest observation may be sent.", requestId);
+        }
+        observation = parsed.data;
+      }
       messages.push({
         role: message.role,
         text: message.text,
         imageDataURL,
         ocrText: message.ocr_text,
+        observation,
       });
     }
     const last = messages[messages.length - 1];
@@ -170,6 +192,11 @@ export async function POST(request: Request): Promise<Response> {
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
 
+    const latestObservation = messages.find((message) => message.observation)?.observation;
+    const observationSources = latestObservation
+      ? [...new Set(latestObservation.candidates.map((candidate) => candidate.source))]
+      : [];
+
     const metadata = {
       platform,
       app_version: body.client?.app_version,
@@ -180,6 +207,12 @@ export async function POST(request: Request): Promise<Response> {
       has_hints: Boolean(
         body.input?.hints?.app_name || body.input?.hints?.window_title || body.input?.hints?.url,
       ),
+      has_observation: Boolean(latestObservation),
+      observation_schema_version: latestObservation?.schema_version,
+      observation_capture_scope: latestObservation?.capture_scope,
+      observation_transition_state: latestObservation?.transition_state,
+      observation_candidate_count: latestObservation?.candidates.length ?? 0,
+      observation_candidate_sources: observationSources,
       task_active: Boolean(task),
       task_step: task?.currentStep,
     };

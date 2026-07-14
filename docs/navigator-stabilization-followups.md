@@ -84,6 +84,15 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 5. OpenAI Responses API + GPT-5.6 品質上限を役割別に測る。
 6. GA4 合格後、Slack、Notionの一般利用タスクへ広げる。その後にfreeeや個社ERPを扱う。
 
+#### v4 Observation実装（2026-07-14開始）
+
+- [x] Gateway/API: `message.observation` v1のstrict schema、最新1件制約、後方互換受理、
+  非本文usage metadataを追加。provider promptはまだv3のまま（shadow mode）。
+- [x] Eval: fixture独自schemaを廃止し、本番 `lib/context/observation.ts` を正本として共有。
+- [ ] macOS: attachment + capture時点environment + OCR候補からObservationを生成し、最新turnだけ送る。
+- [ ] AX候補: OCRとは別sourceでrole/state/親文脈を収集し、同一capture内の安定IDを付ける。
+- [ ] Grounder/Verifier: candidate ID選択とbefore/after構造化判定をprovider roleとして接続する。
+
 #### eval基盤の開始点（2026-07-14）
 
 - `web/evals/navigator` に strict schema、採点器、CLI、Vitest を追加。

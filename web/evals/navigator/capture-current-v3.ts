@@ -48,9 +48,9 @@ async function main(): Promise<void> {
         },
       ],
       hints: {
-        app_name: fixture.input.observation.app_name,
-        window_title: fixture.input.observation.window_title,
-        url: fixture.input.observation.url,
+        app_name: fixture.input.observation.environment?.app_name,
+        window_title: fixture.input.observation.environment?.window_title,
+        url: fixture.input.observation.environment?.url,
       },
       language: fixture.input.language,
     })) {
