@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、現行経路監査と品質上限モデル選定済み）
+最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、v4 実行契約への並走移行準備）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -12,6 +12,71 @@
 - [x] `feature/copilot-accuracy` に `main` の `Merge configurable keyboard bindings` を取り込み、現行 `main` を土台に継続。
 - モデル変更・プロンプト変更・キャプチャ判定変更を同時に行わない。
 - 1 実験 = 1 変数 = 1 コミット。同一ゴールデンセットで比較する。
+
+## 0.5 ゼロベース技術レビューの決定（2026-07-14、オーナー承認済み）
+
+製品戦略は維持する。すなわち、未対応アプリでも使える汎用 Vision を土台に、一般的な
+オフィスツール、導入企業、個人特性ごとの精度パッケージを Gateway 側で自動適用する。
+macOS クライアントは引き続きセンサー／アクチュエーターに徹し、ユーザーにツールモードを
+選ばせず、最終操作はユーザーが行う。
+
+ただし、現在の自由文マーカー中心の実行制御を完成形とはしない。既存経路は比較可能な
+baseline として維持し、GA4 の1ユースケースだけを新しい実行契約で縦に通す。その結果を
+確認してから Slack / Notion など一般的なオフィスツールへ広げる。一般公開前のため、速度・
+コストより正確性、再現性、監査可能性を優先する。ビッグバン置換は禁止し、feature flag 下の
+並走経路、1変数1コミット、各段階での手動検証を守る。
+
+### パッケージの4層と用語
+
+この文脈の `vendor` は OpenAI 等のモデル提供者ではなく、Slack / Notion / freee のような
+**業務アプリ提供元（app vendor）**を指す。AI provider と混同しないよう、コードとDBでは
+可能な限り `app_vendor` / `model_provider` と明記する。
+
+| 層 | 識別単位 | 目的 | 例 | 現在 | 今後 |
+|---|---|---|---|---|---|
+| generic | 全利用者 | 未知の画面でも最低限理解・案内する | 任意のWeb/デスクトップ画面 | 汎用 system prompt | 型付き既定契約として常時適用 |
+| app vendor | 製品／ツール | 標準UI、用語、代表タスクを共有する | GA4、Slack、Notion、freee | `scope=global` の pack に暗黙混在 | 版付き vendor pack として明示 |
+| tenant | 導入組織 | 個社固有UI、ERP、権限、承認フローを上書きする | A社Salesforce、社内ERP | DB列のみ。実行時未使用 | 認証tenantに限定した overlay |
+| user | 個人 | 言語、認知特性、説明粒度、支援設定を適用する | やさしい日本語、詳細度 | Navigator pack として未実装 | 許可された presentation overlay |
+
+合成順は `generic → app vendor → tenant → user`。後段ほど具体的だが、tenant/user は
+上位層の安全制約、確認必須操作、データ取扱い規則を緩められない。ユーザー層には個社知識や
+秘密を保存せず、回答表現と支援方法を中心にする。tenant 層は必ず認証済み tenant ID で選び、
+他tenantへ漏れないことをAPI境界とテストで保証する。
+
+### v4 の責務境界
+
+1. **Observation Snapshot**: capture ID、時刻、撮影範囲、app/bundle/window/URL、遷移状態、
+   画像、OCR/AX候補（安定ID・role・label・rect・親子文脈）を1時点の不変データとして扱う。
+2. **Capability Pack**: match rules、用語、UI意味マップ、レシピ、事前条件／完了条件、代替経路、
+   操作ポリシー、参照知識、golden case、互換バージョンを型付き・版付きデータとして管理する。
+3. **Run / Task**: Gateway が `run_id`、pack/version、plan/version、現在stepを発行する。
+   クライアントは表示用キャッシュを持てるが、自由文を正本にしない。画像自体は永続保存しない。
+4. **Planner**: 意図・レシピ・Taskを構造化出力する。確信不足なら開始せず確認質問へ戻す。
+5. **Grounder**: 自由な座標生成を主契約にせず、端末が列挙した候補IDから対象を選ぶ。
+6. **Verifier**: before/after Observation とstepの完了条件を比較し、`verified / not_changed /
+   ambiguous / blocked / complete` を構造化出力する。本文中の `[[step:done]]` は廃止対象。
+7. **Renderer**: 確定したTask/Verifier結果だけを短い自然文へ変換する。帯の指示はTaskデータを表示する。
+8. **Trace / Eval**: role、model、pack/version、入力fixture、構造化出力、遅延、token、失敗理由を
+   分離して再生・比較できるようにする。実画面・会話本文は既定で永続保存しない。
+
+### 個別最適化と fine-tuning の境界
+
+- UI構造、社内用語、操作手順、権限差、更新頻度の高い知識は Pack + RAG + recipe で扱う。
+- UI座標や揮発する画面文言、tenantの機密データをモデル重みに焼き込まない。
+- fine-tuning は十分な評価済みtraceが集まった後、安定した意図分類、recipe選択、Verifier判断など
+  「知識更新ではなく反復するモデル挙動」の改善候補に限定する。
+- screenshot-only を汎用fallbackとして守りつつ、企業向け高保証パッケージでは DOM / AX /
+  vendor API connector を追加センサーとして許可する。専用連携が無いと使えない設計にはしない。
+
+### 並走移行の順序
+
+1. 固定fixtureを検証できる eval runner と trace schema を作る（挙動変更なし）。
+2. Observation / candidate ID / structured Verifier の契約を追加する。
+3. pack v1（version、app vendor、tenant overlay、継承、適用証跡）を追加する。
+4. GA4 の代表経路を feature flag 下で v4 に通し、現行v3と同じfixtureで比較する。
+5. OpenAI Responses API + GPT-5.6 品質上限を役割別に測る。
+6. GA4 合格後、Slack、Notionの一般利用タスクへ広げる。その後にfreeeや個社ERPを扱う。
 
 ## 1. 現行実装の事実（検証開始点）
 

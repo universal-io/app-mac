@@ -1,8 +1,15 @@
 # 画面ナビゲーター v3: 決定論的コパイロット計画
 
-作成: 2026-07-06 ／ 最終更新: 2026-07-07 ／ ステータス: オーナー承認済み
+作成: 2026-07-06 ／ 最終更新: 2026-07-14 ／ ステータス: v3稼働中・v4並走移行を承認済み
 **本ドキュメントが画面ナビゲーターの唯一の正本**。前身の v2 計画（poc-ga-navigator.md、
 2026-07-05）は 2026-07-07 に本書へ統合して削除した（生きている土台は §9、UX 仕様は次節）。
+
+> **2026-07-14 の方針更新**: v3 の汎用ファースト、Thin Client / Fat Gateway、ユーザー自身が
+> 操作するUXは維持する。一方、自由文マーカーでTask進行・位置・完了を兼用する実行制御は
+> 完成形にしない。v3をbaselineとして残し、Observation、版付きCapability Pack、Gateway発行Run、
+> candidate ID grounding、構造化Verifier、再生可能evalからなるv4へGA4 1経路ずつ並走移行する。
+> 詳細な実装順と進捗は [navigator-stabilization-followups.md](navigator-stabilization-followups.md)
+> §0.5を正とする。
 
 ## 正のユーザー体験: ナビゲーションモード（2026-07-07 オーナー仕様）
 
