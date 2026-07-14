@@ -200,6 +200,22 @@ provenance・policy合成は共通Context Resolverへ昇格できる形にし、
 階層を新設しない。Compose/TransformへのResolver接続、DBの汎用pack schema、設定UIは
 Visionの縦切りが評価で成立した後に行う。
 
+#### Navigator Runの全体システム上の位置（2026-07-14）
+
+RunはVision専用の会話履歴ではなく、ユーザーが承認しながら複数stepを完了するための短命な
+実行状態である。将来Compose側に複数step taskが生じても同じidentity/context規則を使う。
+
+- Gatewayがrunの論理ownerかつ唯一のwriter。JWTから確定したtenant/user scopeのSupabase rowで
+  `current_step/status/revision` を管理し、clientはtyped snapshotのcache/echoだけを行う。
+- 永続rowはrun/identity、pack+planのID・version・hash、step/status/revision、時刻だけに絞る。
+  Task本文はGateway署名付きsnapshotで輸送し、画像/OCR/AX candidate/会話/モデル自由文は保存しない。
+- `generic → product → tenant → user` のResolved Contextはrun開始時のsource/versionを固定し、
+  run中に別tenantや無関係な最新packへ暗黙切替しない。再計画はrevisionを上げた明示イベントにする。
+- active/terminal runはいずれも最終操作から24時間以内に失効・purgeする。長期の品質分析は本文を
+  持たないaggregate traceと、明示同意・redaction済みeval fixtureへ分離する。
+- Copilotのstep advanceはtyped postconditionを用いるrule-first Verifierが確定する。曖昧時だけ
+  modelへescalateし、自由文回答やclient markerを状態の根拠にしない。
+
 実装原則:
 - **fine-tuning はしない**。構造化カード（Markdown）のプロンプト注入＋類似実例の few-shot 検索
   （M3 以降 pgvector）で実現する。モデル世代交代に追従でき、ユーザーがカードを直接編集できる。
@@ -255,6 +271,8 @@ Visionの縦切りが評価で成立した後に行う。
 2. **メモリは全件編集・削除可能**（マイページ）
 3. **学習利用なし**（LLM プロバイダの no-training 設定 / DPA を利用）
 4. L1 は保存しない。永続化するのは蒸留後のカードと履歴のみ（履歴は既存どおり設定で OFF 可）
+5. 画面から得たcandidate label/rect、OCR、スクリーンショット、会話本文はproduction traceへ
+   保存しない。run rowもID/version/revision等の最小状態に限り24時間以内にpurgeする
 
 ### 3.5 UI デザイン原則
 

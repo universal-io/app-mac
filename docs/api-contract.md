@@ -669,8 +669,8 @@ Expected future use:
 }
 ```
 
-- `input.task` はクライアント所有のステッププラン（プランはデータであり、モデルが毎ターン
-  再導出しない）。無ければ通常の Q&A ターン。
+- v3の`input.task`はクライアント輸送のステッププラン（プランはデータであり、モデルが毎ターン
+  再導出しない）。無ければ通常の Q&A ターン。v4では下記のGateway-owned Runへ移す。
 - 画像・OCR は**最新キャプチャの1つだけ**が乗る（過去分はテキストプレースホルダ化）。
 - `observation.capture_id` はcaptureのUUID。candidate IDは同一capture内で安定し、別captureを
   またいだ同一性は保証しない。
@@ -684,6 +684,54 @@ Expected future use:
   provider/harnessの挙動を変えないため従来hintsも併送する。
 - Gateway usage metadataには本文を保存せず、Observation有無、schema version、capture scope、
   transition state、candidate件数/sourceだけを記録する。
+
+### v4 Run snapshot（移行先・未有効）
+
+v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriterとなる。clientは直前の
+`run_snapshot`をrequestでechoし、responseのsnapshotで必ず置換する。
+
+```json
+{
+  "run_snapshot": {
+    "run_id": "uuid",
+    "pack": { "id": "ga4", "version": "1" },
+    "plan": {
+      "id": "uuid",
+      "version": 1,
+      "hash": "sha256:...",
+      "signature": "gateway-signed-token",
+      "task": {
+        "goal": "...",
+        "steps": [
+          {
+            "id": "step-1",
+            "verbal": "...",
+            "target": "...",
+            "fill": null,
+            "postconditions": []
+          }
+        ]
+      }
+    },
+    "current_step": 0,
+    "status": "active",
+    "revision": 3,
+    "expires_at": "ISO 8601 UTC"
+  }
+}
+```
+
+- `tenant_id` / `user_id` はsnapshotにもrequest bodyにも含めずJWTから確定する。Gatewayのrun rowは
+  `run_id / tenant_id / user_id / pack id+version / plan id+version+hash / current_step / status /
+  revision / created_at / updated_at / expires_at` だけを保存する。
+- clientが送ったrevision、plan hash/signatureがrun rowと一致しない場合はstepを進めない。
+  Gatewayは最新snapshotを返し、clientは再同期する。client単独の`current_step`更新は禁止。
+- `status` は `active / ambiguous / blocked / complete / cancelled / expired`。active/terminalとも
+  最終操作から24時間以内にpurgeする。
+- screenshot、OCR、candidate label/rect、会話、モデル自由文はrun row/usage traceへ保存しない。
+  signed Task snapshotはclientが輸送し、server rowにはhashだけを置く。
+- step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
+  strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
 
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
 （`{"result": {"text", "harness", "task", "grounding"}, "meta": {"model_id"}}`）。

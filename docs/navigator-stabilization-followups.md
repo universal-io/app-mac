@@ -66,6 +66,59 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 8. **Trace / Eval**: role、model、pack/version、入力fixture、構造化出力、遅延、token、失敗理由を
    分離して再生・比較できるようにする。実画面・会話本文は既定で永続保存しない。
 
+### 0.6 外部技術レビューを受けた実装境界（2026-07-14採用）
+
+ゼロベースレビューの結論は「方向性は維持し、実行契約の曖昧さを先に潰す」。以下をv4の
+実装条件として採用し、モデル単体のチューニングより優先する。
+
+#### Runの所有権
+
+- **論理owner / 唯一のwriterはGateway**。Supabaseの認証scope付きrun rowを状態の正とし、
+  macOSはGatewayが返したtyped snapshotを表示用にcacheして次requestでechoする。
+- DBに持つ最小状態は `run_id / tenant_id / user_id / pack_id+version / plan_id+version+hash /
+  current_step / status / revision / created_at / updated_at / expires_at`。スクリーンショット、OCR、
+  candidate label/rect、会話履歴、モデルの自由文回答は保存しない。
+- Task本文はGateway署名付きsnapshotとしてclientが輸送する。GatewayはJWTのtenant/user、run row、
+  `revision`、plan hash/signatureを毎turn照合し、不一致は進めず最新snapshotを返す。clientだけで
+  `current_step` を更新しない。Supabase一時障害時はstepを推測で進めず再試行可能状態にする。
+- active runは最終操作から24時間で失効し、terminal runも24時間以内にpurgeする。長期分析は
+  本文を含まないusage/eval指標へ分離する。fixture再生は同じsnapshot contractを入力に使う。
+
+#### Verifier / Renderer
+
+- Verifierは**rule-first**。recipeのtyped postcondition（URL/title変化、candidateの出現・消失・
+  selected/expanded/checked、field valueの非機密な一致、目的値の可視化）をbefore/after
+  Observationへ適用する。
+- ルールで一意に判定できればモデルを呼ばない。矛盾・情報不足時だけ独立Verifier modelへ送り、
+  `verified / not_changed / ambiguous / blocked / complete` のstrict schemaで返す。
+  モデル判定だけで危険操作やstep advanceを確定しない。
+- Copilot帯はTaskとVerifier結果をcode/templateで表示する。決定済みの次stepを自然文へ直すためだけの
+  Renderer LLMは置かず、自由文本文や `[[step:done]]` を状態遷移の入力にしない。
+
+#### Grounding / 画面遷移
+
+- groundingはhybrid ladderを維持する: `candidate ID + rect` → 独立したnative bbox →
+  言葉だけ（highlightなし）。candidateとbboxが矛盾した場合は操作を促さずambiguousに倒す。
+- Chromeの `AXEnhancedUserInterface` は既定ONにせずfeature flag実験とする。CPU、AX走査時間、
+  candidate coverage、Chromeへの副作用を通常AXと同じfixtureで測り、改善が確認できたsurfaceだけで使う。
+- 画面遷移はP0。クリック後の短い監視窓だけ `SCStream` のdirty rect/idle frameと`AXObserver`の
+  window/title/value通知をsignalとして使い、現行画像pollingをfallbackに残す。signalは「変化開始」の
+  hintであり、安定画面採用は同一capture scopeの複合判定で行う。frame/AX本文は保存しない。
+
+#### モデル・trace・移行gate
+
+- modelは本文/Planner/Grounder/Verifierのroleごとに独立routeとし、provider候補を同一fixtureで
+  **並列評価**する。高性能モデルで成立を確認してから、role単位で安価・高速なmodelへ落とす。
+- production traceはrun/role/model/pack+plan version、latency、token、candidate件数/source、
+  判定結果・失敗理由だけを既定保存する。candidate label/rect、OCR、画像、会話、Taskの自由入力値は
+  保存禁止。実画面fixture化は明示同意、手動redaction、用途別TTLを満たす評価環境だけで行う。
+- v4 shadow終了条件は、GA4実画面goldenを全件合格し、連続50stepで誤highlight/誤advance 0、
+  grounding/Verifier各98%以上、stale画面採用0、action→次highlightのp95 8秒以下、p50はv3以下。
+  その後Slack/Notionでも同じgateを満たした**同一release**でv3 marker経路を削除し、無期限の
+  二重実装を残さない。
+- Pack v1の実装範囲はGA4合格まで `id/version/match/ui_map/recipes/golden_cases` に凍結する。
+  typed pre/postconditionはrecipe内に含めるが、tenant overlay、RAG、fine-tuning、管理UIは増やさない。
+
 ### 個別最適化と fine-tuning の境界
 
 - UI構造、社内用語、操作手順、権限差、更新頻度の高い知識は Pack + RAG + recipe で扱う。
@@ -78,8 +131,8 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 ### 並走移行の順序
 
 1. [x] 固定fixtureを検証できる eval runner と trace schema を作る（挙動変更なし）。
-2. Observation / candidate ID / structured Verifier の契約を追加する。
-3. pack v1（version、app vendor、tenant overlay、継承、適用証跡）を追加する。
+2. Observation / candidate ID / rule-first structured Verifier の契約を追加する。
+3. scopeを凍結したpack v1（id/version/match/ui_map/recipes/golden_cases）を追加する。
 4. GA4 の代表経路を feature flag 下で v4 に通し、現行v3と同じfixtureで比較する。
 5. OpenAI Responses API + GPT-5.6 品質上限を役割別に測る。
 6. GA4 合格後、Slack、Notionの一般利用タスクへ広げる。その後にfreeeや個社ERPを扱う。
@@ -106,7 +159,8 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 - [x] Structured role output: 非streamingのPlanner/Grounderは、OpenAIではstrict JSON Schema、
   互換providerではJSON object modeを要求する。コードフェンスや説明文からJSONをregex抽出する
   救済は廃止し、契約違反を安全なfallbackとして扱う。本文回答のSSE契約は変更しない。
-- [ ] Verifier: before/after Observationの構造化判定を独立provider roleとして接続する。
+- [ ] Verifier: typed postconditionの決定論判定を先に実装し、ambiguous時だけ独立provider roleへ
+  strict schemaでescalateする。状態遷移はGateway run revisionの更新で確定する。
 
 #### eval基盤の開始点（2026-07-14）
 
@@ -138,8 +192,8 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 | verifier | 0/1 | v3に独立した構造化Verifierが存在しないため未回答 |
 | total | 7/9 (77.8%) | 未実装roleを黙って合格扱いしない |
 
-planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはplanner callのtokenを
-集計していないため、result内のtoken値はmain/locator側だけで完全な原価ではない。また、これは
+planner 2件の全体所要時間は約4.5秒 / 1.7秒。当時のbaseline resultはplanner token未集計だが、
+2026-07-14以降のruntimeはplanner/grounderのrole別tokenとmodel routeをusageへ記録する。また、これは
 合成OCR/AX候補によるsmokeであり、実画面画像を含む品質合格ではない。
 
 ## 1. 現行実装の事実（検証開始点）
@@ -212,8 +266,8 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
   **2026-07-14部分解消**: Planner/Grounderは独立env、実効設定、role別token metadataを持つ。
   locator supplementは本文モデルを継承し、step verifierは未実装のため本文回答と
   `[[step:done]]` をまだ兼用する。
-- planner と locator の失敗は best-effort で握りつぶされ、planner の token / 成否 / 失敗理由は
-  usage に記録されない。比較時のコストと失敗箇所を誤帰属する。
+- Planner/Grounderのtokenとmodel routeはusageへ分離済み。残課題はPlanner/locatorの成否・
+  timeout・schema違反などの失敗理由をbest-effortの`null`へ潰さずrole resultとして記録すること。
 - クライアントは URL hint を送らず、セッション開始時の app / window title を
   再キャプチャ後も使い続ける。タブ・ウィンドウ・アプリが変わると harness が stale になる。
 - 通常 Navigator Q&A は全履歴を残すが Gateway は 24 messages 上限。クライアント側に
@@ -222,8 +276,9 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
 - モデルに届く画像は長辺 1,600px / JPEG 0.7 へ事前縮小済み。API で
   `detail: original` にしても失われた細かい UI 文字は戻らない。「モデルの公平比較」と
   「入力を含むシステム品質上限」は別実験にする。
-- 固定入力の eval runner と fixture がない。プロンプト、画像、モデル、キャプチャ判定を
-  同時に変えると改善要因を証明できない。
+- 固定入力のeval runnerと合成fixtureは追加済み。残課題はredaction済み実画面fixture、role別
+  provider実行、capture/transition指標の追加。プロンプト、画像、モデル、キャプチャ判定を
+  同時に変えない。
 
 ## 2. 検証順序
 
@@ -301,8 +356,8 @@ fast routeがnetwork error／非2xx／body無しになった場合は、初手�
 
 モデル変更前に admin の「実効モデル設定」で本番環境変数による上書きを確認する。
 2026-07-13 時点で `web/.env.local` にモデル上書きはなく、ローカルはコード既定値どおり。
-**本番の実効値は未確認**なので、ローカル既定値だけを本番値として扱わない。なお現リポジトリには
-固定入力を反復評価する test / eval runner がないため、まずゴールデンセットを再実行可能な形にする。
+**本番の実効値は未確認**なので、ローカル既定値だけを本番値として扱わない。固定入力のrunnerは
+追加済みだが、現時点のGA4 smokeは合成Observationであり実画面品質の合格を意味しない。
 
 ### C. 画面遷移検出（モデルと独立に検証）
 
