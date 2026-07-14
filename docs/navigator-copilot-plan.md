@@ -98,8 +98,9 @@ target のみ（座標なし）のマーカーを既に解決できる（`Naviga
 非ストリーミングコールを1回だけ投げる:「直前の回答が画面上の要素を指しているなら
 [[target:…]] を1つだけ出力。指していないなら NONE」。有効なマーカーが返れば delta として
 本文末尾に補追する。クライアントはストリーミング表示からマーカーを逐次除去している
-（`ReviewPanelView` → `NavigatorLocator.strippingMarkers`）ため、**補追はユーザーに見えず、
-最終パースでハイライトとして拾われる**。補追コールの失敗は無視（best-effort）。
+（`ReviewPanelView` → `NavigatorLocator.strippingMarkers`）ため、**補追marker自体はユーザーに見えず、
+最終パースでハイライトとして拾われる**。補追失敗でも本文は表示するが、`ROLE_DEGRADED` noticeを
+共通警告バナーへ出し、失敗を成功結果の裏に隠さない。
 
 ### 2-d. 計測の種
 usage metadata に `has_locator`（最終テキストにマーカー有無）と `locator_supplemented`

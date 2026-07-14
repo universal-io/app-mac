@@ -12,6 +12,8 @@
 - [x] `feature/copilot-accuracy` に `main` の `Merge configurable keyboard bindings` を取り込み、現行 `main` を土台に継続。
 - モデル変更・プロンプト変更・キャプチャ判定変更を同時に行わない。
 - 1 実験 = 1 変数 = 1 コミット。同一ゴールデンセットで比較する。
+- fallback/retry/部分role失敗で結果を返せてもerrorを隠さない。失敗元と実使用routeを
+  `meta.notices`と共通警告バナーでユーザーへ示し、usageにはnotice codeを残す。
 
 ## 0.5 ゼロベース技術レビューの決定（2026-07-14、オーナー承認済み）
 
@@ -137,6 +139,22 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 5. OpenAI Responses API + GPT-5.6 品質上限を役割別に測る。
 6. GA4 合格後、Slack、Notionの一般利用タスクへ広げる。その後にfreeeや個社ERPを扱う。
 
+#### 現在地と次のマイルストーン（2026-07-14）
+
+| 段階 | 目的 | 状態 |
+|---|---|---|
+| A. 計測・入力契約 | eval、Observation、OCR/AX candidate、Grounder shadow | 完了 |
+| B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
+| C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **次に着手** |
+| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | Cの直後 |
+| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | 未着手 |
+| F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
+| G. 一般化 | Slack / Notionで同じgateを通し、v3を削除 | GA4合格後 |
+
+次の作業はCの**最小Run contract**。モデル選定の前に「誰がstepを進めたか」をGateway revisionで
+証明できるようにする工程で、全体ではv4縦切りの実行制御層に当たる。Runだけを先に肥大化させず、
+GA4 1経路に必要なcreate/read/advance/cancel/expireとtenant隔離、本文非保存だけを実装する。
+
 #### v4 Observation実装（2026-07-14開始）
 
 - [x] Gateway/API: `message.observation` v1のstrict schema、最新1件制約、後方互換受理、
@@ -159,6 +177,9 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 - [x] Structured role output: 非streamingのPlanner/Grounderは、OpenAIではstrict JSON Schema、
   互換providerではJSON object modeを要求する。コードフェンスや説明文からJSONをregex抽出する
   救済は廃止し、契約違反を安全なfallbackとして扱う。本文回答のSSE契約は変更しない。
+- [x] Recovered error transparency: Navigate/Review/Vision/Transcribeの`meta.notices`とmacOS共通警告
+  バナーを追加。main/role model fallback、provider retry、Planner/Grounder/Locator部分失敗、
+  Cloud→BYOK切替を成功結果から隠さない。
 - [ ] Verifier: typed postconditionの決定論判定を先に実装し、ambiguous時だけ独立provider roleへ
   strict schemaでescalateする。状態遷移はGateway run revisionの更新で確定する。
 

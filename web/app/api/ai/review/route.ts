@@ -159,7 +159,10 @@ export async function POST(request: Request): Promise<Response> {
       inputUnits: engineOutput.inputTokens,
       outputUnits: engineOutput.outputTokens,
       latencyMs,
-      metadata: usageMetadata(body),
+      metadata: {
+        ...usageMetadata(body),
+        operational_notice_codes: engineOutput.notices.map((notice) => notice.code),
+      },
     });
 
     return Response.json({
@@ -171,6 +174,7 @@ export async function POST(request: Request): Promise<Response> {
         model_vendor: engineOutput.modelVendor,
         model_id: engineOutput.modelId,
         latency_ms: latencyMs,
+        notices: engineOutput.notices,
       },
       quota: quota(used + 1),
     });
@@ -236,7 +240,10 @@ function streamingResponse(input: StreamingResponseInput): Response {
           inputUnits: finalOutput.inputTokens,
           outputUnits: finalOutput.outputTokens,
           latencyMs,
-          metadata: input.metadata,
+          metadata: {
+            ...input.metadata,
+            operational_notice_codes: finalOutput.notices.map((notice) => notice.code),
+          },
         });
         send("result", {
           request_id: input.requestId,
@@ -247,6 +254,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
             model_vendor: finalOutput.modelVendor,
             model_id: finalOutput.modelId,
             latency_ms: latencyMs,
+            notices: finalOutput.notices,
           },
           quota: input.quota(input.usedBefore + 1),
         });

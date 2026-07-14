@@ -220,6 +220,7 @@ final class ComposeSession: ObservableObject {
     }
 
     private func runReview() async {
+        OperationalNoticeCenter.shared.beginOperation()
         errorMessage = nil
         result = nil
         revisedDraft = ""
@@ -291,6 +292,10 @@ final class ComposeSession: ObservableObject {
         if let overrideProvider { return overrideProvider }
         if let gateway = GatewayReviewClient.make() { return gateway }
         let model = AppSettings.selectedModel()
+        OperationalNoticeCenter.shared.publish(
+            code: "CLIENT_PROVIDER_FALLBACK",
+            message: "I//O Cloudにアクセスできなかったため、端末の\(model.displayName)で処理します。"
+        )
         switch model.vendor {
         case .anthropic:
             return ClaudeClient(model: model.apiModelID)

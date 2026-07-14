@@ -5,12 +5,17 @@
 // Availability principle (owner decision, 2026-07-03): a provider-side
 // failure (outage, provider rate limit, misconfigured operator quota) must
 // never take the feature away from the user. Groq is the fast primary; on
-// any provider error the request silently falls back to OpenAI whisper-1
+// any provider error the request falls back to OpenAI whisper-1 and returns
+// a user-visible operational notice
 // (a different vendor, so a Groq outage cannot take both down). Only the
 // user's own plan quota may stop a request — that check lives in the route.
 
 import { getServerEnv } from "@/lib/server/env";
 import { ProviderCallError } from "@/lib/server/review-engine";
+import {
+  modelFallbackNotice,
+  type OperationalNotice,
+} from "@/lib/server/operational-notice";
 
 type TranscriptionEngine = {
   vendor: string;
@@ -25,6 +30,7 @@ export type TranscriptionOutput = {
   modelVendor: string;
   modelId: string;
   durationSeconds: number;
+  notices: OperationalNotice[];
 };
 
 type WhisperSegment = {
@@ -53,16 +59,30 @@ export async function runTranscription(audio: File): Promise<TranscriptionOutput
       apiKey: env.openaiApiKey,
       timeoutMs: 60_000,
     },
-  ].filter((engine) => Boolean(engine.apiKey));
+  ];
 
-  if (engines.length === 0) {
+  if (!engines.some((engine) => Boolean(engine.apiKey))) {
     throw new ProviderCallError("No provider key configured for transcription.");
   }
 
   let lastError: ProviderCallError | null = null;
+  const unavailable: TranscriptionEngine[] = [];
   for (const engine of engines) {
+    if (!engine.apiKey) {
+      unavailable.push(engine);
+      continue;
+    }
     try {
-      return await transcribeWith(engine, audio);
+      const output = await transcribeWith(engine, audio);
+      return {
+        ...output,
+        notices: unavailable.map((failed) => modelFallbackNotice({
+          fromVendor: failed.vendor,
+          fromModelId: failed.modelId,
+          toVendor: engine.vendor,
+          toModelId: engine.modelId,
+        })),
+      };
     } catch (error) {
       lastError =
         error instanceof ProviderCallError
@@ -73,6 +93,7 @@ export async function runTranscription(audio: File): Promise<TranscriptionOutput
           `${engine === engines[engines.length - 1] ? "no fallback left" : "falling back"}:`,
         lastError.message,
       );
+      unavailable.push(engine);
     }
   }
 
@@ -130,6 +151,7 @@ async function transcribeWith(
     modelVendor: engine.vendor,
     modelId: engine.modelId,
     durationSeconds: typeof root.duration === "number" ? root.duration : 0,
+    notices: [],
   };
 }
 

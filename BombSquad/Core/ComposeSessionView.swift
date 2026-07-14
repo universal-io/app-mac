@@ -22,6 +22,7 @@ struct FoundationComposeRootView: View {
 
 struct ComposeSessionView: View {
     @ObservedObject var session: ComposeSession
+    @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
     @State private var showHelp = false
 
     private var focusedField: Binding<FocusField?> {
@@ -146,6 +147,12 @@ struct ComposeSessionView: View {
 
             if let error = session.errorMessage {
                 ErrorBanner(message: error)
+            }
+            if let notice = noticeCenter.current {
+                OperationalNoticeBanner(
+                    message: notice.message,
+                    onDismiss: noticeCenter.dismiss
+                )
             }
 
             if let result = session.result {

@@ -147,7 +147,10 @@ export async function POST(request: Request): Promise<Response> {
       inputUnits: engineOutput.inputTokens,
       outputUnits: engineOutput.outputTokens,
       latencyMs,
-      metadata,
+      metadata: {
+        ...metadata,
+        operational_notice_codes: engineOutput.notices.map((notice) => notice.code),
+      },
     });
 
     return Response.json({
@@ -158,6 +161,7 @@ export async function POST(request: Request): Promise<Response> {
         model_vendor: engineOutput.modelVendor,
         model_id: engineOutput.modelId,
         latency_ms: latencyMs,
+        notices: engineOutput.notices,
       },
     });
   } catch (error) {

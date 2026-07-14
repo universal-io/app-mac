@@ -28,6 +28,7 @@ struct FoundationTransformRootView: View {
 
 struct TransformSessionView: View {
     @ObservedObject var session: TransformSession
+    @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -105,6 +106,12 @@ struct TransformSessionView: View {
 
             if let error = session.errorMessage {
                 ErrorBanner(message: error)
+            }
+            if let notice = noticeCenter.current {
+                OperationalNoticeBanner(
+                    message: notice.message,
+                    onDismiss: noticeCenter.dismiss
+                )
             }
 
             if let result = session.result {

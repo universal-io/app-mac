@@ -309,6 +309,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
             grounder_model_vendor: finalOutput.grounderModelVendor,
             grounder_model_id: finalOutput.grounderModelId,
             model_fallback_from: finalOutput.modelFallbackFrom,
+            operational_notice_codes: finalOutput.notices.map((notice) => notice.code),
             task_proposed: Boolean(finalOutput.proposedTask),
           },
         });
@@ -344,6 +345,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
             model_vendor: finalOutput.modelVendor,
             model_id: finalOutput.modelId,
             latency_ms: latencyMs,
+            notices: finalOutput.notices,
           },
         });
       } catch (error) {

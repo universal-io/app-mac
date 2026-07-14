@@ -363,6 +363,7 @@ final class VisionSession: ObservableObject {
     }
 
     private func runInterpretation() async {
+        OperationalNoticeCenter.shared.beginOperation(preservingCodes: ["CAPTURE_FALLBACK"])
         errorMessage = nil
         result = nil
         isInterpreting = true
@@ -722,6 +723,7 @@ final class VisionSession: ObservableObject {
     }
 
     private func runNavigatorStream() async {
+        OperationalNoticeCenter.shared.beginOperation(preservingCodes: ["CAPTURE_FALLBACK"])
         guard !Task.isCancelled else { return }
         guard let client = GatewayNavigateClient.make() else {
             isNavigating = false
@@ -1088,6 +1090,10 @@ final class VisionSession: ObservableObject {
     private func currentProvider() -> VisionProvider {
         if let overrideProvider { return overrideProvider }
         if let gateway = GatewayVisionClient.make() { return gateway }
+        OperationalNoticeCenter.shared.publish(
+            code: "CLIENT_PROVIDER_FALLBACK",
+            message: "I//O Cloudにアクセスできなかったため、端末のOpenAI Visionで処理します。"
+        )
         return OpenAIVisionClient()
     }
 

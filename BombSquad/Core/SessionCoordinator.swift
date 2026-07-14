@@ -295,7 +295,17 @@ final class SessionCoordinator {
         }
         guard let sink else { return }
 
-        let transcriber: any Transcriber = GatewayTranscriber.make() ?? GroqTranscriber()
+        OperationalNoticeCenter.shared.beginOperation()
+        let transcriber: any Transcriber
+        if let gateway = GatewayTranscriber.make() {
+            transcriber = gateway
+        } else {
+            OperationalNoticeCenter.shared.publish(
+                code: "CLIENT_PROVIDER_FALLBACK",
+                message: "I//O Cloudにアクセスできなかったため、端末のGroq音声認識で処理します。"
+            )
+            transcriber = GroqTranscriber()
+        }
 
         transcriptionTask?.cancel()
         transcriptionTask = Task { [weak self] in
@@ -494,6 +504,10 @@ final class SessionCoordinator {
         } catch ScreenshotCaptureError.cancelled {
             throw ScreenshotCaptureError.cancelled
         } catch {
+            OperationalNoticeCenter.shared.publish(
+                code: "CAPTURE_FALLBACK",
+                message: "ScreenCaptureKitで撮影できなかったため、macOS標準のスクリーンショット撮影に切り替えました。"
+            )
             await screenshotCaptureCue.showBriefly()
             return try await screenshotCapture.captureInteractive()
         }

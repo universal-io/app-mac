@@ -97,7 +97,7 @@ export async function groundObservationCandidate(args: {
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) {
-    return { ...emptyExecution(), attempted: true };
+    throw new Error(`Grounder HTTP ${response.status}`);
   }
 
   const json = (await response.json()) as {

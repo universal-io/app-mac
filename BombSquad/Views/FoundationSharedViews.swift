@@ -33,6 +33,32 @@ struct ErrorBanner: View {
     }
 }
 
+/// A successful request that recovered from an error must not look identical
+/// to a clean request. The user can dismiss the notice after reading it.
+struct OperationalNoticeBanner: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(message)
+                .textSelection(.enabled)
+            Spacer(minLength: 4)
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("警告を閉じる")
+        }
+        .font(.callout)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(.orange)
+    }
+}
+
 /// "See → understand → respond": situation first, then requests,
 /// prepared actions, and finally the extracted source as reference material.
 struct VisionInterpretationView: View {

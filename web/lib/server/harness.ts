@@ -12,6 +12,10 @@
 // either way.
 
 import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
+import {
+  dataFallbackNotice,
+  type OperationalNotice,
+} from "@/lib/server/operational-notice";
 
 export type NavigateHints = {
   app_name?: string;
@@ -41,6 +45,7 @@ export type Harness = {
   id: string;
   promptBlock: string;
   recipes?: Recipe[];
+  operationalNotices?: OperationalNotice[];
 };
 
 /** A harness plus the matching rule `selectHarness` evaluates. */
@@ -57,10 +62,15 @@ export async function selectHarness(hints?: NavigateHints): Promise<Harness | nu
     .toLowerCase();
   if (!haystack) return null;
 
-  const packs = await loadGlobalPacks();
-  for (const pack of packs) {
+  const loaded = await loadGlobalPacks();
+  for (const pack of loaded.packs) {
     if (pack.matchTerms.some((term) => haystack.includes(term))) {
-      return { id: pack.id, promptBlock: pack.promptBlock, recipes: pack.recipes };
+      return {
+        id: pack.id,
+        promptBlock: pack.promptBlock,
+        recipes: pack.recipes,
+        operationalNotices: loaded.notice ? [loaded.notice] : undefined,
+      };
     }
   }
   return null;
@@ -70,7 +80,11 @@ export async function selectHarness(hints?: NavigateHints): Promise<Harness | nu
 
 const PACK_CACHE_TTL_MS = 60_000;
 
-let packCache: { packs: MatchableHarness[]; expiresAt: number } | null = null;
+let packCache: {
+  packs: MatchableHarness[];
+  notice: OperationalNotice | null;
+  expiresAt: number;
+} | null = null;
 
 /**
  * Enabled global packs, newest read at most every PACK_CACHE_TTL_MS. Any
@@ -82,13 +96,20 @@ let packCache: { packs: MatchableHarness[]; expiresAt: number } | null = null;
  * the authenticated tenant id threaded down to selectHarness, and min_plan
  * needs the entitlements feature gate (§5-c). Global packs only for now.
  */
-async function loadGlobalPacks(): Promise<MatchableHarness[]> {
+async function loadGlobalPacks(): Promise<{
+  packs: MatchableHarness[];
+  notice: OperationalNotice | null;
+}> {
   const now = Date.now();
   if (packCache && now < packCache.expiresAt) {
-    return packCache.packs;
+    return { packs: packCache.packs, notice: packCache.notice };
   }
 
   let packs = SEED_HARNESSES;
+  let notice: OperationalNotice | null = dataFallbackNotice(
+    "Capability Pack",
+    "組み込み版Pack",
+  );
   try {
     const admin = getSupabaseAdminClient();
     const { data, error } = await admin
@@ -104,6 +125,7 @@ async function loadGlobalPacks(): Promise<MatchableHarness[]> {
       .filter((pack): pack is MatchableHarness => pack !== null);
     if (rows.length > 0) {
       packs = rows;
+      notice = null;
     }
   } catch (error) {
     console.error(
@@ -111,8 +133,8 @@ async function loadGlobalPacks(): Promise<MatchableHarness[]> {
       error instanceof Error ? error.message : error,
     );
   }
-  packCache = { packs, expiresAt: now + PACK_CACHE_TTL_MS };
-  return packs;
+  packCache = { packs, notice, expiresAt: now + PACK_CACHE_TTL_MS };
+  return { packs, notice };
 }
 
 type PackRow = {

@@ -137,6 +137,34 @@ Rules:
 
 - All timestamps are ISO 8601 UTC strings.
 
+### Recovered errors / fallback notices（2026-07-14）
+
+Fallbackやretryで最終結果を返せても、途中のerrorを成功結果から隠してはならない。該当する
+responseの`meta.notices`へ全件を入れ、clientは通常結果と同時にdismiss可能な警告として表示する。
+
+```json
+{
+  "meta": {
+    "notices": [
+      {
+        "severity": "warning",
+        "code": "MODEL_FALLBACK",
+        "message": "groq / model-a にアクセスできなかったため、openai / model-b で処理しました。"
+      }
+    ]
+  }
+}
+```
+
+- 現行Gateway codeは`MODEL_FALLBACK / ROLE_DEGRADED / PROVIDER_RETRY / DATA_FALLBACK`。
+  client内のCloud→BYOK、撮影engine切替は同じUIへ`CLIENT_PROVIDER_FALLBACK /
+  CAPTURE_FALLBACK`として発行する。
+- model/provider fallbackは失敗したrouteと実際に使ったrouteの両方をmessageへ含める。
+- Planner/Grounder/Locator等の補助roleだけが失敗し、主結果を返す場合も`ROLE_DEGRADED`を返す。
+- fallback不能なerrorは従来どおり非2xxまたはSSE `error`。raw provider本文やsecretは表示せず、
+  ユーザーが再試行・設定確認できる説明を返す。
+- clientが`notices`を黙って捨てる実装は禁止。usage traceには本文でなくnotice codeを記録する。
+
 ## POST /api/ai/review
 
 This is the first route. It covers both current macOS modes:
@@ -743,6 +771,8 @@ feature flag下の `grounding` は `{capture_id, candidate_id, confidence, metho
 `[[target:ラベル]]` / `[[loc:x0,y0,x1,y1]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
 クライアント（`NavigatorLocator`）が抽出して OCR grounding と突き合わせる
 （詳細は [navigator-copilot-plan.md](navigator-copilot-plan.md)）。
+`result.meta.notices`は共通規約どおり表示する。初手main fallback、role別model fallback、
+Planner/Grounder/Locatorの部分失敗も成功結果から隠さない。
 
 ## Account / Admin（実装済み・簡易記載）
 

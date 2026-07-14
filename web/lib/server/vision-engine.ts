@@ -6,6 +6,10 @@
 
 import { getServerEnv } from "@/lib/server/env";
 import { ProviderCallError } from "@/lib/server/review-engine";
+import {
+  modelFallbackNotice,
+  type OperationalNotice,
+} from "@/lib/server/operational-notice";
 import type {
   MemoryPayload,
   OutputLanguageCode,
@@ -41,6 +45,7 @@ export type VisionEngineOutput = {
   modelId: string;
   inputTokens: number;
   outputTokens: number;
+  notices: OperationalNotice[];
 };
 
 export async function runVisionInterpretation(
@@ -116,6 +121,14 @@ export async function runVisionInterpretation(
       modelId: model,
       inputTokens: root.usage?.input_tokens ?? 0,
       outputTokens: root.usage?.output_tokens ?? 0,
+      notices: model === models[0]
+        ? []
+        : [modelFallbackNotice({
+            fromVendor: "openai",
+            fromModelId: models[0],
+            toVendor: "openai",
+            toModelId: model,
+          })],
     };
   }
 

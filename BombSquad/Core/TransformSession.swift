@@ -92,6 +92,7 @@ final class TransformSession: ObservableObject {
     }
 
     private func runInterpretation() async {
+        OperationalNoticeCenter.shared.beginOperation()
         errorMessage = nil
         result = nil
         isInterpreting = true
@@ -148,6 +149,10 @@ final class TransformSession: ObservableObject {
     private func currentProvider() -> VisionProvider {
         if let overrideProvider { return overrideProvider }
         if let gateway = GatewayVisionClient.make() { return gateway }
+        OperationalNoticeCenter.shared.publish(
+            code: "CLIENT_PROVIDER_FALLBACK",
+            message: "I//O Cloudにアクセスできなかったため、端末のOpenAI Visionで処理します。"
+        )
         return OpenAIVisionClient()
     }
 

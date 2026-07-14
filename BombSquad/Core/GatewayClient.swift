@@ -8,6 +8,67 @@ struct GatewaySSEEvent {
     let data: Data
 }
 
+struct GatewayOperationalNotice: Equatable {
+    let code: String
+    let message: String
+}
+
+/// Recovered failures are still product-visible state. Gateway responses use
+/// `meta.notices`; client-side Cloud→BYOK switches publish through the same
+/// center so every transient panel renders one consistent warning.
+@MainActor
+final class OperationalNoticeCenter: ObservableObject {
+    static let shared = OperationalNoticeCenter()
+
+    @Published private(set) var current: GatewayOperationalNotice?
+
+    private init() {}
+
+    func beginOperation(preservingCodes: Set<String> = []) {
+        if let current {
+            let activeCodes = Set(current.code.split(separator: ",").map(String.init))
+            if !preservingCodes.isDisjoint(with: activeCodes) { return }
+        }
+        current = nil
+    }
+
+    func dismiss() {
+        current = nil
+    }
+
+    func publish(code: String, message: String) {
+        guard let current else {
+            self.current = GatewayOperationalNotice(code: code, message: message)
+            return
+        }
+        guard !current.message.components(separatedBy: "\n").contains(message) else { return }
+        self.current = GatewayOperationalNotice(
+            code: [current.code, code].joined(separator: ","),
+            message: [current.message, message].joined(separator: "\n")
+        )
+    }
+
+    func capture(from root: [String: Any]) {
+        guard
+            let meta = root["meta"] as? [String: Any],
+            let rawNotices = meta["notices"] as? [[String: Any]]
+        else { return }
+        let notices = rawNotices.compactMap { notice -> GatewayOperationalNotice? in
+            guard
+                let code = notice["code"] as? String,
+                let message = notice["message"] as? String,
+                !message.isEmpty
+            else { return nil }
+            return GatewayOperationalNotice(code: code, message: message)
+        }
+        guard !notices.isEmpty else { return }
+        publish(
+            code: notices.map(\.code).joined(separator: ","),
+            message: notices.map(\.message).joined(separator: "\n")
+        )
+    }
+}
+
 /// The single gateway transport (foundation rebuild Phase 2,
 /// docs/foundation-rebuild-plan.md). Owns what every feature client used to
 /// copy: availability gating, the request envelope, JSON/multipart sends,
@@ -78,7 +139,9 @@ struct GatewayClient {
     /// GET; returns the raw body after transport/status/error mapping.
     func get(_ path: String) async throws -> Data {
         let request = try await api.authorizedRequest(path, method: "GET")
-        return try await send(request)
+        let data = try await send(request)
+        await captureOperationalNotice(from: data)
+        return data
     }
 
     /// JSON-body request; returns the raw body after transport/status/error mapping.
@@ -86,7 +149,9 @@ struct GatewayClient {
         var request = try await api.authorizedRequest(path, method: method)
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        return try await send(request)
+        let data = try await send(request)
+        await captureOperationalNotice(from: data)
+        return data
     }
 
     /// Pre-encoded JSON body (Codable payloads like memory-card sync).
@@ -94,7 +159,9 @@ struct GatewayClient {
         var request = try await api.authorizedRequest(path, method: method)
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = body
-        return try await send(request)
+        let data = try await send(request)
+        await captureOperationalNotice(from: data)
+        return data
     }
 
     /// Multipart form body (ASR uploads).
@@ -102,7 +169,9 @@ struct GatewayClient {
         var request = try await api.authorizedRequest(path)
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        return try await send(request)
+        let data = try await send(request)
+        await captureOperationalNotice(from: data)
+        return data
     }
 
     /// Decodes the response root object, or throws the shared decoding error.
@@ -127,6 +196,13 @@ struct GatewayClient {
             throw GatewayAPI.error(status: http.statusCode, data: data)
         }
         return data
+    }
+
+    private func captureOperationalNotice(from data: Data) async {
+        guard
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        await OperationalNoticeCenter.shared.capture(from: root)
     }
 
     // MARK: - SSE
@@ -183,6 +259,7 @@ struct GatewayClient {
                         if eventName == "error" {
                             throw GatewayAPI.error(status: 502, data: data)
                         }
+                        await OperationalNoticeCenter.shared.capture(from: root)
                         continuation.yield(GatewaySSEEvent(name: eventName, json: root, data: data))
                     }
                     continuation.finish()

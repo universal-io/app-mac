@@ -70,6 +70,12 @@ struct OpenAIVisionClient: VisionProvider {
                     memory: memory
                 )
                 result.modelID = candidate
+                if candidate != models.first, let primary = models.first {
+                    await OperationalNoticeCenter.shared.publish(
+                        code: "MODEL_FALLBACK",
+                        message: "openai / \(primary) にアクセスできなかったため、openai / \(candidate) で処理しました。"
+                    )
+                }
                 return result
             } catch {
                 lastError = error

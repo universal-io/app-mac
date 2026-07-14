@@ -34,6 +34,7 @@ struct FoundationVisionRootView: View {
 
 struct VisionSessionView: View {
     @ObservedObject var session: VisionSession
+    @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
     @State private var annotations: [ScreenshotAnnotation] = []
     @State private var previewTool: ScreenshotPreviewTool = .pan
     @State private var annotationTint: ScreenshotAnnotation.Tint = .red
@@ -52,6 +53,12 @@ struct VisionSessionView: View {
 
             if let error = session.errorMessage {
                 ErrorBanner(message: error)
+            }
+            if let notice = noticeCenter.current {
+                OperationalNoticeBanner(
+                    message: notice.message,
+                    onDismiss: noticeCenter.dismiss
+                )
             }
 
             HSplitView {
@@ -409,9 +416,16 @@ struct VisionSessionView: View {
 
 private struct CoreCopilotStripView: View {
     @ObservedObject var session: VisionSession
+    @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let notice = noticeCenter.current {
+                OperationalNoticeBanner(
+                    message: notice.message,
+                    onDismiss: noticeCenter.dismiss
+                )
+            }
             HStack(spacing: 6) {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.tint)
