@@ -145,7 +145,7 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 |---|---|---|
 | A. 計測・入力契約 | eval、Observation、OCR/AX candidate、Grounder shadow | 完了 |
 | B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
-| C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **次に着手** |
+| C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **進行中**（保存基盤完了、API接続が次） |
 | D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | Cの直後 |
 | E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | 未着手 |
 | F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
@@ -154,6 +154,12 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 次の作業はCの**最小Run contract**。モデル選定の前に「誰がstepを進めたか」をGateway revisionで
 証明できるようにする工程で、全体ではv4縦切りの実行制御層に当たる。Runだけを先に肥大化させず、
 GA4 1経路に必要なcreate/read/advance/cancel/expireとtenant隔離、本文非保存だけを実装する。
+
+- [x] Run保存基盤: `0005_navigator_runs.sql` とservice-role専用repositoryを追加。tenant/user scope、
+  revisionのcompare-and-swap、最終更新から24時間のTTL、expire/purge、本文非保存、store障害時の
+  fail-closedを実装した。migrationはまだ環境へ適用せず、API/clientも未接続。
+- [ ] Run API接続: feature flag下でcreate/read/cancelと署名付きTask snapshot検証を追加する。
+  Verifierによるadvanceが無い段階では、既存Copilotの正本をRunへ切り替えない。
 
 #### v4 Observation実装（2026-07-14開始）
 

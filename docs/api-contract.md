@@ -713,7 +713,7 @@ Expected future use:
 - Gateway usage metadataには本文を保存せず、Observation有無、schema version、capture scope、
   transition state、candidate件数/sourceだけを記録する。
 
-### v4 Run snapshot（移行先・未有効）
+### v4 Run snapshot（保存基盤実装済み・API未有効）
 
 v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriterとなる。clientは直前の
 `run_snapshot`をrequestでechoし、responseのsnapshotで必ず置換する。
@@ -758,6 +758,8 @@ v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriter�
   最終操作から24時間以内にpurgeする。
 - screenshot、OCR、candidate label/rect、会話、モデル自由文はrun row/usage traceへ保存しない。
   signed Task snapshotはclientが輸送し、server rowにはhashだけを置く。
+- `0005_navigator_runs.sql` とGateway内部repositoryまでは実装済み。migration適用、公開route、
+  macOS client接続は未実施であり、現行v3の実行状態にはまだ影響しない。
 - step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
   strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
 
