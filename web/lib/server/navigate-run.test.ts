@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import { GatewayError } from "./gateway";
 import {
   assertRunOwner,
+  assertRunPlanMatchesInput,
   validateMutation,
   validateRunId,
   validateTransition,
@@ -74,5 +75,21 @@ describe("Navigator Run invariants", () => {
       { revision: 2, currentStep: 1, status: "complete" },
       { expectedRevision: 2, currentStep: 1, status: "active" },
     )).toThrowError(expect.objectContaining({ code: "RUN_TERMINAL" }));
+  });
+
+  test("accepts only an idempotent retry of the same signed plan", () => {
+    const input = {
+      packId: "ga4",
+      packVersion: "unversioned-v3",
+      planId: "626ca186-44c8-4338-9a20-829d663dc682",
+      planVersion: 1,
+      planHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    const run = { ...input };
+    expect(() => assertRunPlanMatchesInput(run, input)).not.toThrow();
+    expect(() => assertRunPlanMatchesInput(
+      { ...run, planHash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+      input,
+    )).toThrowError(expect.objectContaining({ code: "RUN_PLAN_CONFLICT" }));
   });
 });

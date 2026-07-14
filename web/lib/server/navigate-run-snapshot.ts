@@ -1,8 +1,10 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 import { GatewayError } from "@/lib/server/gateway";
 import type { NavigateRun } from "@/lib/server/navigate-run";
+
+export const NAVIGATE_RUN_PROPOSAL_TTL_MS = 10 * 60 * 1_000;
 
 const taskStepSchema = z.object({
   id: z.string().min(1).max(80),
@@ -42,9 +44,25 @@ const signedSnapshotSchema = unsignedSnapshotSchema.extend({
   signature: z.string().regex(/^v1\.[A-Za-z0-9_-]{43}$/),
 }).strict();
 
+const unsignedProposalSchema = z.object({
+  schema_version: z.literal(1),
+  kind: z.literal("navigate_run_proposal"),
+  audience: z.string().regex(/^v1\.[A-Za-z0-9_-]{43}$/),
+  pack: unsignedSnapshotSchema.shape.pack,
+  plan: unsignedSnapshotSchema.shape.plan,
+  expires_at: z.string().datetime({ offset: true }),
+}).strict();
+
+const signedProposalSchema = unsignedProposalSchema.extend({
+  signature: z.string().regex(/^v1\.[A-Za-z0-9_-]{43}$/),
+}).strict();
+
 export type NavigateSnapshotTask = z.infer<typeof taskSchema>;
 export type UnsignedNavigateRunSnapshot = z.infer<typeof unsignedSnapshotSchema>;
 export type SignedNavigateRunSnapshot = z.infer<typeof signedSnapshotSchema>;
+export type SignedNavigateRunProposal = z.infer<typeof signedProposalSchema>;
+
+type ProposalAuth = { tenantId: string; userId: string };
 
 type ProposedTask = {
   goal: string;
@@ -71,6 +89,70 @@ export function hashSnapshotTask(task: NavigateSnapshotTask): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(normalized)).digest("hex")}`;
 }
 
+/** Creates a short-lived, identity-bound proposal. It does not create a Run;
+ * the authenticated start action is the only point that writes the row. */
+export function createNavigateRunProposal(
+  auth: ProposalAuth,
+  input: { packId: string; packVersion: string; task: ProposedTask },
+  secret: string,
+  now = new Date(),
+): SignedNavigateRunProposal {
+  validateSigningSecret(secret);
+  const task = materializeSnapshotTask(input.task);
+  const planId = randomUUID();
+  const unsigned = unsignedProposalSchema.parse({
+    schema_version: 1,
+    kind: "navigate_run_proposal",
+    audience: proposalAudience(auth, planId, secret),
+    pack: { id: input.packId, version: input.packVersion },
+    plan: {
+      id: planId,
+      version: 1,
+      hash: hashSnapshotTask(task),
+      task,
+    },
+    expires_at: new Date(now.getTime() + NAVIGATE_RUN_PROPOSAL_TTL_MS).toISOString(),
+  });
+  return {
+    ...unsigned,
+    signature: `v1.${signatureForValue(unsigned, secret)}`,
+  };
+}
+
+export function verifyNavigateRunProposal(
+  input: unknown,
+  auth: ProposalAuth,
+  secret: string,
+  now = new Date(),
+): SignedNavigateRunProposal {
+  validateSigningSecret(secret);
+  const parsed = signedProposalSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new GatewayError(400, "BAD_REQUEST", "ナビゲーション開始情報の形式が不正です。");
+  }
+  const { signature, ...unsigned } = parsed.data;
+  verifySignature(
+    unsigned,
+    signature,
+    secret,
+    proposalConflict("ナビゲーション開始情報の署名を確認できません。新しい計画を作り直してください。"),
+  );
+  if (parsed.data.audience !== proposalAudience(auth, parsed.data.plan.id, secret)) {
+    throw new GatewayError(404, "RUN_PROPOSAL_NOT_FOUND", "このナビゲーション開始情報は利用できません。");
+  }
+  if (hashSnapshotTask(parsed.data.plan.task) !== parsed.data.plan.hash) {
+    throw proposalConflict("署名後に計画内容が変更されています。新しい計画を作り直してください。");
+  }
+  if (new Date(parsed.data.expires_at).getTime() <= now.getTime()) {
+    throw new GatewayError(
+      410,
+      "RUN_PROPOSAL_EXPIRED",
+      "ナビゲーションの開始期限が切れました。Copilotに新しい計画を作ってもらってください。",
+    );
+  }
+  return parsed.data;
+}
+
 export function unsignedSnapshotFromRun(
   run: NavigateRun,
   task: NavigateSnapshotTask,
@@ -78,10 +160,10 @@ export function unsignedSnapshotFromRun(
   const normalizedTask = taskSchema.parse(task);
   const taskHash = hashSnapshotTask(normalizedTask);
   if (taskHash !== run.planHash) {
-    throw snapshotConflict("The navigation plan no longer matches its saved run.");
+    throw snapshotConflict("計画の内容が保存済みナビゲーションと一致しません。新しい計画を作り直してください。");
   }
   if (run.currentStep >= normalizedTask.steps.length && run.status !== "complete") {
-    throw snapshotConflict("The navigation step is outside the signed plan.");
+    throw snapshotConflict("現在のステップが署名済み計画の範囲外です。最新状態へ同期してください。");
   }
   return unsignedSnapshotSchema.parse({
     schema_version: 1,
@@ -121,16 +203,17 @@ export function verifyNavigateRunSnapshot(
   validateSigningSecret(secret);
   const parsed = signedSnapshotSchema.safeParse(input);
   if (!parsed.success) {
-    throw new GatewayError(400, "BAD_REQUEST", "run_snapshot is malformed.");
+    throw new GatewayError(400, "BAD_REQUEST", "ナビゲーション状態の形式が不正です。");
   }
   const { signature, ...unsigned } = parsed.data;
-  const expected = Buffer.from(signatureFor(unsigned, secret), "utf8");
-  const actual = Buffer.from(signature.slice(3), "utf8");
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-    throw snapshotConflict("The navigation snapshot signature is invalid.");
-  }
+  verifySignature(
+    unsigned,
+    signature,
+    secret,
+    snapshotConflict("ナビゲーション状態の署名を確認できません。最新状態へ同期してください。"),
+  );
   if (hashSnapshotTask(unsigned.plan.task) !== unsigned.plan.hash) {
-    throw snapshotConflict("The signed navigation task was modified.");
+    throw snapshotConflict("署名後にナビゲーション計画が変更されています。最新状態へ同期してください。");
   }
   return parsed.data;
 }
@@ -140,27 +223,60 @@ export function assertSnapshotMatchesRun(
   snapshot: SignedNavigateRunSnapshot,
   run: NavigateRun,
 ): void {
+  assertSnapshotPlanMatchesRun(snapshot, run);
+  if (
+    snapshot.current_step !== run.currentStep ||
+    snapshot.status !== run.status ||
+    snapshot.revision !== run.revision ||
+    snapshot.expires_at !== run.expiresAt
+  ) {
+    throw snapshotConflict("ナビゲーション状態が更新されています。最新状態へ同期してから続けてください。");
+  }
+}
+
+/** Checks immutable identity while allowing sync to replace stale progress. */
+export function assertSnapshotPlanMatchesRun(
+  snapshot: SignedNavigateRunSnapshot,
+  run: NavigateRun,
+): void {
   if (
     snapshot.run_id !== run.id ||
     snapshot.pack.id !== run.packId ||
     snapshot.pack.version !== run.packVersion ||
     snapshot.plan.id !== run.planId ||
     snapshot.plan.version !== run.planVersion ||
-    snapshot.plan.hash !== run.planHash ||
-    snapshot.current_step !== run.currentStep ||
-    snapshot.status !== run.status ||
-    snapshot.revision !== run.revision ||
-    snapshot.expires_at !== run.expiresAt
+    snapshot.plan.hash !== run.planHash
   ) {
-    throw snapshotConflict("Navigation state changed. Reload the latest run before continuing.");
+    throw snapshotConflict("ナビゲーション状態と保存済み計画が一致しません。新しい計画を作り直してください。");
   }
 }
 
 function signatureFor(snapshot: UnsignedNavigateRunSnapshot, secret: string): string {
   const normalized = unsignedSnapshotSchema.parse(snapshot);
-  return createHmac("sha256", secret)
-    .update(JSON.stringify(normalized))
-    .digest("base64url");
+  return signatureForValue(normalized, secret);
+}
+
+function signatureForValue(value: unknown, secret: string): string {
+  return createHmac("sha256", secret).update(JSON.stringify(value)).digest("base64url");
+}
+
+function verifySignature(
+  unsigned: unknown,
+  signature: string,
+  secret: string,
+  error: GatewayError,
+): void {
+  const expected = Buffer.from(signatureForValue(unsigned, secret), "utf8");
+  const actual = Buffer.from(signature.slice(3), "utf8");
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    throw error;
+  }
+}
+
+function proposalAudience(auth: ProposalAuth, planId: string, secret: string): string {
+  return `v1.${createHmac("sha256", secret)
+    .update(`${auth.tenantId}:${auth.userId}:${planId}`)
+    .digest("base64url")}`;
 }
 
 function validateSigningSecret(secret: string): void {
@@ -168,11 +284,15 @@ function validateSigningSecret(secret: string): void {
     throw new GatewayError(
       503,
       "RUN_SIGNING_UNAVAILABLE",
-      "Navigation state signing is unavailable. No navigation run was changed.",
+      "ナビゲーション状態の署名機能を利用できません。状態は変更されていません。管理者へ連絡してください。",
     );
   }
 }
 
 function snapshotConflict(message: string): GatewayError {
   return new GatewayError(409, "RUN_SNAPSHOT_CONFLICT", message);
+}
+
+function proposalConflict(message: string): GatewayError {
+  return new GatewayError(409, "RUN_PROPOSAL_CONFLICT", message);
 }

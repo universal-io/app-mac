@@ -3,9 +3,11 @@ import { describe, expect, test } from "vitest";
 import type { NavigateRun } from "./navigate-run";
 import {
   assertSnapshotMatchesRun,
+  createNavigateRunProposal,
   hashSnapshotTask,
   materializeSnapshotTask,
   signNavigateRunSnapshot,
+  verifyNavigateRunProposal,
   verifyNavigateRunSnapshot,
 } from "./navigate-run-snapshot";
 
@@ -39,6 +41,50 @@ function fixture() {
 }
 
 describe("signed Navigator Run snapshot", () => {
+  test("binds a short-lived proposal to the authenticated tenant and user", () => {
+    const auth = { tenantId: "tenant-a", userId: "user-a" };
+    const now = new Date("2026-07-14T08:00:00.000Z");
+    const proposal = createNavigateRunProposal(auth, {
+      packId: "ga4",
+      packVersion: "unversioned-v3",
+      task: {
+        goal: "国別のユーザー数を見る",
+        steps: [{ verbal: "ユーザー属性を開く", target: "ユーザー属性" }],
+      },
+    }, SECRET, now);
+
+    expect(() => verifyNavigateRunProposal(proposal, auth, SECRET, now)).not.toThrow();
+    expect(() => verifyNavigateRunProposal(
+      proposal,
+      { tenantId: "tenant-b", userId: "user-a" },
+      SECRET,
+      now,
+    )).toThrowError(expect.objectContaining({ code: "RUN_PROPOSAL_NOT_FOUND", status: 404 }));
+  });
+
+  test("rejects expired and modified proposals", () => {
+    const auth = { tenantId: "tenant-a", userId: "user-a" };
+    const now = new Date("2026-07-14T08:00:00.000Z");
+    const proposal = createNavigateRunProposal(auth, {
+      packId: "ga4",
+      packVersion: "unversioned-v3",
+      task: { goal: "国別に見る", steps: [{ verbal: "ユーザー属性を開く" }] },
+    }, SECRET, now);
+
+    expect(() => verifyNavigateRunProposal(
+      proposal,
+      auth,
+      SECRET,
+      new Date("2026-07-14T08:11:00.000Z"),
+    )).toThrowError(expect.objectContaining({ code: "RUN_PROPOSAL_EXPIRED", status: 410 }));
+    expect(() => verifyNavigateRunProposal({
+      ...proposal,
+      pack: { ...proposal.pack, id: "notion" },
+    }, auth, SECRET, now)).toThrowError(expect.objectContaining({
+      code: "RUN_PROPOSAL_CONFLICT",
+    }));
+  });
+
   test("round-trips an immutable Task without storing the body in the row", () => {
     const { run, task } = fixture();
     const signed = signNavigateRunSnapshot(run, task, SECRET);

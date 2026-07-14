@@ -86,6 +86,11 @@ export async function createNavigateRun(
     })
     .select(RUN_COLUMNS)
     .single();
+  if (error?.code === "23505") {
+    const existing = await loadScopedRunByPlan(auth, input.planId);
+    assertRunPlanMatchesInput(existing, input);
+    return existing;
+  }
   if (error || !data) throw runStoreError("create", error?.message);
   return mapRun(data as unknown as RunRow);
 }
@@ -139,7 +144,7 @@ export async function mutateNavigateRun(
     throw new GatewayError(
       409,
       "RUN_REVISION_CONFLICT",
-      "Navigation state changed. Reload the latest run before continuing.",
+      "ナビゲーション状態が別の処理で更新されました。最新状態へ同期してから続けてください。",
     );
   }
   return mapRun(data as unknown as RunRow);
@@ -161,25 +166,44 @@ export function assertRunOwner(
   auth: Pick<AuthContext, "tenantId" | "userId">,
 ): void {
   if (run.tenantId !== auth.tenantId || run.userId !== auth.userId) {
-    throw new GatewayError(404, "RUN_NOT_FOUND", "Navigation run was not found.");
+    throw new GatewayError(404, "RUN_NOT_FOUND", "このナビゲーション状態は見つかりませんでした。");
   }
 }
 
 export function validateMutation(input: MutateNavigateRunInput): void {
   if (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 0) {
-    throw new GatewayError(400, "BAD_REQUEST", "run revision must be a non-negative integer.");
+    throw new GatewayError(400, "BAD_REQUEST", "run revisionの値が不正です。");
   }
   if (!Number.isInteger(input.currentStep) || input.currentStep < 0) {
-    throw new GatewayError(400, "BAD_REQUEST", "current_step must be a non-negative integer.");
+    throw new GatewayError(400, "BAD_REQUEST", "current_stepの値が不正です。");
   }
   if (!RUN_STATUSES.has(input.status)) {
-    throw new GatewayError(400, "BAD_REQUEST", "run status is invalid.");
+    throw new GatewayError(400, "BAD_REQUEST", "run statusの値が不正です。");
   }
 }
 
 export function validateRunId(runId: string): void {
   if (!UUID_PATTERN.test(runId)) {
-    throw new GatewayError(400, "BAD_REQUEST", "run_id must be a UUID.");
+    throw new GatewayError(400, "BAD_REQUEST", "run_idの形式が不正です。");
+  }
+}
+
+export function assertRunPlanMatchesInput(
+  run: Pick<NavigateRun, "packId" | "packVersion" | "planId" | "planVersion" | "planHash">,
+  input: CreateNavigateRunInput,
+): void {
+  if (
+    run.packId !== input.packId.trim() ||
+    run.packVersion !== input.packVersion.trim() ||
+    run.planId !== input.planId ||
+    run.planVersion !== input.planVersion ||
+    run.planHash !== input.planHash
+  ) {
+    throw new GatewayError(
+      409,
+      "RUN_PLAN_CONFLICT",
+      "同じ計画IDが異なる内容ですでに開始されています。新しい計画を作り直してください。",
+    );
   }
 }
 
@@ -191,21 +215,21 @@ export function validateTransition(
     throw new GatewayError(
       409,
       "RUN_REVISION_CONFLICT",
-      "Navigation state changed. Reload the latest run before continuing.",
+      "ナビゲーション状態が別の処理で更新されました。最新状態へ同期してから続けてください。",
     );
   }
   if (TERMINAL_RUN_STATUSES.has(current.status)) {
     throw new GatewayError(
       409,
       "RUN_TERMINAL",
-      "This navigation run has ended and cannot be advanced.",
+      "このナビゲーションはすでに終了しているため、再開または更新できません。",
     );
   }
   if (next.currentStep < current.currentStep || next.currentStep > current.currentStep + 1) {
     throw new GatewayError(
       409,
       "RUN_STEP_CONFLICT",
-      "Navigation steps must advance one at a time from the latest run state.",
+      "ナビゲーションのステップを飛ばしたり戻したりできません。最新ステップから続けてください。",
     );
   }
 }
@@ -224,7 +248,26 @@ async function loadScopedRun(
     .eq("user_id", auth.userId)
     .maybeSingle();
   if (error) throw runStoreError("read", error.message);
-  if (!data) throw new GatewayError(404, "RUN_NOT_FOUND", "Navigation run was not found.");
+  if (!data) throw new GatewayError(404, "RUN_NOT_FOUND", "このナビゲーション状態は見つかりませんでした。");
+  const run = mapRun(data as unknown as RunRow);
+  assertRunOwner(run, auth);
+  return run;
+}
+
+async function loadScopedRunByPlan(
+  auth: Pick<AuthContext, "tenantId" | "userId">,
+  planId: string,
+): Promise<NavigateRun> {
+  const admin = getSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("bs_navigator_runs")
+    .select(RUN_COLUMNS)
+    .eq("plan_id", planId)
+    .eq("tenant_id", auth.tenantId)
+    .eq("user_id", auth.userId)
+    .maybeSingle();
+  if (error) throw runStoreError("read-by-plan", error.message);
+  if (!data) throw new GatewayError(404, "RUN_NOT_FOUND", "このナビゲーション状態は見つかりませんでした。");
   const run = mapRun(data as unknown as RunRow);
   assertRunOwner(run, auth);
   return run;
@@ -232,16 +275,16 @@ async function loadScopedRun(
 
 function validateCreateInput(input: CreateNavigateRunInput): void {
   if (!input.packId.trim() || !input.packVersion.trim()) {
-    throw new GatewayError(400, "BAD_REQUEST", "pack id/version are required.");
+    throw new GatewayError(400, "BAD_REQUEST", "pack id/versionが必要です。");
   }
   if (!UUID_PATTERN.test(input.planId)) {
-    throw new GatewayError(400, "BAD_REQUEST", "plan_id must be a UUID.");
+    throw new GatewayError(400, "BAD_REQUEST", "plan_idの形式が不正です。");
   }
   if (!Number.isInteger(input.planVersion) || input.planVersion < 1) {
-    throw new GatewayError(400, "BAD_REQUEST", "plan_version must be at least 1.");
+    throw new GatewayError(400, "BAD_REQUEST", "plan_versionの値が不正です。");
   }
   if (input.planHash.length < 16 || input.planHash.length > 200) {
-    throw new GatewayError(400, "BAD_REQUEST", "plan_hash length is invalid.");
+    throw new GatewayError(400, "BAD_REQUEST", "plan_hashの形式が不正です。");
   }
 }
 
@@ -273,7 +316,7 @@ function runStoreError(operation: string, detail?: string): GatewayError {
   return new GatewayError(
     503,
     "RUN_STORE_UNAVAILABLE",
-    "Navigation state could not be saved. No step was advanced; please retry.",
+    "ナビゲーション状態を保存できませんでした。ステップは進んでいません。少し待って再試行してください。",
   );
 }
 

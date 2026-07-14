@@ -1,6 +1,11 @@
 export type OperationalNotice = {
   severity: "warning";
-  code: "MODEL_FALLBACK" | "ROLE_DEGRADED" | "PROVIDER_RETRY" | "DATA_FALLBACK";
+  code:
+    | "MODEL_FALLBACK"
+    | "ROLE_DEGRADED"
+    | "PROVIDER_RETRY"
+    | "DATA_FALLBACK"
+    | "STATE_FALLBACK";
   message: string;
 };
 
@@ -42,6 +47,14 @@ export function dataFallbackNotice(component: string, fallback: string): Operati
     severity: "warning",
     code: "DATA_FALLBACK",
     message: `${component}を読み込めなかったため、${fallback}を使用しています。`,
+  };
+}
+
+export function stateFallbackNotice(component: string, fallback: string): OperationalNotice {
+  return {
+    severity: "warning",
+    code: "STATE_FALLBACK",
+    message: `${component}を開始できなかったため、${fallback}で案内しています。`,
   };
 }
 

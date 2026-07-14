@@ -10,7 +10,8 @@ create table if not exists public.bs_navigator_runs (
     user_id uuid not null references auth.users (id) on delete cascade,
     pack_id text not null,
     pack_version text not null,
-    plan_id uuid not null,
+    -- Globally unique so retrying a signed start proposal is idempotent.
+    plan_id uuid not null unique,
     plan_version integer not null check (plan_version >= 1),
     plan_hash text not null check (length(plan_hash) between 16 and 200),
     current_step integer not null default 0 check (current_step >= 0),

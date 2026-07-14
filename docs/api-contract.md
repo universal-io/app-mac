@@ -158,11 +158,14 @@ responseの`meta.notices`へ全件を入れ、clientは通常結果と同時にd
 }
 ```
 
-- 現行Gateway codeは`MODEL_FALLBACK / ROLE_DEGRADED / PROVIDER_RETRY / DATA_FALLBACK`。
+- 現行Gateway codeは`MODEL_FALLBACK / ROLE_DEGRADED / PROVIDER_RETRY / DATA_FALLBACK /
+  STATE_FALLBACK`。
   client内のCloud→BYOK、撮影engine切替は同じUIへ`CLIENT_PROVIDER_FALLBACK /
   CAPTURE_FALLBACK`として発行する。
 - model/provider fallbackは失敗したrouteと実際に使ったrouteの両方をmessageへ含める。
 - Planner/Grounder/Locator等の補助roleだけが失敗し、主結果を返す場合も`ROLE_DEGRADED`を返す。
+- v4 Runを開始できずv3状態管理で回答を継続する場合は`STATE_FALLBACK`で、使えなかった方式と
+  実際に継続した方式を示す。状態更新API自体はfallbackせずfail-closedする。
 - fallback不能なerrorは従来どおり非2xxまたはSSE `error`。raw provider本文やsecretは表示せず、
   ユーザーが再試行・設定確認できる説明を返す。
 - clientが`notices`を黙って捨てる実装は禁止。usage traceには本文でなくnotice codeを記録する。
@@ -715,10 +718,14 @@ Expected future use:
 - Gateway usage metadataには本文を保存せず、Observation有無、schema version、capture scope、
   transition state、candidate件数/sourceだけを記録する。
 
-### v4 Run snapshot（保存基盤実装済み・API未有効）
+### v4 Run proposal / snapshot（Gateway API実装済み・既定OFF）
 
 v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriterとなる。clientは直前の
 `run_snapshot`をrequestでechoし、responseのsnapshotで必ず置換する。
+
+PlannerがTaskを提案したSSE resultには、flag有効時だけ`result.run_proposal`を加える。proposalは
+認証tenant/userとplan IDへHMACで束縛され、10分で失効する。この時点ではrun rowを作らない。
+ユーザーが「開始」を選び、同じ認証でstart actionを送った時だけRunを作る。
 
 ```json
 {
@@ -763,14 +770,33 @@ v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriter�
   最終操作から24時間以内にpurgeする。
 - screenshot、OCR、candidate label/rect、会話、モデル自由文はrun row/usage traceへ保存しない。
   signed Task snapshotはclientが輸送し、server rowにはhashだけを置く。
-- `0005_navigator_runs.sql`、Gateway内部repository、署名／改ざん検知の純粋契約までは実装済み。
-  migration適用、公開route、
-  macOS client接続は未実施であり、現行v3の実行状態にはまだ影響しない。
+- `0005_navigator_runs.sql`、Gateway内部repository、署名／改ざん検知、下記control APIは実装済み。
+  migration適用とmacOS client接続は未実施であり、現行v3の実行状態にはまだ影響しない。
 - step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
   strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
 
+#### POST /api/ai/navigate/run
+
+共通bodyは`request_id`と`action`。`BOMB_SQUAD_NAVIGATE_V4_ENABLED=false`なら404
+`FEATURE_NOT_ENABLED`。署名鍵不備、store障害、改ざん、revision競合は成功へfallbackしない。
+
+- `start`: `proposal`必須。署名・期限・認証audienceを検証し、Runを冪等作成してsnapshotを返す。
+- `sync`: `run_snapshot`必須。Task署名とplan identityを検証し、row側の最新progressで再署名する。
+- `cancel`: `run_snapshot`必須。最新revisionだけをcancelし、更新済みsnapshotを返す。同じcancelの
+  再送は最新cancelled snapshotを返す。
+- clientはstep/status/Taskを別フィールドで送れない。`advance`はVerifier導入まで存在しない。
+
+```json
+{
+  "request_id": "uuid",
+  "action": "start | sync | cancel",
+  "proposal": "startだけ: SSE result.run_proposal",
+  "run_snapshot": "sync/cancelだけ: 直前のresponse値"
+}
+```
+
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
-（`{"result": {"text", "harness", "task", "grounding"}, "meta": {"model_id"}}`）。
+（`{"result": {"text", "harness", "task", "grounding", "run_proposal"}, "meta": {"model_id"}}`）。
 feature flag下の `grounding` は `{capture_id, candidate_id, confidence, method}` または `null` の
 加算フィールドで、
 `BOMB_SQUAD_NAVIGATE_V4_ENABLED` が未設定／falseの間は常に `null`。shadow期間は従来markerを

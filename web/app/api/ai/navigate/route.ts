@@ -29,6 +29,9 @@ import {
 } from "@/lib/server/navigate-engine";
 import type { NavigateHints } from "@/lib/server/harness";
 import type { OutputLanguageCode } from "@/lib/server/prompts";
+import { getServerEnv } from "@/lib/server/env";
+import { stateFallbackNotice } from "@/lib/server/operational-notice";
+import { createNavigateRunProposal } from "@/lib/server/navigate-run-snapshot";
 
 // Vercel rejects bodies past ~4.5MB; the client keeps history light by
 // sending at most the first and the latest screenshot.
@@ -278,6 +281,32 @@ function streamingResponse(input: StreamingResponseInput): Response {
         if (!finalOutput) {
           throw new ProviderCallError("Provider stream ended without a result.");
         }
+        const notices = [...finalOutput.notices];
+        let runProposal: ReturnType<typeof createNavigateRunProposal> | null = null;
+        const env = getServerEnv();
+        if (env.navigateV4Enabled && finalOutput.proposedTask && finalOutput.harnessId) {
+          try {
+            runProposal = createNavigateRunProposal({
+              tenantId: input.tenantId,
+              userId: input.userId,
+            }, {
+              packId: finalOutput.harnessId,
+              // The existing harness schema is intentionally labelled as
+              // legacy until milestone D introduces typed Pack v1.
+              packVersion: "unversioned-v3",
+              task: finalOutput.proposedTask,
+            }, env.navigateRunSigningSecret ?? "");
+          } catch (error) {
+            console.error(
+              `[/api/ai/navigate] Run proposal unavailable (request ${input.requestId}):`,
+              error instanceof Error ? error.message : error,
+            );
+            notices.push(stateFallbackNotice(
+              "新しいナビゲーション状態",
+              "従来のクライアント管理方式",
+            ));
+          }
+        }
         const latencyMs = Date.now() - started;
         await recordUsage(input.tenantId, input.userId, {
           operation: "navigate",
@@ -309,7 +338,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
             grounder_model_vendor: finalOutput.grounderModelVendor,
             grounder_model_id: finalOutput.grounderModelId,
             model_fallback_from: finalOutput.modelFallbackFrom,
-            operational_notice_codes: finalOutput.notices.map((notice) => notice.code),
+            operational_notice_codes: notices.map((notice) => notice.code),
             task_proposed: Boolean(finalOutput.proposedTask),
           },
         });
@@ -331,6 +360,9 @@ function streamingResponse(input: StreamingResponseInput): Response {
                   current_step: finalOutput.proposedTask.currentStep,
                 }
               : null,
+            // Shadow-only until the macOS client explicitly starts v4. The
+            // proposal creates no DB row and expires after ten minutes.
+            run_proposal: runProposal,
             grounding: finalOutput.grounding
               ? {
                   capture_id: finalOutput.grounding.captureId,
@@ -345,10 +377,30 @@ function streamingResponse(input: StreamingResponseInput): Response {
             model_vendor: finalOutput.modelVendor,
             model_id: finalOutput.modelId,
             latency_ms: latencyMs,
-            notices: finalOutput.notices,
+            notices,
           },
         });
       } catch (error) {
+        if (error instanceof GatewayError) {
+          console.error(
+            `[/api/ai/navigate] stream state error (request ${input.requestId}):`,
+            error.message,
+          );
+          await recordUsage(input.tenantId, input.userId, {
+            operation: "navigate",
+            unitType: "call",
+            requestId: input.requestId,
+            status: "error",
+            errorCode: error.code,
+            latencyMs: Date.now() - started,
+            metadata: input.metadata,
+          });
+          send("error", {
+            error: { code: error.code, message: error.message },
+            request_id: input.requestId,
+          });
+          return;
+        }
         const rateLimited = error instanceof ProviderCallError && error.rateLimited;
         const message = rateLimited
           ? (error as ProviderCallError).message

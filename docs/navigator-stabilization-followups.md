@@ -145,7 +145,7 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 |---|---|---|
 | A. 計測・入力契約 | eval、Observation、OCR/AX candidate、Grounder shadow | 完了 |
 | B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
-| C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **進行中**（保存基盤完了、API接続が次） |
+| C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **進行中**（Gateway API完了、mac shadow接続が次） |
 | D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | Cの直後 |
 | E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | 未着手 |
 | F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
@@ -161,8 +161,11 @@ GA4 1経路に必要なcreate/read/advance/cancel/expireとtenant隔離、本文
 - [x] 署名契約: Taskをstrict schemaへ正規化してSHA-256 hashをrowへ固定し、Task本文を含むsnapshot
   全体を専用HMAC keyで署名する。改ざん、stale revision、rowとのidentity不一致、短い／未設定keyは
   fail-closed。postconditionは段階Dまで空配列だけを許可する。
-- [ ] Run API接続: feature flag下でcreate/read/cancelと署名付きTask snapshot検証を追加する。
-  Verifierによるadvanceが無い段階では、既存Copilotの正本をRunへ切り替えない。
+- [x] Run Gateway API: Planner結果を10分有効・認証identity束縛の署名済みproposalとしてSSEへ加算。
+  ユーザー開始時だけ冪等にrowを作る`start`、authoritative rowへ戻す`sync`、最新revisionだけの
+  `cancel`をfeature flag下に追加した。Verifierが無いため`advance`はまだ提供しない。
+- [ ] macOS shadow接続: proposalを保持し、ユーザーの既存「開始」操作でRun startを呼ぶ。ただし
+  Verifier導入まではv3 Taskを表示の正本とし、Run失敗・v3継続は`STATE_FALLBACK`で明示する。
 
 #### v4 Observation実装（2026-07-14開始）
 

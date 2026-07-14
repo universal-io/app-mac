@@ -5,6 +5,7 @@ import {
   dataFallbackNotice,
   providerRetryNotice,
   roleDegradedNotice,
+  stateFallbackNotice,
 } from "./operational-notice";
 
 describe("operational notices", () => {
@@ -28,5 +29,10 @@ describe("operational notices", () => {
     expect(providerRetryNotice("groq", "model").message).toContain("再試行");
     expect(dataFallbackNotice("Capability Pack", "組み込み版").message)
       .toContain("組み込み版");
+    expect(stateFallbackNotice("新しいナビゲーション状態", "従来方式")).toEqual({
+      severity: "warning",
+      code: "STATE_FALLBACK",
+      message: "新しいナビゲーション状態を開始できなかったため、従来方式で案内しています。",
+    });
   });
 });
