@@ -90,6 +90,30 @@ struct NavigatorVerification: Equatable {
     let confidence: Double?
 }
 
+/// Non-authoritative code projection from the signed v4 Task. It is kept
+/// separate from the streamed model prose so shadow comparisons are possible.
+struct NavigatorShadowRendering: Equatable {
+    enum State: String {
+        case currentStep = "current_step"
+        case nextStep = "next_step"
+        case needsConfirmation = "needs_confirmation"
+        case blocked
+        case complete
+    }
+
+    struct Step: Equatable {
+        let id: String
+        let verbal: String
+        let target: String?
+        let fill: String?
+    }
+
+    let state: State
+    let verificationSource: NavigatorVerification.Source
+    let verificationStatus: NavigatorVerification.Status
+    let step: Step?
+}
+
 /// One event of a streaming navigation answer (SSE from the gateway).
 enum NavigateStreamEvent {
     /// A plain-text increment of the answer as the model produces it.
@@ -103,7 +127,8 @@ enum NavigateStreamEvent {
         task: NavigatorTask?,
         grounding: NavigatorCandidateGrounding?,
         runProposal: NavigatorRunProposal?,
-        verification: NavigatorVerification?
+        verification: NavigatorVerification?,
+        shadowRendering: NavigatorShadowRendering?
     )
 }
 
@@ -176,7 +201,10 @@ struct GatewayNavigateClient {
                                 task: Self.parseTask(result["task"]),
                                 grounding: Self.parseGrounding(result["grounding"]),
                                 runProposal: Self.parseRunProposal(result["run_proposal"]),
-                                verification: try Self.parseVerification(result["verification"])
+                                verification: try Self.parseVerification(result["verification"]),
+                                shadowRendering: try Self.parseShadowRendering(
+                                    result["shadow_rendering"]
+                                )
                             ))
                         default:
                             break
@@ -267,6 +295,49 @@ struct GatewayNavigateClient {
             reason: reason,
             evidenceCandidateIDs: evidence,
             confidence: confidence
+        )
+    }
+
+    private static func parseShadowRendering(_ value: Any?) throws -> NavigatorShadowRendering? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard
+            let dict = value as? [String: Any],
+            (dict["schema_version"] as? NSNumber)?.intValue == 1,
+            let rawState = dict["state"] as? String,
+            let state = NavigatorShadowRendering.State(rawValue: rawState),
+            let rawSource = dict["verification_source"] as? String,
+            let source = NavigatorVerification.Source(rawValue: rawSource),
+            let rawStatus = dict["verification_status"] as? String,
+            let status = NavigatorVerification.Status(rawValue: rawStatus)
+        else {
+            throw ProviderError.decoding("shadow表示指示の形式が不正です")
+        }
+        let step: NavigatorShadowRendering.Step?
+        if state == .complete {
+            guard dict["step"] is NSNull else {
+                throw ProviderError.decoding("完了したshadow表示に不要なstepがあります")
+            }
+            step = nil
+        } else {
+            guard
+                let rawStep = dict["step"] as? [String: Any],
+                let id = rawStep["id"] as? String, !id.isEmpty,
+                let verbal = rawStep["verbal"] as? String, !verbal.isEmpty
+            else {
+                throw ProviderError.decoding("shadow表示指示に署名済みstepがありません")
+            }
+            step = NavigatorShadowRendering.Step(
+                id: id,
+                verbal: verbal,
+                target: rawStep["target"] as? String,
+                fill: rawStep["fill"] as? String
+            )
+        }
+        return NavigatorShadowRendering(
+            state: state,
+            verificationSource: source,
+            verificationStatus: status,
+            step: step
         )
     }
 

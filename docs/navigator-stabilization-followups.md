@@ -147,7 +147,7 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 | B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
 | C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **完了**（shadow、環境は未有効） |
 | D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **完了**（shadow、状態更新なし） |
-| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | **次** |
+| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | **進行中**（Renderer projection追加） |
 | F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
 | G. 一般化 | Slack / Notionで同じgateを通し、v3を削除 | GA4合格後 |
 
@@ -187,6 +187,17 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
   strict schemaで呼び、rule判定とmodelのroute/token/resultを分離してtraceする。不安定capture、
   scope変更、空条件はmodelへ送らない。role失敗／model fallbackは警告表示し、model判定単独では
   危険操作もstep advanceも確定しない。役割env未設定時はmain modelを継承する。
+
+#### 段階E: GA4縦切り（進行中）
+
+- [x] template Renderer shadow projection: 署名済みTaskとVerifier statusだけから
+  `current_step / next_step / needs_confirmation / blocked / complete`と表示stepをコード生成する。
+  streamed本文・markerは参照せず、macOSは構造化結果を比較用に保持するだけで現行表示を変えない。
+  usageにはstate/step IDだけを残し、Task本文は保存しない。
+- [ ] Grounder接続: Rendererが示すcurrent/next stepのtargetを最新Observation candidateへgroundし、
+  v3本文由来groundingとの一致／不一致をtraceする。矛盾時は操作を促さずambiguousにする。
+- [ ] 状態更新gate: GA4 fixtureと実画面shadowで誤advance 0を確認後にだけ、Gateway CASでRun revisionを
+  進める。ここまでは`advance` APIを追加せず、v3表示・marker進行を維持する。
 
 #### v4 Observation実装（2026-07-14開始）
 

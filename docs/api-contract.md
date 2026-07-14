@@ -826,7 +826,7 @@ Planner失敗として明示的にdegradeし、署名Taskへ入れない。
 ```
 
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
-（`{"result": {"text", "harness", "task", "grounding", "run_proposal", "verification"}, "meta": {"model_id"}}`）。
+（`{"result": {"text", "harness", "task", "grounding", "run_proposal", "verification", "shadow_rendering"}, "meta": {"model_id"}}`）。
 feature flag下の `grounding` は `{capture_id, candidate_id, confidence, method}` または `null` の
 加算フィールドで、
 `BOMB_SQUAD_NAVIGATE_V4_ENABLED` が未設定／falseの間は常に `null`。shadow期間は従来markerを
@@ -847,6 +847,13 @@ Run revisionもv3 Taskも更新しない。ruleが安定済み・同一capture s
 推測補完しない。`confidence`はmodel結果だけ0〜1、rule結果は`null`。署名検証・
 Run store・rule evaluationが利用不能でも主回答を返せる場合は`STATE_FALLBACK`で
 「新しい検証を使えず従来判定を表示した」ことをユーザーへ明示する。
+
+`shadow_rendering`はverificationがある時だけ、署名済みTaskと構造化Verifier結果をコードで投影した
+`{schema_version:1, state, verification_source, verification_status, step}`。stateは
+`current_step / next_step / needs_confirmation / blocked / complete`、stepは
+`{id, verbal, target, fill}`またはcomplete時の`null`。stream本文やmarkerを入力にせず、modelにも
+生成させない。GA4 shadow gateまではmacOSが比較用に保持するだけで、画面表示の正本はv3のまま。
+usageには本文でなくrenderer stateとstep IDだけを記録する。
 
 ## Account / Admin（実装済み・簡易記載）
 

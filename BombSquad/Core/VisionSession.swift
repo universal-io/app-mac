@@ -98,6 +98,7 @@ final class VisionSession: ObservableObject {
     private var navigatorRunBeforeObservation: VisionObservation?
     private var navigatorRunVerificationFinished = false
     private var navigatorRunFallbackActive = false
+    private var navigatorShadowRendering: NavigatorShadowRendering?
     private var navigatorRunTask: Task<Void, Never>?
     private var navigatorRunGeneration = 0
     private var queuedNavigatorQuestion: String?
@@ -826,6 +827,7 @@ final class VisionSession: ObservableObject {
             var candidateGrounding: NavigatorCandidateGrounding?
             var runProposal: NavigatorRunProposal?
             var runVerification: NavigatorVerification?
+            var shadowRendering: NavigatorShadowRendering?
             for try await event in stream {
                 guard generation == navigatorGeneration, !Task.isCancelled else { return }
                 switch event {
@@ -842,7 +844,8 @@ final class VisionSession: ObservableObject {
                     let resultTask,
                     let resultGrounding,
                     let resultRunProposal,
-                    let resultVerification
+                    let resultVerification,
+                    let resultShadowRendering
                 ):
                     finalText = text
                     harness = resultHarness
@@ -851,6 +854,7 @@ final class VisionSession: ObservableObject {
                     candidateGrounding = resultGrounding
                     runProposal = resultRunProposal
                     runVerification = resultVerification
+                    shadowRendering = resultShadowRendering
                 }
             }
             guard let finalText else {
@@ -860,6 +864,14 @@ final class VisionSession: ObservableObject {
 
             if let runVerification {
                 handleNavigatorRunVerification(runVerification)
+            }
+            if let shadowRendering {
+                navigatorShadowRendering = shadowRendering
+                NSLog(
+                    "[Copilot] v4 shadow Renderer state=%@ step=%@",
+                    shadowRendering.state.rawValue,
+                    shadowRendering.step?.id ?? "none"
+                )
             }
 
             let (displayText, vlmBox, target, fill, stepDone) = NavigatorLocator.extract(from: finalText)
@@ -1185,6 +1197,7 @@ final class VisionSession: ObservableObject {
         navigatorRunBeforeObservation = nil
         navigatorRunVerificationFinished = false
         navigatorRunFallbackActive = false
+        navigatorShadowRendering = nil
         navigatorActiveTask = nil
         isExecutingNavigatorAction = false
         isCopilotChecking = false

@@ -418,6 +418,8 @@ function streamingResponse(input: StreamingResponseInput): Response {
             verifier_model_input_tokens: verification?.modelInputTokens,
             verifier_model_output_tokens: verification?.modelOutputTokens,
             verifier_model_failure_reason: verification?.modelFailureReason,
+            renderer_state: verification?.rendering.state,
+            renderer_step_id: verification?.rendering.step?.id,
           },
         });
         send("result", {
@@ -452,6 +454,9 @@ function streamingResponse(input: StreamingResponseInput): Response {
                     : null,
                 }
               : null,
+            // Code-only projection from the signed Task + Verifier result.
+            // It is additive and non-authoritative until the GA4 shadow gate.
+            shadow_rendering: verification?.rendering ?? null,
             grounding: finalOutput.grounding
               ? {
                   capture_id: finalOutput.grounding.captureId,

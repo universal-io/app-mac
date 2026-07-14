@@ -2,6 +2,10 @@ import type { VisionObservation } from "@/lib/context/observation";
 import { getServerEnv } from "@/lib/server/env";
 import { GatewayError } from "@/lib/server/gateway";
 import { loadNavigateRun } from "@/lib/server/navigate-run";
+import {
+  renderNavigateRunInShadow,
+  type NavigateShadowRendering,
+} from "@/lib/server/navigate-run-renderer";
 import { verifyPostconditionsWithModel } from "@/lib/server/navigate-model-verifier";
 import { resolveNavigateRoleRoute } from "@/lib/server/navigate-provider-route";
 import {
@@ -28,6 +32,7 @@ export type NavigateRunVerificationExecution = {
   modelInputTokens: number;
   modelOutputTokens: number;
   modelFailureReason: "ROUTE_UNAVAILABLE" | "SCHEMA_INVALID" | "PROVIDER_CALL_FAILED" | null;
+  rendering: NavigateShadowRendering;
   notices: OperationalNotice[];
 };
 
@@ -82,6 +87,7 @@ export async function verifyNavigateRunInShadow(args: {
     modelInputTokens: 0,
     modelOutputTokens: 0,
     modelFailureReason: null,
+    rendering: renderNavigateRunInShadow(snapshot, ruleResult),
     notices: [],
   };
   // Unstable/scope-changed/conditionless observations are capture-contract
@@ -129,15 +135,17 @@ export async function verifyNavigateRunInShadow(args: {
         "モデル応答が検証用のstrict schemaに一致しませんでした。",
       ));
     }
+    const result = model.result ?? ruleResult;
     return {
       ...base,
-      result: model.result ?? ruleResult,
+      result,
       modelAttempted: true,
       modelVendor: route.vendor,
       modelId: route.modelId,
       modelInputTokens: model.inputTokens,
       modelOutputTokens: model.outputTokens,
       modelFailureReason: model.result ? null : "SCHEMA_INVALID",
+      rendering: renderNavigateRunInShadow(snapshot, result),
       notices,
     };
   } catch {
