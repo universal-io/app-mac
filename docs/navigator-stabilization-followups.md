@@ -32,10 +32,16 @@ baseline として維持し、GA4 の1ユースケースだけを新しい実行
 **業務アプリ提供元（app vendor）**を指す。AI provider と混同しないよう、コードとDBでは
 可能な限り `app_vendor` / `model_provider` と明記する。
 
+この4層はNavigator専用の分類ではなく、Compose / Transform / Visionを横断する共通Contextの
+適用範囲である。既存のL1 Situational / L2 Relationship / L3 Personaは「内容と寿命」の別軸。
+全体契約・合成規則・surface projectionは
+[universal-io-master-plan.md](universal-io-master-plan.md) §3.1を正とする。本計画ではVisionの
+projectionだけを先に実装し、`vision tenant` や `navigator user pack` という別の正本を作らない。
+
 | 層 | 識別単位 | 目的 | 例 | 現在 | 今後 |
 |---|---|---|---|---|---|
 | generic | 全利用者 | 未知の画面でも最低限理解・案内する | 任意のWeb/デスクトップ画面 | 汎用 system prompt | 型付き既定契約として常時適用 |
-| app vendor | 製品／ツール | 標準UI、用語、代表タスクを共有する | GA4、Slack、Notion、freee | `scope=global` の pack に暗黙混在 | 版付き vendor pack として明示 |
+| app vendor / product | 提供元＋製品／ツール | 標準UI、用語、代表タスクを共有する | Google/GA4、Slack/Slack、Notion/Notion | `scope=global` の pack に暗黙混在 | 版付きproduct packとして明示 |
 | tenant | 導入組織 | 個社固有UI、ERP、権限、承認フローを上書きする | A社Salesforce、社内ERP | DB列のみ。実行時未使用 | 認証tenantに限定した overlay |
 | user | 個人 | 言語、認知特性、説明粒度、支援設定を適用する | やさしい日本語、詳細度 | Navigator pack として未実装 | 許可された presentation overlay |
 
