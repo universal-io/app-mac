@@ -776,6 +776,21 @@ PlannerがTaskを提案したSSE resultには、flag有効時だけ`result.run_p
 - step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
   strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
 
+#### Pack v1 typed postcondition（実装中）
+
+1 stepあたり最大8件。現段階で許可するkindは次だけで、自由文条件、座標、画像/OCR本文、任意式、
+機密field valueは署名Taskへ入れない。
+
+- `candidate_present / candidate_absent`: `selector.label`必須、`parent_label / role`任意。
+- `candidate_state`: 上記selector＋Observation既知state。
+- `environment_matches`: `url_contains / window_title_contains`の一方以上。
+- `environment_changed`: `field = url | window_title`。
+
+rule-first Verifierはafterが`stable`かつbefore/afterのcapture scopeが同じ場合だけ評価する。全条件を
+満たせば`verified`（最終stepは`complete`）、disabled targetは`blocked`、可視状態が同一なら
+`not_changed`、不安定・矛盾・情報不足は`ambiguous`。`ambiguous`だけが将来のmodel Verifier対象で、
+空のpostconditionを完了扱いしてはならない。
+
 #### POST /api/ai/navigate/run
 
 共通bodyは`request_id`と`action`。`BOMB_SQUAD_NAVIGATE_V4_ENABLED=false`なら404
