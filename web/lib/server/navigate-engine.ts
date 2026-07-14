@@ -649,7 +649,12 @@ function taskBlock(task: NavigateTask): string {
   const steps = task.steps
     .map((step, index) => {
       const cursor = index === task.currentStep ? " ← 現在のステップ" : "";
-      return `${index + 1}. ${step.verbal}${cursor}`;
+      const data = [
+        step.target ? `target=${JSON.stringify(step.target)}` : null,
+        step.fill ? `fill=${JSON.stringify(step.fill)}` : null,
+      ].filter(Boolean).join(", ");
+      const dataBlock = data ? ` [${data}]` : "";
+      return `${index + 1}. ${step.verbal}${dataBlock}${cursor}`;
     })
     .join("\n");
   return `# 進行中のナビゲーション（コパイロット）
@@ -659,6 +664,7 @@ ${steps}
 
 コパイロットのルール:
 - 案内するのは現在のステップだけ。先のステップをまとめて説明しない。
+- 現在stepの target / fill はTaskの確定データであり、画面から再推測・言い換えしない。
 - 現在のステップの対象が画面内に見えるなら、必ずマーカーを付ける。
 - 添付の最新画像で現在のステップが既に完了している（既にそのページにいる・メニューが開いている等）、**または不要になっている**（対象がすでに展開済み・目的の要素がすでに画面内に見えている等）と確認できる場合は、そのステップを案内せず、回答の一番最後に [[step:done]] を1つ付け、続く次のステップを1文で案内する（その対象のマーカーも付ける。マーカーは [[step:done]] より前に書く）。
 - 展開済みのメニュー項目を「押してください」と案内しない（もう一度押すと閉じてしまう）。子項目が見えているなら目的の子項目そのものを案内する。

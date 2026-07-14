@@ -181,6 +181,9 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
      `[[target]]` を信頼してハイライトする。帯の指示文も Task 本体ではなくモデル回答。
    - そのため「プランはデータ、LLM は現在ステップの確認だけ」という設計契約が
      実行時に崩れている。
+   - **2026-07-14部分解消**: `taskBlock` は全stepの `target/fill` も渡す。Copilot requestは
+     Task + 最新capture + capture後の直近ユーザー発話だけとし、assistant履歴と開始前履歴を送らない。
+     帯のtemplate化とfree-text marker廃止はVerifier/Renderer移行で完了させる。
 2. **GPT-5.6 の品質上限は現行 API 実装では出ない**
    - 現行は OpenAI-compatible Chat Completions のみ。OpenAI の現行ガイドは推論・
      マルチターンに Responses API を推奨し、最高品質の `reasoning.mode: "pro"` も
@@ -208,6 +211,7 @@ planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはp
   再キャプチャ後も使い続ける。タブ・ウィンドウ・アプリが変わると harness が stale になる。
 - 通常 Navigator Q&A は全履歴を残すが Gateway は 24 messages 上限。クライアント側に
   上限前の切り詰めがなく、長い通常 Q&A は 400 で終了する。
+  Copilotは2026-07-14に履歴ゼロ契約へ移行済み。残課題は通常Q&Aだけ。
 - モデルに届く画像は長辺 1,600px / JPEG 0.7 へ事前縮小済み。API で
   `detail: original` にしても失われた細かい UI 文字は戻らない。「モデルの公平比較」と
   「入力を含むシステム品質上限」は別実験にする。

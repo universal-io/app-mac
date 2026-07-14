@@ -264,10 +264,11 @@ struct GatewayNavigateClient {
         language: OutputLanguage,
         task: NavigatorTask?
     ) -> [String: Any] {
-        // An active copilot already carries its complete plan in `task`.
-        // Replaying the whole pre-copilot conversation makes old instructions
-        // compete with the latest screen, so retain only the latest capture and
-        // the final conversational beat. Plain navigator Q&A keeps full history.
+        // An active copilot already carries its complete goal and plan in
+        // `task`. Its request contract is history-free: latest capture plus an
+        // optional direct user utterance after that capture. Assistant history
+        // and pre-copilot questions must never compete with current state.
+        // Plain navigator Q&A keeps its conversation history for now.
         let effectiveTurns: [NavigateTurn]
         if task != nil {
             let latestCaptureIndex = turns.indices.last {
@@ -275,10 +276,21 @@ struct GatewayNavigateClient {
                     || turns[$0].ocrText != nil
                     || turns[$0].observation != nil
             }
-            let tailStart = max(0, turns.count - 2)
-            var keptIndices = Set(tailStart..<turns.count)
+            var keptIndices = Set<Int>()
             if let latestCaptureIndex {
                 keptIndices.insert(latestCaptureIndex)
+            }
+            let directUtteranceIndex = turns.indices.last { index in
+                guard index > (latestCaptureIndex ?? -1) else { return false }
+                let turn = turns[index]
+                return turn.role == .user
+                    && turn.imageBase64 == nil
+                    && turn.ocrText == nil
+                    && turn.observation == nil
+                    && !(turn.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            }
+            if let directUtteranceIndex {
+                keptIndices.insert(directUtteranceIndex)
             }
             effectiveTurns = turns.indices
                 .filter { keptIndices.contains($0) }
