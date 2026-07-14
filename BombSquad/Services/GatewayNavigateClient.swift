@@ -193,7 +193,8 @@ struct GatewayNavigateClient {
         language: OutputLanguage,
         task: NavigatorTask? = nil,
         runSnapshot: NavigatorRunSnapshot? = nil,
-        previousObservation: VisionObservation? = nil
+        previousObservation: VisionObservation? = nil,
+        runShadowInactiveReason: String? = nil
     ) async throws -> AsyncThrowingStream<NavigateStreamEvent, Error> {
         let events = try await client.postSSE(
             "ai/navigate",
@@ -203,7 +204,8 @@ struct GatewayNavigateClient {
                 language: language,
                 task: task,
                 runSnapshot: runSnapshot,
-                previousObservation: previousObservation
+                previousObservation: previousObservation,
+                runShadowInactiveReason: runShadowInactiveReason
             )
         )
 
@@ -570,7 +572,8 @@ struct GatewayNavigateClient {
         language: OutputLanguage,
         task: NavigatorTask?,
         runSnapshot: NavigatorRunSnapshot?,
-        previousObservation: VisionObservation?
+        previousObservation: VisionObservation?,
+        runShadowInactiveReason: String?
     ) throws -> [String: Any] {
         // An active copilot already carries its complete goal and plan in
         // `task`. Its request contract is history-free: latest capture plus an
@@ -682,6 +685,11 @@ struct GatewayNavigateClient {
             throw ProviderError.decoding(
                 "ナビゲーション検証には署名済み状態と直前の画面情報の両方が必要です"
             )
+        }
+        if runSnapshot == nil, let runShadowInactiveReason {
+            // Tells the gateway this snapshot-less turn is intentional so it
+            // does not raise RUN_SNAPSHOT_MISSING.
+            input["run_shadow_inactive_reason"] = runShadowInactiveReason
         }
 
         return GatewayClient.envelope(operation: "navigate", input: input, language: language)

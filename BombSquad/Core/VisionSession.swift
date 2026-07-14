@@ -809,16 +809,35 @@ final class VisionSession: ObservableObject {
 
         let context = await resolveContext()
         guard generation == navigatorGeneration, !Task.isCancelled else { return }
+        // The Run start (startNavigatorRunShadow) is fire-and-forget so Copilot
+        // mode can enter immediately; wait for it here so the first stream call
+        // never races ahead of navigatorRunSnapshot being populated.
+        await navigatorRunTask?.value
+        guard generation == navigatorGeneration, !Task.isCancelled else { return }
         do {
             let shadowSnapshot = navigatorRunVerificationFinished ? nil : navigatorRunSnapshot
             let shadowBefore = shadowSnapshot == nil ? nil : navigatorRunBeforeObservation
+            let shadowLatestObservation = navigatorObservation
+            // Declare why no snapshot rides along so the Gateway can skip its
+            // RUN_SNAPSHOT_MISSING warning for legitimate shadow-off turns.
+            let shadowInactiveReason: String?
+            if shadowSnapshot != nil {
+                shadowInactiveReason = nil
+            } else if navigatorRunVerificationFinished {
+                shadowInactiveReason = "verification_finished"
+            } else if navigatorRunFallbackActive {
+                shadowInactiveReason = "start_failed"
+            } else {
+                shadowInactiveReason = nil
+            }
             let stream = try await client.navigateStream(
                 turns: navigatorWireTurns,
                 hints: isContextExcluded ? nil : context,
                 language: outputLanguage,
                 task: navigatorActiveTask,
                 runSnapshot: shadowSnapshot,
-                previousObservation: shadowBefore
+                previousObservation: shadowBefore,
+                runShadowInactiveReason: shadowInactiveReason
             )
             var finalText: String?
             var harness: String?
@@ -864,6 +883,13 @@ final class VisionSession: ObservableObject {
                 throw ProviderError.decoding("stream ended without a result")
             }
             guard generation == navigatorGeneration, !Task.isCancelled else { return }
+
+            // Advance the before/after baseline only on a successful turn that
+            // actually carried a shadow snapshot, so the next Verifier call
+            // compares against this turn's screen instead of the Run's start.
+            if shadowSnapshot != nil, let shadowLatestObservation {
+                navigatorRunBeforeObservation = shadowLatestObservation
+            }
 
             if let runVerification {
                 handleNavigatorRunVerification(runVerification)

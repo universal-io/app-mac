@@ -5,7 +5,8 @@ export type OperationalNotice = {
     | "ROLE_DEGRADED"
     | "PROVIDER_RETRY"
     | "DATA_FALLBACK"
-    | "STATE_FALLBACK";
+    | "STATE_FALLBACK"
+    | "RUN_SNAPSHOT_MISSING";
   message: string;
 };
 
@@ -63,6 +64,17 @@ export function stateFallbackNotice(
     message:
       `${component}を開始できなかったため、${fallback}で案内しています。` +
       (reason ? ` 理由: ${reason}` : ""),
+  };
+}
+
+/** The client sent a Copilot turn without the v4 Run snapshot, so the
+ * shadow Verifier/Grounder/Renderer roles could not run this turn. */
+export function runSnapshotMissingNotice(): OperationalNotice {
+  return {
+    severity: "warning",
+    code: "RUN_SNAPSHOT_MISSING",
+    message:
+      "ナビゲーション状態のスナップショットを受信できなかったため、新しい検証機能をスキップしました。",
   };
 }
 
