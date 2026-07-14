@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、v4 Run/Verifier shadow実装中）
+最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、Supabase 0005/0006適用済み。Gateway env/deploy待ち）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -147,13 +147,13 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 | B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
 | C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **完了**（shadow、環境は未有効） |
 | D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **完了**（shadow、状態更新なし） |
-| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | **進行中**（Renderer projection追加） |
+| E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | **コード完了**（実環境shadow待ち） |
 | F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
 | G. 一般化 | Slack / Notionで同じgateを通し、v3を削除 | GA4合格後 |
 
-段階Dの**判定契約**まで完了した。次はEで、GA4 1経路をRun→Grounder→Verifier→template Rendererの
-構造化データだけでshadow完走させる。まず確定Task/Verifierから帯表示を作り、自由文markerと並べて
-差分計測する。Run revision更新とv3削除はまだ行わない。
+段階Eのローカルコードと自動検証まで完了した。GA4 1経路はRun→Verifier→template Renderer→
+Renderer対象Grounderを構造化データだけでshadow完走でき、従来groundingとのcandidate ID差分も計測する。
+次はmigrationと環境設定を行って実画面shadowを開始する。Run revision更新とv3削除はまだ行わない。
 
 - [x] Run保存基盤: `0005_navigator_runs.sql` とservice-role専用repositoryを追加。tenant/user scope、
   revisionのcompare-and-swap、最終更新から24時間のTTL、expire/purge、本文非保存、store障害時の
@@ -194,10 +194,41 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
   `current_step / next_step / needs_confirmation / blocked / complete`と表示stepをコード生成する。
   streamed本文・markerは参照せず、macOSは構造化結果を比較用に保持するだけで現行表示を変えない。
   usageにはstate/step IDだけを残し、Task本文は保存しない。
-- [ ] Grounder接続: Rendererが示すcurrent/next stepのtargetを最新Observation candidateへgroundし、
-  v3本文由来groundingとの一致／不一致をtraceする。矛盾時は操作を促さずambiguousにする。
+- [x] Grounder接続: Rendererが示すcurrent/next stepのtargetだけを最新Observation candidateへgroundし、
+  同一captureのv3 groundingと`agreement / disagreement / not_comparable`をtraceする。candidate ID矛盾または
+  confidence 0.85未満は`ambiguous`へ倒し、macOSへ`safe_to_prompt=false`を返してv3 highlightも抑止する。
+  blocked/確認待ち/完了/target無しはGrounderを呼ばず操作を促さない。candidate label/rectはusageへ残さない。
 - [ ] 状態更新gate: GA4 fixtureと実画面shadowで誤advance 0を確認後にだけ、Gateway CASでRun revisionを
   進める。ここまでは`advance` APIを追加せず、v3表示・marker進行を維持する。
+
+#### 実画面ユーザーテスト開始条件（2026-07-14確認）
+
+コード側はテスト開始可能。`npm test` 54/54、`eval:navigator:check` 9/9、Next production build、
+macOS Debug buildが成功した。実環境は次の順で有効化する。
+
+1. 対象Supabaseへ`0005_navigator_runs.sql`、続けて`0006_harness_pack_versions.sql`を適用する。
+2. Gatewayへ32 byte以上の`BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`を設定してdeployする。
+3. 最後に`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`を設定し、macOSをそのGatewayへ向ける。
+4. GA4国・地域経路をshadowで実行し、usageの`renderer_state / run_grounder_status /
+   run_grounder_comparison / run_grounder_safe_to_prompt / verifier_status`と画面highlightを照合する。
+
+2026-07-14にBomb Squad Supabase MCP接続で`0005_navigator_runs.sql`と
+`0006_harness_pack_versions.sql`を本番project（`bomb-squad` /
+`skcsbcyivjcvevxntvqa`、`ACTIVE_HEALTHY`）へ適用した。migration履歴は
+`navigator_runs` / `harness_pack_versions`、`public.bs_navigator_runs`の存在、
+`public.bs_harness_packs.pack_version`、GA4 global pack `pack_version='1'` / `enabled=true` /
+recipe 5件を確認済み。Supabase advisorは既存設計どおり`bs_harness_packs`と
+`bs_navigator_runs`のRLS enabled/no policyをINFOとして報告する（service-role専用テーブルのため
+現時点では想定内）。
+
+Gateway側は同日時点で未完了。`BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`と
+`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`はVercelへ登録・deploy済みだが、production probeで
+`/api/ai/navigate`はJSON応答する一方、`/api/ai/navigate/run`はNext 404を返した。つまり環境変数より
+先に、Vercel productionのデプロイ対象commit/branchがv4 Run routeを含むStage Eコードへ更新されていない。
+このrouteが本番でJSONの`BAD_REQUEST` / `UNAUTHORIZED` / `FEATURE_NOT_ENABLED`等を返す状態になるまで、
+実画面shadowは開始しない。
+最初の実画面テストではRun revisionを更新せず、誤highlight、stale画面採用、
+action→次highlight時間を記録する。状態更新gateはこの実測が0件のままでは通さない。
 
 #### v4 Observation実装（2026-07-14開始）
 

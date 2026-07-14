@@ -114,6 +114,33 @@ struct NavigatorShadowRendering: Equatable {
     let step: Step?
 }
 
+/// Candidate selected from the latest Observation for the signed Renderer
+/// step, plus its comparison with the legacy text-driven grounding path.
+struct NavigatorShadowGrounding: Equatable {
+    enum Status: String {
+        case grounded
+        case ambiguous
+        case unresolved
+        case notApplicable = "not_applicable"
+    }
+
+    enum Comparison: String {
+        case agreement
+        case disagreement
+        case notComparable = "not_comparable"
+    }
+
+    let status: Status
+    let comparison: Comparison
+    let safeToPrompt: Bool
+    let captureID: UUID
+    let stepID: String?
+    let candidateID: String?
+    let confidence: Double?
+    let method: String?
+    let legacyCandidateID: String?
+}
+
 /// One event of a streaming navigation answer (SSE from the gateway).
 enum NavigateStreamEvent {
     /// A plain-text increment of the answer as the model produces it.
@@ -128,7 +155,8 @@ enum NavigateStreamEvent {
         grounding: NavigatorCandidateGrounding?,
         runProposal: NavigatorRunProposal?,
         verification: NavigatorVerification?,
-        shadowRendering: NavigatorShadowRendering?
+        shadowRendering: NavigatorShadowRendering?,
+        shadowGrounding: NavigatorShadowGrounding?
     )
 }
 
@@ -204,6 +232,9 @@ struct GatewayNavigateClient {
                                 verification: try Self.parseVerification(result["verification"]),
                                 shadowRendering: try Self.parseShadowRendering(
                                     result["shadow_rendering"]
+                                ),
+                                shadowGrounding: try Self.parseShadowGrounding(
+                                    result["shadow_grounding"]
                                 )
                             ))
                         default:
@@ -338,6 +369,42 @@ struct GatewayNavigateClient {
             verificationSource: source,
             verificationStatus: status,
             step: step
+        )
+    }
+
+    private static func parseShadowGrounding(_ value: Any?) throws -> NavigatorShadowGrounding? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard
+            let dict = value as? [String: Any],
+            (dict["schema_version"] as? NSNumber)?.intValue == 1,
+            let rawStatus = dict["status"] as? String,
+            let status = NavigatorShadowGrounding.Status(rawValue: rawStatus),
+            let rawComparison = dict["comparison"] as? String,
+            let comparison = NavigatorShadowGrounding.Comparison(rawValue: rawComparison),
+            let safeToPrompt = dict["safe_to_prompt"] as? Bool,
+            let rawCaptureID = dict["capture_id"] as? String,
+            let captureID = UUID(uuidString: rawCaptureID)
+        else {
+            throw ProviderError.decoding("shadow操作対象の形式が不正です")
+        }
+        let confidence = (dict["confidence"] as? NSNumber)?.doubleValue
+        if let confidence, !(0...1).contains(confidence) {
+            throw ProviderError.decoding("shadow操作対象の信頼度が不正です")
+        }
+        let method = dict["method"] as? String
+        if let method, method != "exact_unique" && method != "model" {
+            throw ProviderError.decoding("shadow操作対象の解決方法が不正です")
+        }
+        return NavigatorShadowGrounding(
+            status: status,
+            comparison: comparison,
+            safeToPrompt: safeToPrompt,
+            captureID: captureID,
+            stepID: dict["step_id"] as? String,
+            candidateID: dict["candidate_id"] as? String,
+            confidence: confidence,
+            method: method,
+            legacyCandidateID: dict["legacy_candidate_id"] as? String
         )
     }
 

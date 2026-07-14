@@ -1,6 +1,6 @@
 # 手動ゴールデンパス検証チェックリスト
 
-作成: 2026-07-12 ／ ステータス: 現役（Phase 4 最終パリティ確認済み）
+作成: 2026-07-12 ／ 最終更新: 2026-07-14 ／ ステータス: 現役（Phase 4 最終パリティ確認済み）
 
 ## 使い方
 
@@ -440,6 +440,21 @@ Persona/Relationship カード（メモリ機能, GP-23）が有効な場合と�
 パネルが閉じてコパイロットが機能しなくなる重大リグレッションになるため必ず確認する。
 再スキャン判定は暫定実装（OCR joinedText が前回と同じなら1回だけ再取得）のため、画面が変化したのに
 「変化なし」と判定されるケースがある（`docs/navigator-stabilization-followups.md`）。
+
+### v4 shadow追加観測（次回実施、2026-07-14時点は未実施）
+
+**追加前提**: `0005`/`0006` migration、Run署名鍵、`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`を
+正本記載の順で適用済み。GA4の「訪問者を国や地域別に見たい」経路を使う。
+
+**追加確認**:
+1. 「ナビゲーション開始」後も従来の帯と操作は維持され、Run start失敗時は警告バナーに理由が出る。
+2. ハイライト対象をクリックして画面遷移後、次の署名済みstep対象だけがハイライトされる。
+3. 新旧Grounderが別candidateを選ぶか信頼度0.85未満の場合、誤った赤枠を出さず警告バナーを表示する。
+4. Consoleの`v4 shadow Renderer`と`v4 shadow Grounder`ログでstep ID、comparison、safe判定を確認する。
+5. このshadow中はRun revisionを進めず、画面上のstep進行は従来marker経路のままである。
+
+記録する値は、誤highlight有無、stale画面採用有無、actionから次highlightまでの秒数、
+Grounder comparison、Verifier status。スクリーンショット/OCR/candidate labelやrectはusageへ保存しない。
 
 ---
 

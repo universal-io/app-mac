@@ -785,7 +785,7 @@ PlannerがTaskを提案したSSE resultには、flag有効時だけ`result.run_p
 - step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
   strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
 
-#### Pack v1 typed postcondition（実装中）
+#### Pack v1 typed postcondition（shadow実装済み）
 
 1 stepあたり最大8件。現段階で許可するkindは次だけで、自由文条件、座標、画像/OCR本文、任意式、
 機密field valueは署名Taskへ入れない。
@@ -814,7 +814,7 @@ Planner失敗として明示的にdegradeし、署名Taskへ入れない。
 - `sync`: `run_snapshot`必須。Task署名とplan identityを検証し、row側の最新progressで再署名する。
 - `cancel`: `run_snapshot`必須。最新revisionだけをcancelし、更新済みsnapshotを返す。同じcancelの
   再送は最新cancelled snapshotを返す。
-- clientはstep/status/Taskを別フィールドで送れない。`advance`はVerifier導入まで存在しない。
+- clientはstep/status/Taskを別フィールドで送れない。`advance`はGA4実画面shadow gateを通るまで存在しない。
 
 ```json
 {
@@ -826,7 +826,7 @@ Planner失敗として明示的にdegradeし、署名Taskへ入れない。
 ```
 
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
-（`{"result": {"text", "harness", "task", "grounding", "run_proposal", "verification", "shadow_rendering"}, "meta": {"model_id"}}`）。
+（`{"result": {"text", "harness", "task", "grounding", "run_proposal", "verification", "shadow_rendering", "shadow_grounding"}, "meta": {"model_id"}}`）。
 feature flag下の `grounding` は `{capture_id, candidate_id, confidence, method}` または `null` の
 加算フィールドで、
 `BOMB_SQUAD_NAVIGATE_V4_ENABLED` が未設定／falseの間は常に `null`。shadow期間は従来markerを
@@ -854,6 +854,18 @@ Run store・rule evaluationが利用不能でも主回答を返せる場合は`S
 `{id, verbal, target, fill}`またはcomplete時の`null`。stream本文やmarkerを入力にせず、modelにも
 生成させない。GA4 shadow gateまではmacOSが比較用に保持するだけで、画面表示の正本はv3のまま。
 usageには本文でなくrenderer stateとstep IDだけを記録する。
+
+`shadow_grounding`はRun verificationがある時だけ、Rendererが選んだ`current_step / next_step`の
+`target`を最新Observation candidateへ解決した加算結果で、それ以外は`null`。shapeは
+`{schema_version:1, status, comparison, safe_to_prompt, capture_id, step_id, candidate_id,
+confidence, method, legacy_candidate_id}`。statusは`grounded / ambiguous / unresolved /
+not_applicable`、comparisonは`agreement / disagreement / not_comparable`。同一captureで構造化経路と
+従来経路が別candidate IDを選んだ場合、または構造化Grounderのconfidenceが0.85未満の場合は
+`ambiguous`かつ`safe_to_prompt=false`とし、`shadow_rendering.state`も`needs_confirmation`へ倒す。
+macOSはこの時だけv3のハイライトを抑止する。`blocked / needs_confirmation / complete`やtarget無しstepを
+Grounderへ送らず、`safe_to_prompt=false`で操作を促さない。Grounder不能の`unresolved`はshadow障害として
+notice/usageへ残し、現行v3表示へfallbackする。usageにはcandidate label/rectを保存せず、status、comparison、
+model route/token、安全判定だけを記録する。
 
 ## Account / Admin（実装済み・簡易記載）
 

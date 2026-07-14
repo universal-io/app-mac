@@ -36,6 +36,10 @@ import {
   verifyNavigateRunInShadow,
   type NavigateRunVerificationExecution,
 } from "@/lib/server/navigate-run-verifier";
+import {
+  groundNavigateRunRenderingInShadow,
+  type NavigateRunGroundingExecution,
+} from "@/lib/server/navigate-run-grounder";
 
 // Vercel rejects bodies past ~4.5MB; the client keeps history light by
 // sending at most the first and the latest screenshot.
@@ -323,6 +327,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
         }
         const notices = [...finalOutput.notices];
         let verification: NavigateRunVerificationExecution | null = null;
+        let runGrounding: NavigateRunGroundingExecution | null = null;
         let runProposal: ReturnType<typeof createNavigateRunProposal> | null = null;
         const env = getServerEnv();
         if (
@@ -360,6 +365,19 @@ function streamingResponse(input: StreamingResponseInput): Response {
               ...input.runVerification,
             });
             notices.push(...verification.notices);
+            runGrounding = await groundNavigateRunRenderingInShadow({
+              rendering: verification.rendering,
+              observation: input.runVerification.after,
+              legacyGrounding: finalOutput.grounding,
+            });
+            notices.push(...runGrounding.notices);
+            if (runGrounding.result.status === "ambiguous") {
+              notices.push(stateFallbackNotice(
+                "署名済みステップの操作対象",
+                "ハイライトを表示しない安全な状態",
+                "新旧の候補が矛盾したか、信頼度が基準未満でした。",
+              ));
+            }
           } catch (error) {
             console.error(
               `[/api/ai/navigate] Run verification unavailable (request ${input.requestId}):`,
@@ -380,8 +398,12 @@ function streamingResponse(input: StreamingResponseInput): Response {
           status: "success",
           modelVendor: finalOutput.modelVendor,
           modelId: finalOutput.modelId,
-          inputUnits: finalOutput.inputTokens + (verification?.modelInputTokens ?? 0),
-          outputUnits: finalOutput.outputTokens + (verification?.modelOutputTokens ?? 0),
+          inputUnits: finalOutput.inputTokens
+            + (verification?.modelInputTokens ?? 0)
+            + (runGrounding?.inputTokens ?? 0),
+          outputUnits: finalOutput.outputTokens
+            + (verification?.modelOutputTokens ?? 0)
+            + (runGrounding?.outputTokens ?? 0),
           latencyMs,
           metadata: {
             ...input.metadata,
@@ -418,8 +440,16 @@ function streamingResponse(input: StreamingResponseInput): Response {
             verifier_model_input_tokens: verification?.modelInputTokens,
             verifier_model_output_tokens: verification?.modelOutputTokens,
             verifier_model_failure_reason: verification?.modelFailureReason,
-            renderer_state: verification?.rendering.state,
-            renderer_step_id: verification?.rendering.step?.id,
+            renderer_state: runGrounding?.rendering.state ?? verification?.rendering.state,
+            renderer_step_id: runGrounding?.rendering.step?.id ?? verification?.rendering.step?.id,
+            run_grounder_attempted: runGrounding?.attempted,
+            run_grounder_model_vendor: runGrounding?.modelVendor,
+            run_grounder_model_id: runGrounding?.modelId,
+            run_grounder_input_tokens: runGrounding?.inputTokens,
+            run_grounder_output_tokens: runGrounding?.outputTokens,
+            run_grounder_status: runGrounding?.result.status,
+            run_grounder_comparison: runGrounding?.result.comparison,
+            run_grounder_safe_to_prompt: runGrounding?.result.safe_to_prompt,
           },
         });
         send("result", {
@@ -456,7 +486,8 @@ function streamingResponse(input: StreamingResponseInput): Response {
               : null,
             // Code-only projection from the signed Task + Verifier result.
             // It is additive and non-authoritative until the GA4 shadow gate.
-            shadow_rendering: verification?.rendering ?? null,
+            shadow_rendering: runGrounding?.rendering ?? verification?.rendering ?? null,
+            shadow_grounding: runGrounding?.result ?? null,
             grounding: finalOutput.grounding
               ? {
                   capture_id: finalOutput.grounding.captureId,

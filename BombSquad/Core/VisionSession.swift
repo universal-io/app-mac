@@ -828,6 +828,7 @@ final class VisionSession: ObservableObject {
             var runProposal: NavigatorRunProposal?
             var runVerification: NavigatorVerification?
             var shadowRendering: NavigatorShadowRendering?
+            var shadowGrounding: NavigatorShadowGrounding?
             for try await event in stream {
                 guard generation == navigatorGeneration, !Task.isCancelled else { return }
                 switch event {
@@ -845,7 +846,8 @@ final class VisionSession: ObservableObject {
                     let resultGrounding,
                     let resultRunProposal,
                     let resultVerification,
-                    let resultShadowRendering
+                    let resultShadowRendering,
+                    let resultShadowGrounding
                 ):
                     finalText = text
                     harness = resultHarness
@@ -855,6 +857,7 @@ final class VisionSession: ObservableObject {
                     runProposal = resultRunProposal
                     runVerification = resultVerification
                     shadowRendering = resultShadowRendering
+                    shadowGrounding = resultShadowGrounding
                 }
             }
             guard let finalText else {
@@ -871,6 +874,15 @@ final class VisionSession: ObservableObject {
                     "[Copilot] v4 shadow Renderer state=%@ step=%@",
                     shadowRendering.state.rawValue,
                     shadowRendering.step?.id ?? "none"
+                )
+            }
+            if let shadowGrounding {
+                NSLog(
+                    "[Copilot] v4 shadow Grounder status=%@ comparison=%@ step=%@ safe=%@",
+                    shadowGrounding.status.rawValue,
+                    shadowGrounding.comparison.rawValue,
+                    shadowGrounding.stepID ?? "none",
+                    shadowGrounding.safeToPrompt ? "yes" : "no"
                 )
             }
 
@@ -902,7 +914,9 @@ final class VisionSession: ObservableObject {
             let grounding: (target: String?, resolution: CoreNavigatorHighlightResolution)
             if copilotTurn {
                 let expectedTarget = currentNavigatorTaskTarget()
-                if shouldSuppressCopilotHighlight(
+                if shadowGrounding?.safeToPrompt == false {
+                    grounding = (nil, CoreNavigatorHighlightResolution(panelBox: nil, liveBox: nil))
+                } else if shouldSuppressCopilotHighlight(
                     text: displayText,
                     responseTarget: target,
                     expectedTarget: expectedTarget,
