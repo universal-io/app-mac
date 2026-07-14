@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-14 ／ ステータス: **進行中**（`feature/copilot-accuracy`、Supabase 0005/0006適用済み。Gateway env/deploy待ち）
+最終更新: 2026-07-14 ／ ステータス: **進行中**（`main`へ統合済み。v4 GA4実画面shadow開始可能）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -221,12 +221,11 @@ recipe 5件を確認済み。Supabase advisorは既存設計どおり`bs_harness
 `bs_navigator_runs`のRLS enabled/no policyをINFOとして報告する（service-role専用テーブルのため
 現時点では想定内）。
 
-Gateway側は同日時点で未完了。`BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`と
-`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`はVercelへ登録・deploy済みだが、production probeで
-`/api/ai/navigate`はJSON応答する一方、`/api/ai/navigate/run`はNext 404を返した。つまり環境変数より
-先に、Vercel productionのデプロイ対象commit/branchがv4 Run routeを含むStage Eコードへ更新されていない。
-このrouteが本番でJSONの`BAD_REQUEST` / `UNAUTHORIZED` / `FEATURE_NOT_ENABLED`等を返す状態になるまで、
-実画面shadowは開始しない。
+Gateway側も同日に完了。`feature/copilot-accuracy`のStage E差分を`main`へmergeし、
+`origin/main`へpushした。Vercel production deploy後のprobeで`/api/ai/navigate/run`はNext 404ではなく
+JSON応答になり、`request_id`付き未認証probeは`401 UNAUTHENTICATED`を返した。これはrouteが本番に存在し、
+`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`が認証前gateを通過している状態である。次はmacOSを本番Gatewayへ向け、
+GA4国・地域経路の実画面shadowを開始する。
 最初の実画面テストではRun revisionを更新せず、誤highlight、stale画面採用、
 action→次highlight時間を記録する。状態更新gateはこの実測が0件のままでは通さない。
 
