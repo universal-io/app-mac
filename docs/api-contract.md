@@ -642,7 +642,7 @@ Expected future use:
               "label": "ユーザー属性",
               "rect": { "x": 0.1, "y": 0.2, "width": 0.2, "height": 0.05 },
               "parent_label": "任意",
-              "states": ["selected | expanded | collapsed | disabled | focused | loading"]
+              "states": ["expanded"]
             }
           ]
         } }
@@ -666,6 +666,8 @@ Expected future use:
   またいだ同一性は保証しない。
 - candidate `rect` は画像左上原点、0〜1正規化。画像外にはみ出すrect、500件超のcandidate、
   未知フィールドは`BAD_REQUEST`。
+- candidate `states` は `selected / expanded / collapsed / disabled / focused / loading /
+  checked / unchecked` の既知状態だけを受理する。
 - `environment` は画面認識の状況であり、認証identityではない。`tenant_id` / `user_id` は
   クライアントObservationから絶対に受け取らず、従来どおりJWTからGatewayが確定する。
 - `hints` はv3互換の移行用。v4ではObservation environmentからContextを解決するが、shadow期間は

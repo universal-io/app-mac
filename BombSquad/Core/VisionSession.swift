@@ -417,14 +417,15 @@ final class VisionSession: ObservableObject {
         navigatorTask?.cancel()
         navigatorGeneration += 1
         let generation = navigatorGeneration
-        let environmentTask = SituationalContextService.environmentTask(
-            preferredPID: situationalContext?.pid ?? fallbackTargetPID
+        let observationTask = VisionObservationCaptureService.captureTask(
+            preferredPID: situationalContext?.pid ?? fallbackTargetPID,
+            attachment: attachment
         )
         navigatorTask = Task { [weak self] in
             guard let self else { return }
             async let imageAsync = GatewayNavigateClient.preparedImage(from: attachment.url)
             async let ocrAsync = ScreenTextRecognizer.recognize(at: attachment.url)
-            let environment = await environmentTask.value
+            let observationSnapshot = await observationTask.value
             let image = await imageAsync
             let ocr = await ocrAsync
             guard !Task.isCancelled, generation == self.navigatorGeneration else { return }
@@ -444,8 +445,9 @@ final class VisionSession: ObservableObject {
                 ocrText: ocr?.joinedText,
                 observation: VisionObservation.make(
                     attachment: attachment,
-                    environment: environment,
-                    ocr: ocr
+                    environment: observationSnapshot.environment,
+                    ocr: ocr,
+                    axCandidates: observationSnapshot.axCandidates
                 )
             )
             if autoRun {

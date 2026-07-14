@@ -61,47 +61,6 @@ enum SituationalContextService {
         }
     }
 
-    /// Lightweight capture-time identity for a Vision Observation. Unlike the
-    /// full L1 capture this does not walk conversation contents: every screen
-    /// recapture needs fresh app/window identity without adding a multi-second
-    /// AX traversal. When our own panel is frontmost, fall back to the source
-    /// pid remembered at summon time.
-    static func environmentTask(preferredPID: pid_t?) -> Task<AppEnvironmentSnapshot?, Never> {
-        guard AppSettings.isContextCaptureEnabled() else { return Task { nil } }
-
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        let app: NSRunningApplication?
-        if let frontmost, frontmost.processIdentifier != ownPID {
-            app = frontmost
-        } else if let preferredPID, preferredPID != ownPID {
-            app = NSRunningApplication(processIdentifier: preferredPID)
-        } else {
-            app = nil
-        }
-        guard let app else { return Task { nil } }
-
-        let pid = app.processIdentifier
-        let appName = app.localizedName ?? app.bundleIdentifier ?? "Unknown"
-        let bundleID = app.bundleIdentifier
-        let mayReadAX = AXIsProcessTrusted()
-        return Task.detached(priority: .userInitiated) {
-            var windowTitle: String?
-            if mayReadAX {
-                let appElement = AXUIElementCreateApplication(pid)
-                AXUIElementSetMessagingTimeout(appElement, Budget.axMessagingTimeout)
-                let window = copyElement(appElement, kAXFocusedWindowAttribute)
-                windowTitle = window.flatMap { copyString($0, kAXTitleAttribute) }
-            }
-            return AppEnvironmentSnapshot(
-                appName: appName,
-                bundleID: bundleID,
-                windowTitle: windowTitle,
-                url: nil
-            )
-        }
-    }
-
     // MARK: - Capture
 
     private static func capture(pid: pid_t, appName: String, bundleID: String?) -> SituationalContext? {

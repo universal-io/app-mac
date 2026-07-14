@@ -22,7 +22,10 @@ export const observationCandidateSchema = z.strictObject({
   rect: normalizedRectSchema.optional(),
   parent_label: labelText.optional(),
   states: z
-    .array(z.enum(["selected", "expanded", "collapsed", "disabled", "focused", "loading"]))
+    .array(z.enum([
+      "selected", "expanded", "collapsed", "disabled", "focused", "loading",
+      "checked", "unchecked",
+    ]))
     .max(8)
     .default([]),
 });

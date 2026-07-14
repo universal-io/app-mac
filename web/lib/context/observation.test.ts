@@ -26,6 +26,14 @@ const validObservation = {
       rect: { x: 0.1, y: 0.2, width: 0.2, height: 0.05 },
       states: [],
     },
+    {
+      id: "ax:4",
+      source: "ax",
+      role: "checkbox",
+      label: "比較を追加",
+      rect: { x: 0.4, y: 0.2, width: 0.1, height: 0.05 },
+      states: ["checked"],
+    },
   ],
 } as const;
 

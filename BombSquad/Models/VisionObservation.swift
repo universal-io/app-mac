@@ -49,10 +49,13 @@ struct VisionObservation {
     static func make(
         attachment: ScreenshotAttachment,
         environment: AppEnvironmentSnapshot?,
-        ocr: RecognizedScreenText?
+        ocr: RecognizedScreenText?,
+        axCandidates: [Candidate] = []
     ) -> VisionObservation {
-        let fragments = ocr.map { Array($0.fragments.prefix(500)) } ?? []
-        let candidates = fragments.enumerated().map { index, fragment in
+        let boundedAX = Array(axCandidates.prefix(500))
+        let remaining = max(0, 500 - boundedAX.count)
+        let fragments = ocr.map { Array($0.fragments.prefix(remaining)) } ?? []
+        let ocrCandidates = fragments.enumerated().map { index, fragment in
             Candidate(
                 id: "ocr:\(index)",
                 source: "ocr",
@@ -72,7 +75,7 @@ struct VisionObservation {
             screenRect: attachment.captureRect,
             environment: environment,
             transitionState: "stable",
-            candidates: candidates
+            candidates: boundedAX + ocrCandidates
         )
     }
 

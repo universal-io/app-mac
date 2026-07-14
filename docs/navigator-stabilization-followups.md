@@ -92,8 +92,11 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 - [x] macOS: attachment + capture時点environment + OCR候補からObservationを生成し、最新turnだけ送る。
   capture ID／撮影時刻／範囲／pixel・screen座標をattachmentから引き継ぎ、OCR候補には
   同一capture内で安定する `ocr:<index>` IDを付ける。app/windowは再キャプチャごとに取得し、
-  context除外時はenvironmentだけを送らない。URL、AX候補、実遷移状態は後続実装。
-- [ ] AX候補: OCRとは別sourceでrole/state/親文脈を収集し、同一capture内の安定IDを付ける。
+  context除外時はenvironmentだけを送らない。URLと実遷移状態は後続実装。
+- [x] AX候補: OCRとは別sourceでrole/state/親文脈を収集し、同一capture内の安定IDを付ける。
+  対象appのfocused windowを最大1秒／2,000 node／250候補で列挙し、実際の撮影範囲と交差する
+  可視要素だけを正規化する。secure text fieldは読まず、AX権限・座標が得られない場合はOCR-onlyへ
+  degradeする。候補総数はAX優先で最大500に制限し、provider promptは引き続きshadow mode。
 - [ ] Grounder/Verifier: candidate ID選択とbefore/after構造化判定をprovider roleとして接続する。
 
 #### eval基盤の開始点（2026-07-14）
