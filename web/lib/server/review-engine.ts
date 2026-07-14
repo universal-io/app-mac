@@ -4,6 +4,11 @@
 
 import { getServerEnv } from "@/lib/server/env";
 import {
+  modelFallbackNotice,
+  providerRetryNotice,
+  type OperationalNotice,
+} from "@/lib/server/operational-notice";
+import {
   enrichedSystem,
   userContent,
   JSON_INSTRUCTION,
@@ -33,6 +38,7 @@ export type ReviewEngineOutput = {
   modelId: string;
   inputTokens: number;
   outputTokens: number;
+  notices: OperationalNotice[];
 };
 
 export class ProviderCallError extends Error {
@@ -67,6 +73,7 @@ function prepareCall(input: EngineInput): {
   endpoint: string;
   apiKey: string;
   body: Record<string, unknown>;
+  notices: OperationalNotice[];
 } {
   const env = getServerEnv();
 
@@ -74,9 +81,19 @@ function prepareCall(input: EngineInput): {
   // gateway actually has keys for are honored, otherwise fall back to default.
   let vendor = input.preferredVendor ?? env.defaultModelVendor;
   let modelId = input.preferredModelId ?? env.defaultModelId;
+  const preferred = { vendor, modelId };
+  const notices: OperationalNotice[] = [];
   if (!apiKeyFor(vendor)) {
     vendor = env.defaultModelVendor;
     modelId = env.defaultModelId;
+    if (vendor !== preferred.vendor || modelId !== preferred.modelId) {
+      notices.push(modelFallbackNotice({
+        fromVendor: preferred.vendor,
+        fromModelId: preferred.modelId,
+        toVendor: vendor,
+        toModelId: modelId,
+      }));
+    }
   }
   const apiKey = apiKeyFor(vendor);
   const endpoint = VENDOR_ENDPOINTS[vendor];
@@ -106,11 +123,11 @@ function prepareCall(input: EngineInput): {
     body.reasoning_effort = "medium";
   }
 
-  return { vendor, modelId, endpoint, apiKey, body };
+  return { vendor, modelId, endpoint, apiKey, body, notices };
 }
 
 export async function runReview(input: EngineInput): Promise<ReviewEngineOutput> {
-  const { vendor, modelId, endpoint, apiKey, body } = prepareCall(input);
+  const { vendor, modelId, endpoint, apiKey, body, notices } = prepareCall(input);
 
   let response = await callProvider(endpoint, apiKey, body);
 
@@ -121,6 +138,7 @@ export async function runReview(input: EngineInput): Promise<ReviewEngineOutput>
     const waitMs = suggestedWaitMs(response, detail);
     await sleep(Math.min(waitMs, 6500));
     response = await callProvider(endpoint, apiKey, body);
+    if (response.ok) notices.push(providerRetryNotice(vendor, modelId));
     if (response.status === 429) {
       throw new ProviderCallError(
         "AI エンジンが混雑しています。数秒おいてから再試行してください。",
@@ -155,6 +173,7 @@ export async function runReview(input: EngineInput): Promise<ReviewEngineOutput>
     modelId,
     inputTokens: root.usage?.prompt_tokens ?? 0,
     outputTokens: root.usage?.completion_tokens ?? 0,
+    notices,
   };
 }
 
@@ -171,7 +190,7 @@ export type ReviewStreamEvent =
 export async function* runReviewStream(
   input: EngineInput,
 ): AsyncGenerator<ReviewStreamEvent> {
-  const { vendor, modelId, endpoint, apiKey, body } = prepareCall(input);
+  const { vendor, modelId, endpoint, apiKey, body, notices } = prepareCall(input);
   body.stream = true;
   // OpenAI-compatible: ask for a usage block on the last chunk.
   body.stream_options = { include_usage: true };
@@ -185,6 +204,7 @@ export async function* runReviewStream(
     const waitMs = suggestedWaitMs(response, detail);
     await sleep(Math.min(waitMs, 6500));
     response = await callProvider(endpoint, apiKey, body);
+    if (response.ok) notices.push(providerRetryNotice(vendor, modelId));
     if (response.status === 429) {
       throw new ProviderCallError(
         "AI エンジンが混雑しています。数秒おいてから再試行してください。",
@@ -261,6 +281,7 @@ export async function* runReviewStream(
       modelId,
       inputTokens,
       outputTokens,
+      notices,
     },
   };
 }

@@ -6,7 +6,7 @@ import SwiftUI
 ///
 /// Two surfaces only:
 /// - the lightweight capture/review panel, summoned by the right-Shift gesture
-///   (or ⌘J), which stays focused on drafting and reviewing.
+///   or the menu-bar command, which stays focused on drafting and reviewing.
 /// - a single on-demand management window (account, settings, history, pricing),
 ///   opened from this menu bar. It is never always-on and never steals focus
 ///   during ordinary input-support usage.
@@ -28,7 +28,7 @@ struct BombSquadApp: App {
             }
             Divider()
 
-            Button("入力パネルを開く（⌘J）") {
+            Button("パネルを表示") {
                 AppCommandCenter.shared.requestShowPanel()
             }
             Divider()

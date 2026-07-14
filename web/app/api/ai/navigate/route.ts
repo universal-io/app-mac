@@ -15,6 +15,10 @@ import {
   GatewayError,
   recordUsage,
 } from "@/lib/server/gateway";
+import {
+  visionObservationSchema,
+  type VisionObservation,
+} from "@/lib/context/observation";
 import { ProviderCallError } from "@/lib/server/review-engine";
 import {
   isAutoFirstTurn,
@@ -25,6 +29,17 @@ import {
 } from "@/lib/server/navigate-engine";
 import type { NavigateHints } from "@/lib/server/harness";
 import type { OutputLanguageCode } from "@/lib/server/prompts";
+import { getServerEnv } from "@/lib/server/env";
+import { stateFallbackNotice } from "@/lib/server/operational-notice";
+import { createNavigateRunProposal } from "@/lib/server/navigate-run-snapshot";
+import {
+  verifyNavigateRunInShadow,
+  type NavigateRunVerificationExecution,
+} from "@/lib/server/navigate-run-verifier";
+import {
+  groundNavigateRunRenderingInShadow,
+  type NavigateRunGroundingExecution,
+} from "@/lib/server/navigate-run-grounder";
 
 // Vercel rejects bodies past ~4.5MB; the client keeps history light by
 // sending at most the first and the latest screenshot.
@@ -39,6 +54,7 @@ type WireMessage = {
   image_base64?: string;
   media_type?: string;
   ocr_text?: string;
+  observation?: unknown;
 };
 
 type WireTask = {
@@ -54,6 +70,8 @@ type NavigateRequestBody = {
     messages?: WireMessage[];
     hints?: NavigateHints;
     task?: WireTask;
+    run_snapshot?: unknown;
+    previous_observation?: unknown;
   };
   preferences?: {
     output_language?: string;
@@ -95,6 +113,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const messages: NavigateMessage[] = [];
     let totalImageChars = 0;
+    let observationCount = 0;
     for (const message of wire) {
       if (message.role !== "user" && message.role !== "assistant") {
         return errorResponse(400, "BAD_REQUEST", "message.role must be 'user' or 'assistant'.", requestId);
@@ -117,11 +136,27 @@ export async function POST(request: Request): Promise<Response> {
         }
         imageDataURL = `data:${mediaType};base64,${message.image_base64}`;
       }
+      let observation: VisionObservation | undefined;
+      if (message.observation !== undefined) {
+        if (message.role !== "user") {
+          return errorResponse(400, "BAD_REQUEST", "Only user messages may carry an observation.", requestId);
+        }
+        const parsed = visionObservationSchema.safeParse(message.observation);
+        if (!parsed.success) {
+          return errorResponse(400, "BAD_REQUEST", "message.observation is malformed.", requestId);
+        }
+        observationCount += 1;
+        if (observationCount > 1) {
+          return errorResponse(400, "BAD_REQUEST", "Only the latest observation may be sent.", requestId);
+        }
+        observation = parsed.data;
+      }
       messages.push({
         role: message.role,
         text: message.text,
         imageDataURL,
         ocrText: message.ocr_text,
+        observation,
       });
     }
     const last = messages[messages.length - 1];
@@ -170,6 +205,33 @@ export async function POST(request: Request): Promise<Response> {
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
 
+    const latestObservation = messages.find((message) => message.observation)?.observation;
+    let previousObservation: VisionObservation | undefined;
+    if (body.input?.run_snapshot !== undefined) {
+      const parsedPrevious = visionObservationSchema.safeParse(
+        body.input.previous_observation,
+      );
+      if (!parsedPrevious.success || !latestObservation) {
+        return errorResponse(
+          400,
+          "BAD_REQUEST",
+          "run_snapshotにはprevious_observationと最新observationが必要です。",
+          requestId,
+        );
+      }
+      previousObservation = parsedPrevious.data;
+    } else if (body.input?.previous_observation !== undefined) {
+      return errorResponse(
+        400,
+        "BAD_REQUEST",
+        "previous_observationにはrun_snapshotが必要です。",
+        requestId,
+      );
+    }
+    const observationSources = latestObservation
+      ? [...new Set(latestObservation.candidates.map((candidate) => candidate.source))]
+      : [];
+
     const metadata = {
       platform,
       app_version: body.client?.app_version,
@@ -180,6 +242,12 @@ export async function POST(request: Request): Promise<Response> {
       has_hints: Boolean(
         body.input?.hints?.app_name || body.input?.hints?.window_title || body.input?.hints?.url,
       ),
+      has_observation: Boolean(latestObservation),
+      observation_schema_version: latestObservation?.schema_version,
+      observation_capture_scope: latestObservation?.capture_scope,
+      observation_transition_state: latestObservation?.transition_state,
+      observation_candidate_count: latestObservation?.candidates.length ?? 0,
+      observation_candidate_sources: observationSources,
       task_active: Boolean(task),
       task_step: task?.currentStep,
     };
@@ -196,6 +264,13 @@ export async function POST(request: Request): Promise<Response> {
         task,
       },
       metadata,
+      runVerification: body.input?.run_snapshot !== undefined && previousObservation && latestObservation
+        ? {
+            snapshot: body.input.run_snapshot,
+            before: previousObservation,
+            after: latestObservation,
+          }
+        : undefined,
     });
   } catch (error) {
     if (error instanceof GatewayError) {
@@ -213,6 +288,11 @@ type StreamingResponseInput = {
   language: string;
   engineInput: Parameters<typeof runNavigateStream>[0];
   metadata: Record<string, unknown>;
+  runVerification?: {
+    snapshot: unknown;
+    before: VisionObservation;
+    after: VisionObservation;
+  };
 };
 
 /**
@@ -245,6 +325,71 @@ function streamingResponse(input: StreamingResponseInput): Response {
         if (!finalOutput) {
           throw new ProviderCallError("Provider stream ended without a result.");
         }
+        const notices = [...finalOutput.notices];
+        let verification: NavigateRunVerificationExecution | null = null;
+        let runGrounding: NavigateRunGroundingExecution | null = null;
+        let runProposal: ReturnType<typeof createNavigateRunProposal> | null = null;
+        const env = getServerEnv();
+        if (
+          env.navigateV4Enabled &&
+          finalOutput.proposedTask &&
+          finalOutput.harnessId &&
+          finalOutput.harnessVersion
+        ) {
+          try {
+            runProposal = createNavigateRunProposal({
+              tenantId: input.tenantId,
+              userId: input.userId,
+            }, {
+              packId: finalOutput.harnessId,
+              packVersion: finalOutput.harnessVersion,
+              task: finalOutput.proposedTask,
+            }, env.navigateRunSigningSecret ?? "");
+          } catch (error) {
+            console.error(
+              `[/api/ai/navigate] Run proposal unavailable (request ${input.requestId}):`,
+              error instanceof Error ? error.message : error,
+            );
+            notices.push(stateFallbackNotice(
+              "新しいナビゲーション状態",
+              "従来のクライアント管理方式",
+              fallbackReason(error),
+            ));
+          }
+        }
+        if (input.runVerification) {
+          try {
+            verification = await verifyNavigateRunInShadow({
+              tenantId: input.tenantId,
+              userId: input.userId,
+              ...input.runVerification,
+            });
+            notices.push(...verification.notices);
+            runGrounding = await groundNavigateRunRenderingInShadow({
+              rendering: verification.rendering,
+              observation: input.runVerification.after,
+              legacyGrounding: finalOutput.grounding,
+            });
+            notices.push(...runGrounding.notices);
+            if (runGrounding.result.status === "ambiguous") {
+              notices.push(stateFallbackNotice(
+                "署名済みステップの操作対象",
+                "ハイライトを表示しない安全な状態",
+                "新旧の候補が矛盾したか、信頼度が基準未満でした。",
+              ));
+            }
+          } catch (error) {
+            console.error(
+              `[/api/ai/navigate] Run verification unavailable (request ${input.requestId}):`,
+              error instanceof Error ? error.message : error,
+            );
+            notices.push(stateFallbackNotice(
+              "新しいナビゲーション状態の検証",
+              "従来のステップ判定",
+              fallbackReason(error),
+            ));
+          }
+        }
         const latencyMs = Date.now() - started;
         await recordUsage(input.tenantId, input.userId, {
           operation: "navigate",
@@ -253,18 +398,58 @@ function streamingResponse(input: StreamingResponseInput): Response {
           status: "success",
           modelVendor: finalOutput.modelVendor,
           modelId: finalOutput.modelId,
-          inputUnits: finalOutput.inputTokens,
-          outputUnits: finalOutput.outputTokens,
+          inputUnits: finalOutput.inputTokens
+            + (verification?.modelInputTokens ?? 0)
+            + (runGrounding?.inputTokens ?? 0),
+          outputUnits: finalOutput.outputTokens
+            + (verification?.modelOutputTokens ?? 0)
+            + (runGrounding?.outputTokens ?? 0),
           latencyMs,
           metadata: {
             ...input.metadata,
             harness: finalOutput.harnessId,
+            harness_version: finalOutput.harnessVersion,
             // Marker adherence metrics (docs/navigator-copilot-plan.md §2-d):
             // has_locator tracks the highlight rate, locator_supplemented how
             // often the model missed the contract and enforcement kicked in.
             has_locator: finalOutput.hasLocator,
             locator_supplemented: finalOutput.locatorSupplemented,
+            grounder_attempted: finalOutput.groundingAttempted,
+            grounding_selected: Boolean(finalOutput.grounding),
+            grounding_method: finalOutput.grounding?.method,
+            grounding_input_tokens: finalOutput.groundingInputTokens,
+            grounding_output_tokens: finalOutput.groundingOutputTokens,
+            planner_model_vendor: finalOutput.plannerModelVendor,
+            planner_model_id: finalOutput.plannerModelId,
+            planner_input_tokens: finalOutput.plannerInputTokens,
+            planner_output_tokens: finalOutput.plannerOutputTokens,
+            grounder_model_vendor: finalOutput.grounderModelVendor,
+            grounder_model_id: finalOutput.grounderModelId,
+            model_fallback_from: finalOutput.modelFallbackFrom,
+            operational_notice_codes: notices.map((notice) => notice.code),
             task_proposed: Boolean(finalOutput.proposedTask),
+            verifier_source: verification?.result.source,
+            verifier_status: verification?.result.status,
+            verifier_reason: verification?.result.reason,
+            verifier_evidence_count: verification?.result.evidenceCandidateIds.length,
+            verifier_rule_status: verification?.ruleResult.status,
+            verifier_rule_reason: verification?.ruleResult.reason,
+            verifier_model_attempted: verification?.modelAttempted,
+            verifier_model_vendor: verification?.modelVendor,
+            verifier_model_id: verification?.modelId,
+            verifier_model_input_tokens: verification?.modelInputTokens,
+            verifier_model_output_tokens: verification?.modelOutputTokens,
+            verifier_model_failure_reason: verification?.modelFailureReason,
+            renderer_state: runGrounding?.rendering.state ?? verification?.rendering.state,
+            renderer_step_id: runGrounding?.rendering.step?.id ?? verification?.rendering.step?.id,
+            run_grounder_attempted: runGrounding?.attempted,
+            run_grounder_model_vendor: runGrounding?.modelVendor,
+            run_grounder_model_id: runGrounding?.modelId,
+            run_grounder_input_tokens: runGrounding?.inputTokens,
+            run_grounder_output_tokens: runGrounding?.outputTokens,
+            run_grounder_status: runGrounding?.result.status,
+            run_grounder_comparison: runGrounding?.result.comparison,
+            run_grounder_safe_to_prompt: runGrounding?.result.safe_to_prompt,
           },
         });
         send("result", {
@@ -285,15 +470,62 @@ function streamingResponse(input: StreamingResponseInput): Response {
                   current_step: finalOutput.proposedTask.currentStep,
                 }
               : null,
+            // Shadow-only until the macOS client explicitly starts v4. The
+            // proposal creates no DB row and expires after ten minutes.
+            run_proposal: runProposal,
+            verification: verification
+              ? {
+                  source: verification.result.source,
+                  status: verification.result.status,
+                  reason: verification.result.reason,
+                  evidence_candidate_ids: verification.result.evidenceCandidateIds,
+                  confidence: verification.result.source === "model"
+                    ? verification.result.confidence
+                    : null,
+                }
+              : null,
+            // Code-only projection from the signed Task + Verifier result.
+            // It is additive and non-authoritative until the GA4 shadow gate.
+            shadow_rendering: runGrounding?.rendering ?? verification?.rendering ?? null,
+            shadow_grounding: runGrounding?.result ?? null,
+            grounding: finalOutput.grounding
+              ? {
+                  capture_id: finalOutput.grounding.captureId,
+                  candidate_id: finalOutput.grounding.candidateId,
+                  confidence: finalOutput.grounding.confidence,
+                  method: finalOutput.grounding.method,
+                }
+              : null,
           },
           meta: {
             output_language: input.language,
             model_vendor: finalOutput.modelVendor,
             model_id: finalOutput.modelId,
             latency_ms: latencyMs,
+            notices,
           },
         });
       } catch (error) {
+        if (error instanceof GatewayError) {
+          console.error(
+            `[/api/ai/navigate] stream state error (request ${input.requestId}):`,
+            error.message,
+          );
+          await recordUsage(input.tenantId, input.userId, {
+            operation: "navigate",
+            unitType: "call",
+            requestId: input.requestId,
+            status: "error",
+            errorCode: error.code,
+            latencyMs: Date.now() - started,
+            metadata: input.metadata,
+          });
+          send("error", {
+            error: { code: error.code, message: error.message },
+            request_id: input.requestId,
+          });
+          return;
+        }
         const rateLimited = error instanceof ProviderCallError && error.rateLimited;
         const message = rateLimited
           ? (error as ProviderCallError).message
@@ -326,4 +558,11 @@ function streamingResponse(input: StreamingResponseInput): Response {
       connection: "keep-alive",
     },
   });
+}
+
+/** Exposes actionable state failures without leaking raw provider/database details. */
+function fallbackReason(error: unknown): string {
+  return error instanceof GatewayError
+    ? error.message
+    : "内部処理で予期しないエラーが発生しました。再試行しても続く場合は管理者へ連絡してください。";
 }

@@ -12,8 +12,8 @@ enum AppEvent: CustomStringConvertible {
     /// Right Shift held: hold-to-talk dictation.
     case longPressBegan
     case longPressEnded
-    /// ⌘J: plain panel toggle.
-    case hotKeyToggle
+    /// Explicit panel command from the menu-bar item.
+    case menuPanelToggle
     /// Explicit camera button in the compose surface.
     case screenshotCaptureRequested
     /// Esc or an in-window close request.
@@ -27,7 +27,7 @@ enum AppEvent: CustomStringConvertible {
         case .doubleTap: return "doubleTap"
         case .longPressBegan: return "longPressBegan"
         case .longPressEnded: return "longPressEnded"
-        case .hotKeyToggle: return "hotKeyToggle"
+        case .menuPanelToggle: return "menuPanelToggle"
         case .screenshotCaptureRequested: return "screenshotCaptureRequested"
         case .closeRequested: return "closeRequested"
         case .appResignedActive: return "appResignedActive"
@@ -81,11 +81,11 @@ final class SessionCoordinator {
         switch event {
         case .doubleTap:
             handleDoubleTap(in: mode)
-        case .hotKeyToggle:
+        case .menuPanelToggle:
             if mode == .idle {
                 summonCompose()
             } else {
-                close(reason: "hotKeyToggle")
+                close(reason: "menuPanelToggle")
             }
         case .screenshotCaptureRequested:
             guard mode == .compose else { return }
@@ -150,7 +150,7 @@ final class SessionCoordinator {
     }
 
     /// Idle summon routes that should never inspect the current selection
-    /// (`⌘J`, hold-to-talk bootstrap) always open compose.
+    /// (menu-bar command, hold-to-talk bootstrap) always open compose.
     private func summonCompose() {
         guard stateMachine.mode == .idle else { return }
         presentComposeSession()
@@ -295,7 +295,17 @@ final class SessionCoordinator {
         }
         guard let sink else { return }
 
-        let transcriber: any Transcriber = GatewayTranscriber.make() ?? GroqTranscriber()
+        OperationalNoticeCenter.shared.beginOperation()
+        let transcriber: any Transcriber
+        if let gateway = GatewayTranscriber.make() {
+            transcriber = gateway
+        } else {
+            OperationalNoticeCenter.shared.publish(
+                code: "CLIENT_PROVIDER_FALLBACK",
+                message: "I//O Cloudにアクセスできなかったため、端末のGroq音声認識で処理します。"
+            )
+            transcriber = GroqTranscriber()
+        }
 
         transcriptionTask?.cancel()
         transcriptionTask = Task { [weak self] in
@@ -494,6 +504,10 @@ final class SessionCoordinator {
         } catch ScreenshotCaptureError.cancelled {
             throw ScreenshotCaptureError.cancelled
         } catch {
+            OperationalNoticeCenter.shared.publish(
+                code: "CAPTURE_FALLBACK",
+                message: "ScreenCaptureKitで撮影できなかったため、macOS標準のスクリーンショット撮影に切り替えました。"
+            )
             await screenshotCaptureCue.showBriefly()
             return try await screenshotCapture.captureInteractive()
         }

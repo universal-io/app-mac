@@ -1,7 +1,7 @@
 # ドキュメント索引（単一の入口）
 
-最終更新: 2026-07-13（全ドキュメント鮮度監査を実施。M4 世代の Vision 記述・BYOK 世代の
-モデル記述・0001 世代の DB 記述など「古い記述が仕様として誤読される」箇所を一掃）
+最終更新: 2026-07-14（Copilot外部技術レビューを現行開発正本・Navigator設計・API契約・
+全体アーキテクチャへ統合。Run/Verifier/traceの正本を既存文書へ集約し、新規文書は増やしていない）
 
 > 🔴 **仕様の優先順位**: 2026-07-13 に新 `SessionCoordinator` 経路へ切替済みで、現在の
 > `BombSquad/Core/` が実装の正。Phase 3 の移植パリティを再確認する場合だけ、削除直前の旧経路を
@@ -14,7 +14,7 @@
 
 1. [../README.md](../README.md) — 製品と現行実装の仕様
 2. このファイル — どのドキュメントが正本かを把握
-3. [foundation-rebuild-plan.md](foundation-rebuild-plan.md) — **今やっている作業の正本**
+3. [navigator-stabilization-followups.md](navigator-stabilization-followups.md) — **今やっている作業の正本**
 4. 作業対象に応じて下表の該当ドキュメント
 
 ## 正本（living documents — 役割ごとに1つだけ）
@@ -26,7 +26,7 @@
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョン・アーキテクチャ・マイルストーン（M1〜M5）の正本 | 現役 |
 | [api-contract.md](api-contract.md) | クライアント⇔Gateway の API 契約の正本 | 現役 |
 | [navigator-copilot-plan.md](navigator-copilot-plan.md) | Navigator/Copilot 機能の設計正本 | 現役 |
-| [navigator-stabilization-followups.md](navigator-stabilization-followups.md) | **現行開発の正本**。Copilot のモデル選定・画面遷移検出・精度検証 | 開始準備完了 |
+| [navigator-stabilization-followups.md](navigator-stabilization-followups.md) | **現行開発の正本**。Copilot のモデル選定・画面遷移検出・精度検証 | 進行中 |
 
 ## 参照資料（安定・変更頻度低）
 

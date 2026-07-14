@@ -1,7 +1,7 @@
 # Universal I/O (I//O) マスタープラン
 
-最終更新: 2026-07-13（Navigator v3 への相互参照と新中枢切替後のコードマップを反映。
-M4 の Vision フル解釈は Navigator 利用可時のフォールバックへ降格済み）
+最終更新: 2026-07-14（vendor/product・tenant・user をVision専用ではなく全surface共通の
+Context解決軸として定義。M4 の実装集中は維持）
 ステータス: 承認済み（オーナー承認済みの製品方針。実装はマイルストーン M1 から開始）
 
 このドキュメントは、Bomb Squad から **Universal I/O**（ロゴ: **I//O**）への製品転換の正本である。
@@ -93,6 +93,11 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
 | **L2 / Relationship Card** | 相手ごとのカード（呼称・敬語レベル・関係性・やり取り要約） |
 | **L3 / Persona Card** | ユーザー自身のスタイルプロファイル（語彙・文体・NG 表現・価値観） |
 | **Context Engine** | L1〜L3 を収集・蒸留・注入する仕組みの総称 |
+| **App Vendor / Product** | 業務アプリの提供元と製品。例: Google / GA4、Salesforce / Sales Cloud。OpenAI等の `Model Provider` とは別概念 |
+| **Tenant** | 認証・データ分離・課金・組織設定の境界。個人利用でも personal tenant を持ち、企業導入時は組織tenantになる |
+| **User Context** | tenantに所属する個人の言語・認知特性・説明粒度・Persona等。組織ポリシーを上書きしない |
+| **Surface** | Contextを利用する製品機能。現在は Compose / Transform / Vision（Navigator/Copilotを含む） |
+| **Resolved Context** | 認証済みtenant/userと現在状況からGatewayが解決し、surfaceに必要な部分だけ投影した版付きContext |
 | **Gateway** | サーバー側 API（FastAPI）。モデルルーティング・メモリ・課金メータリングを担う |
 | **Deploy** | 変換結果を呼び出し元フィールドへ注入する操作（Bomb Squad 世代からの用語） |
 
@@ -100,13 +105,116 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
 
 ## 3. アーキテクチャ全体像
 
-### 3.1 3層コンテクストエンジン
+### 3.1 共有Context Engine: 2軸＋surface projection
+
+`L1 Situational / L2 Relationship / L3 Persona` と、Navigator v4で導入する
+`generic / app vendor-product / tenant / user` は競合する分類ではない。前者は**内容と寿命**、
+後者は**適用範囲と権限主体**を表す直交した軸である。
+
+#### 軸A: 内容と寿命（既存L1〜L3）
 
 | 層 | 寿命 | 収集タイミング | 保存先 | 注入方法 |
 |---|---|---|---|---|
 | L1 Situational | パネル1セッション | パネル召喚の瞬間に自動 | メモリ上のみ（保存しない） | プロンプトの context ブロック |
 | L2 Relationship | 永続 | 送信後にバックグラウンド蒸留 | ローカル SQLite → M3 で Supabase | L1 から相手を特定してカードを注入 |
 | L3 Persona | 永続 | オンボーディング＋送信ごとの増分＋定期蒸留 | 同上 | 常にシステムプロンプトへ注入 |
+
+#### 軸B: 適用範囲と権限主体
+
+| scope | 主体・キー | 共通用途 | Composeへの例 | Visionへの例 |
+|---|---|---|---|---|
+| generic | 全利用者 | I//Oの安全原則、基本能力 | 一般的な文章支援 | 未知画面の理解・案内 |
+| app vendor / product | `app_vendor_id` + `product_id` | 製品用語、標準UI、標準的な使い方 | Slackのchannel/thread/DMの意味、投稿欄の目的 | Slack/Notion/GA4のUI map、代表task、完了条件 |
+| tenant | 認証済み `tenant_id` | 個社用語、権限、業務規則、カスタムUI、参照知識 | 社名・承認フロー・禁止表現・Salesforce項目 | 個社ERP、カスタムSalesforce、許可された操作経路 |
+| user | JWTの `user_id` | 言語、認知特性、説明粒度、Persona、個人設定 | 文体、語彙、相手との距離感 | やさしい説明、1step粒度、読み上げ方 |
+| situation | session/capture/input ID | 今この瞬間に関係する対象を選ぶ | 前面app、入力欄、周辺会話、宛先 | 最新画面、window/URL、OCR/AX、Task進捗 |
+
+`App Vendor` と実際のpack適用単位である `Product/Tool` は分ける。Google全体を1packにせず、
+GA4とGmailは別productとして版管理する。`vendor` はOpenAI/Groq等のAIモデル提供者を指さない。
+コード・DB・計測では `app_vendor` と `model_provider` を明記して衝突を避ける。
+
+Tenantは「企業向け機能」の別名ではなく、常にデータ隔離と設定解決の境界である。現行は
+全ユーザーにpersonal tenantを作る。将来userが複数組織へ所属する場合も、リクエストごとに
+active tenantを1つ確定し、そのtenant以外のContextを絶対に混ぜない。個人の好みをtenant設定へ、
+会社の知識をuser設定へ保存しない。
+
+#### Contextの関心領域（prompt文字列ではなく型付きmodule）
+
+| module | 内容 | 主なscope | 主なsurface |
+|---|---|---|---|
+| identity | user / active tenant / membership | tenant・user | 全surface |
+| environment | app vendor、product、version、window/URL | product・situation | 全surface |
+| terminology | 標準語・社内語・alias・表示名 | product・tenant | Compose / Vision |
+| knowledge | 手順書、業務知識、検索参照 | product・tenant | Compose / Vision |
+| policy | データ取扱い、禁止事項、確認必須action | generic・tenant | 全surface |
+| presentation | 言語、認知支援、説明粒度、Persona | user | 全surface |
+| relationship | 相手、呼称、関係、会話履歴の蒸留 | user・situation | 主にCompose/Transform、必要時Vision |
+| capabilities | task recipe、pre/postcondition、target意味、field intent | product・tenant | surface別module |
+
+packをそのままsystem promptへ連結する方式を完成形にしない。Gatewayの共通Context Resolverが
+認証済みidentityとsituationから必要なpack/card/knowledgeを選び、出所とversionを保持した
+`ResolvedContext` を作る。各surfaceはそこから必要最小限のmoduleだけを受け取る。
+
+```text
+authenticated user + active tenant + current situation
+                         ↓
+               Shared Context Resolver
+  generic → product → tenant → user（出所・version付き）
+                         ↓
+       Compose projection  /  Vision projection
+```
+
+- Compose projection: field intent、channel慣習、周辺会話、tenant用語・policy、Persona/Relationship。
+  Navigator recipeや画面座標は入れない。
+- Vision projection: Observation、UI semantics、task recipe、grounding/verifier条件、tenant用語・policy、
+  userの説明方法。署名や送信文体など無関係なMemoryは入れない。
+- 同じSlack/product、tenant用語、userの言語・認知設定、policyは共通の正本から解決する。
+  surfaceごとのコピーを作らない。
+
+#### 合成規則（単純なlast-write-winsは禁止）
+
+1. genericとtenantの安全・データpolicyは**より厳しい方**を採用し、user/situationは緩和できない。
+2. productは標準の意味と能力を提供し、tenantは認証された範囲で名称・経路・カスタム項目を追加／置換できる。
+3. userはpresentationと個人Memoryを調整できるが、事実・組織手順・許可actionを変更できない。
+4. situationは永続設定を上書きするデータ源ではなく、「今どの一部を使うか」を選択する。
+5. 解決結果には各moduleのscope、source ID、versionを残し、なぜその案内／文章になったか追跡可能にする。
+6. L1の画面・会話本文は従来どおりsession内のみ。ResolvedContextの監査では本文でなく、
+   適用したsource/versionとboolean/件数を既定で記録する。
+
+#### 現状と移行先
+
+| 領域 | 現在 | あるべき状態 |
+|---|---|---|
+| L1 | Compose/Transform/Visionで同じローカル `SituationalContext` | 共通Observation/Situation契約。surface別に必要情報を採取 |
+| L2/L3 | ローカルMemoryを各Sessionが個別に検索・注入 | user Context moduleとして共通Resolverから版付き選択 |
+| product | Navigatorのglobal harnessのみ。Composeにはapp固有Contextなし | 1つのproduct正本からCompose/Vision別capabilityを投影 |
+| tenant | auth・課金・usageの境界。Navigator DB列は実行時未使用 | 全surface共通の隔離・policy・knowledge overlay境界 |
+| user | JWT identityとローカルPersona/Relationshipが分離 | tenant所属を保ちつつ個人設定・Memoryを共通解決 |
+| trace | surfaceごとに断片的 | resolved source/versionとsurface projectionを共通形式で計測 |
+
+#### 現在の実装境界（2026-07-14）
+
+この全体設計は今決めるが、実装はNavigator/Copilotの精度改善に集中する。まずVision側で
+Observation、candidate ID、structured Verifier、版付きproduct packを作る。ただし名称・ID・
+provenance・policy合成は共通Context Resolverへ昇格できる形にし、`vision_*` 専用のtenant/user
+階層を新設しない。Compose/TransformへのResolver接続、DBの汎用pack schema、設定UIは
+Visionの縦切りが評価で成立した後に行う。
+
+#### Navigator Runの全体システム上の位置（2026-07-14）
+
+RunはVision専用の会話履歴ではなく、ユーザーが承認しながら複数stepを完了するための短命な
+実行状態である。将来Compose側に複数step taskが生じても同じidentity/context規則を使う。
+
+- Gatewayがrunの論理ownerかつ唯一のwriter。JWTから確定したtenant/user scopeのSupabase rowで
+  `current_step/status/revision` を管理し、clientはtyped snapshotのcache/echoだけを行う。
+- 永続rowはrun/identity、pack+planのID・version・hash、step/status/revision、時刻だけに絞る。
+  Task本文はGateway署名付きsnapshotで輸送し、画像/OCR/AX candidate/会話/モデル自由文は保存しない。
+- `generic → product → tenant → user` のResolved Contextはrun開始時のsource/versionを固定し、
+  run中に別tenantや無関係な最新packへ暗黙切替しない。再計画はrevisionを上げた明示イベントにする。
+- active/terminal runはいずれも最終操作から24時間以内に失効・purgeする。長期の品質分析は本文を
+  持たないaggregate traceと、明示同意・redaction済みeval fixtureへ分離する。
+- Copilotのstep advanceはtyped postconditionを用いるrule-first Verifierが確定する。曖昧時だけ
+  modelへescalateし、自由文回答やclient markerを状態の根拠にしない。
 
 実装原則:
 - **fine-tuning はしない**。構造化カード（Markdown）のプロンプト注入＋類似実例の few-shot 検索
@@ -152,6 +260,8 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
   プロバイダ側レート制限・事業者クォータ設定ミス）でユーザーが機能を使えない状態を
   作らない。Gateway の各機能（ASR・レビュー・Vision）はプロバイダ障害時に**自動で
   第二エンジンへフォールバック**する。ユーザー自身のプランクォータによる停止は正当。
+  **2026-07-14追記**: fallback/retryで可用性を保ってもerrorを隠さない。失敗元と実際に使った
+  engineを共通警告としてユーザーへ表示し、運用traceにはnotice codeを残す。
   事業者側のコスト上限（青天井破産の防止）は必要であり、リリース時に慎重に設定する。
   最初の適用対象は ASR（Groq whisper がクォータ/障害でダウンする事象を確認済み）。
 
@@ -163,6 +273,8 @@ Android、Windows へ展開する。**ペルソナ・メモリ・課金はデバ
 2. **メモリは全件編集・削除可能**（マイページ）
 3. **学習利用なし**（LLM プロバイダの no-training 設定 / DPA を利用）
 4. L1 は保存しない。永続化するのは蒸留後のカードと履歴のみ（履歴は既存どおり設定で OFF 可）
+5. 画面から得たcandidate label/rect、OCR、スクリーンショット、会話本文はproduction traceへ
+   保存しない。run rowもID/version/revision等の最小状態に限り24時間以内にpurgeする
 
 ### 3.5 UI デザイン原則
 

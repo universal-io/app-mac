@@ -66,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let commandCenter = AppCommandCenter.shared
             commandCenter.onShowPanelRequested = { [weak self] in
                 self?.trace("command.showPanel")
-                self?.coreCoordinator?.handle(.hotKeyToggle)
+                self?.coreCoordinator?.handle(.menuPanelToggle)
             }
             commandCenter.onShowManagementRequested = { [weak self] in
                 self?.trace("command.showManagement")

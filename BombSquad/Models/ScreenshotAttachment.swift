@@ -1,11 +1,18 @@
 import Foundation
 
+enum ScreenshotCaptureScope: String {
+    case display
+    case region
+    case unknown
+}
+
 struct ScreenshotAttachment: Identifiable, Hashable {
     let id: UUID
     let url: URL
     let createdAt: Date
     let pixelWidth: Int?
     let pixelHeight: Int?
+    let captureScope: ScreenshotCaptureScope
     /// Where on the physical screens this capture came from, in global
     /// display coordinates (CG orientation: top-left origin). Lets a
     /// normalized box inside the image be projected back onto the live
@@ -19,6 +26,7 @@ struct ScreenshotAttachment: Identifiable, Hashable {
         createdAt: Date = Date(),
         pixelWidth: Int? = nil,
         pixelHeight: Int? = nil,
+        captureScope: ScreenshotCaptureScope = .unknown,
         captureRect: CGRect? = nil
     ) {
         self.id = id
@@ -26,6 +34,7 @@ struct ScreenshotAttachment: Identifiable, Hashable {
         self.createdAt = createdAt
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+        self.captureScope = captureScope
         self.captureRect = captureRect
     }
 

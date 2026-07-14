@@ -91,6 +91,19 @@ Server-only vars:
 - `BOMB_SQUAD_DEFAULT_MODEL_VENDOR`
 - `BOMB_SQUAD_DEFAULT_MODEL_ID`
 - `BOMB_SQUAD_VISION_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_FAST_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_FAST_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_VENDOR`
+- `BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_ID`
+- `BOMB_SQUAD_NAVIGATE_V4_ENABLED`
+- `BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`（v4 Run snapshot専用、32 byte以上。provider / Supabase
+  keyとの共用禁止。flag有効時に未設定ならfallbackせず`RUN_SIGNING_UNAVAILABLE`）
 - ~~`BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT`~~ **廃止（2026-07-08）**: free 枠上限は DB の
   `bs_plans` テーブルが正本（migration 0004。env にコピーを持たない）
 - `OPENAI_API_KEY`
@@ -108,6 +121,7 @@ Rules:
 - `SUPABASE_ANON_KEY` is available to both product site and client auth flows.
 - `SUPABASE_SERVICE_ROLE_KEY` is server-only.
 - Provider keys stay server-only.
+- Planner/Grounder/Verifierの役割別model envが未設定なら、通常Navigateのvendor/modelを継承する。
 
 ## API Conventions
 
@@ -126,6 +140,37 @@ Rules:
 ### Time
 
 - All timestamps are ISO 8601 UTC strings.
+
+### Recovered errors / fallback notices（2026-07-14）
+
+Fallbackやretryで最終結果を返せても、途中のerrorを成功結果から隠してはならない。該当する
+responseの`meta.notices`へ全件を入れ、clientは通常結果と同時にdismiss可能な警告として表示する。
+
+```json
+{
+  "meta": {
+    "notices": [
+      {
+        "severity": "warning",
+        "code": "MODEL_FALLBACK",
+        "message": "groq / model-a にアクセスできなかったため、openai / model-b で処理しました。"
+      }
+    ]
+  }
+}
+```
+
+- 現行Gateway codeは`MODEL_FALLBACK / ROLE_DEGRADED / PROVIDER_RETRY / DATA_FALLBACK /
+  STATE_FALLBACK`。
+  client内のCloud→BYOK、撮影engine切替は同じUIへ`CLIENT_PROVIDER_FALLBACK /
+  CAPTURE_FALLBACK`として発行する。
+- model/provider fallbackは失敗したrouteと実際に使ったrouteの両方をmessageへ含める。
+- Planner/Grounder/Verifier/Locator等の補助roleだけが失敗し、主結果を返す場合も`ROLE_DEGRADED`を返す。
+- v4 Runを開始できずv3状態管理で回答を継続する場合は`STATE_FALLBACK`で、使えなかった方式と
+  実際に継続した方式を示す。状態更新API自体はfallbackせずfail-closedする。
+- fallback不能なerrorは従来どおり非2xxまたはSSE `error`。raw provider本文やsecretは表示せず、
+  ユーザーが再試行・設定確認できる説明を返す。
+- clientが`notices`を黙って捨てる実装は禁止。usage traceには本文でなくnotice codeを記録する。
 
 ## POST /api/ai/review
 
@@ -602,6 +647,11 @@ Expected future use:
 実装: `web/app/api/ai/navigate/route.ts` + `web/lib/server/navigate-engine.ts`（プロンプト・
 モデル段階選択・ハーネス選択はサーバー所有）。クライアント: `GatewayNavigateClient`。
 
+**2026-07-14 v4 shadow contract**: user messageは、従来の画像/OCRに加えて同じcaptureの
+`observation` v1を任意で送れる。Gatewayはstrictに検証して計測するが、現段階のprovider promptと
+レスポンスはv3のまま。旧クライアントは`observation`無しで引き続き動く。1リクエストに送れるのは
+最新Observation 1件だけで、assistant messageには付けられない。
+
 リクエスト（共通エンベロープ準拠）:
 
 ```json
@@ -613,30 +663,209 @@ Expected future use:
       { "role": "user",
         "text": "任意（auto first turn は text 無しの画像のみ）",
         "image_base64": "最新キャプチャのみ", "media_type": "image/jpeg",
-        "ocr_text": "最新キャプチャのローカルOCR全文" }
+        "ocr_text": "最新キャプチャのローカルOCR全文",
+        "observation": {
+          "schema_version": 1,
+          "capture_id": "uuid",
+          "captured_at": "ISO 8601 UTC",
+          "capture_scope": "display | region | unknown",
+          "coordinate_space": "normalized_top_left",
+          "pixel_size": { "width": 1600, "height": 1000 },
+          "screen_rect": { "x": 0, "y": 0, "width": 1440, "height": 900 },
+          "environment": {
+            "app_name": "Google Chrome",
+            "bundle_id": "com.google.Chrome",
+            "window_title": "アナリティクス",
+            "url": "https://analytics.google.com/"
+          },
+          "transition_state": "stable",
+          "candidates": [
+            {
+              "id": "ocr:0",
+              "source": "ocr",
+              "role": "text",
+              "label": "ユーザー属性",
+              "rect": { "x": 0.1, "y": 0.2, "width": 0.2, "height": 0.05 },
+              "parent_label": "任意",
+              "states": ["expanded"]
+            }
+          ]
+        } }
     ],
     "hints": { "app_name": "...", "window_title": "..." },
     "task": {
       "goal": "...",
       "steps": [{ "verbal": "...", "target": "画面上の正確なラベル", "fill": "任意" }],
       "current_step": 0
-    }
+    },
+    "run_snapshot": "v4 shadow中の署名済みsnapshot（任意）",
+    "previous_observation": "現在step開始時のObservation（run_snapshotと対で必須）"
   },
-  "preferences": { "output_language": "ja" },
+  "preferences": { "output_language": "japanese" },
   "client": { "platform": "macos", "app_version": "...", "build_number": "..." }
 }
 ```
 
-- `input.task` はクライアント所有のステッププラン（プランはデータであり、モデルが毎ターン
-  再導出しない）。無ければ通常の Q&A ターン。
+- v3の`input.task`はクライアント輸送のステッププラン（プランはデータであり、モデルが毎ターン
+  再導出しない）。無ければ通常の Q&A ターン。v4では下記のGateway-owned Runへ移す。
 - 画像・OCR は**最新キャプチャの1つだけ**が乗る（過去分はテキストプレースホルダ化）。
+- `observation.capture_id` はcaptureのUUID。candidate IDは同一capture内で安定し、別captureを
+  またいだ同一性は保証しない。
+- candidate `rect` は画像左上原点、0〜1正規化。画像外にはみ出すrect、500件超のcandidate、
+  未知フィールドは`BAD_REQUEST`。
+- candidate `states` は `selected / expanded / collapsed / disabled / focused / loading /
+  checked / unchecked` の既知状態だけを受理する。
+- `environment` は画面認識の状況であり、認証identityではない。`tenant_id` / `user_id` は
+  クライアントObservationから絶対に受け取らず、従来どおりJWTからGatewayが確定する。
+- `hints` はv3互換の移行用。v4ではObservation environmentからContextを解決するが、shadow期間は
+  provider/harnessの挙動を変えないため従来hintsも併送する。
+- Gateway usage metadataには本文を保存せず、Observation有無、schema version、capture scope、
+  transition state、candidate件数/sourceだけを記録する。
+- `run_snapshot`を送る場合は`previous_observation`と、messages内の最新`observation`が必須。
+  Gatewayは署名・認証scope・authoritative run rowを照合してから、snapshotの現在stepに署名された
+  postconditionだけを前後Observationへ適用する。片方だけ、または最新Observation無しは
+  `BAD_REQUEST`であり、別の状態を推測して継続しない。
+
+### v4 Run proposal / snapshot（Gateway API実装済み・既定OFF）
+
+v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriterとなる。clientは直前の
+`run_snapshot`をrequestでechoし、responseのsnapshotで必ず置換する。
+
+PlannerがTaskを提案したSSE resultには、flag有効時だけ`result.run_proposal`を加える。proposalは
+認証tenant/userとplan IDへHMACで束縛され、10分で失効する。この時点ではrun rowを作らない。
+ユーザーが「開始」を選び、同じ認証でstart actionを送った時だけRunを作る。
+
+```json
+{
+  "run_snapshot": {
+    "schema_version": 1,
+    "run_id": "uuid",
+    "pack": { "id": "ga4", "version": "1" },
+    "plan": {
+      "id": "uuid",
+      "version": 1,
+      "hash": "sha256:...",
+      "task": {
+        "recipe_id": "demographics",
+        "goal": "...",
+        "steps": [
+          {
+            "id": "step-1",
+            "verbal": "...",
+            "target": "...",
+            "fill": null,
+            "postconditions": []
+          }
+        ]
+      }
+    },
+    "current_step": 0,
+    "status": "active",
+    "revision": 3,
+    "expires_at": "ISO 8601 UTC",
+    "signature": "v1.base64url-hmac-sha256"
+  }
+}
+```
+
+- `tenant_id` / `user_id` はsnapshotにもrequest bodyにも含めずJWTから確定する。Gatewayのrun rowは
+  `run_id / tenant_id / user_id / pack id+version / plan id+version+hash / current_step / status /
+  revision / created_at / updated_at / expires_at` だけを保存する。
+- clientが送ったrevision、plan hash/signatureがrun rowと一致しない場合はstepを進めない。
+  Gatewayは最新snapshotを返し、clientは再同期する。client単独の`current_step`更新は禁止。
+- signatureはTaskだけでなくpack/plan identity、step、status、revision、expiryを含むsnapshot全体を
+  HMAC-SHA256で保護する。検証は形検査→署名→Task hash→認証scope付きrun row照合の順で行う。
+- `status` は `active / ambiguous / blocked / complete / cancelled / expired`。active/terminalとも
+  最終操作から24時間以内にpurgeする。
+- screenshot、OCR、candidate label/rect、会話、モデル自由文はrun row/usage traceへ保存しない。
+  signed Task snapshotはclientが輸送し、server rowにはhashだけを置く。
+- `0005_navigator_runs.sql`、Gateway内部repository、署名／改ざん検知、下記control API、macOSの
+  shadow start／rule-first verification接続は実装済み。migrationと環境変数は未適用で、shadow中は
+  現行v3 Taskが表示・step進行の正本であり続ける。
+- step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
+  strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
+
+#### Pack v1 typed postcondition（shadow実装済み）
+
+1 stepあたり最大8件。現段階で許可するkindは次だけで、自由文条件、座標、画像/OCR本文、任意式、
+機密field valueは署名Taskへ入れない。
+
+- `candidate_present / candidate_absent`: `selector.label`必須、`parent_label / role`任意。
+- `candidate_state`: 上記selector＋Observation既知state。
+- `environment_matches`: `url_contains / window_title_contains`の一方以上。
+- `environment_changed`: `field = url | window_title`。
+
+rule-first Verifierはafterが`stable`かつbefore/afterのcapture scopeが同じ場合だけ評価する。全条件を
+満たせば`verified`（最終stepは`complete`）、disabled targetは`blocked`、可視状態が同一なら
+`not_changed`、不安定・矛盾・情報不足は`ambiguous`。`ambiguous`だけが将来のmodel Verifier対象で、
+空のpostconditionを完了扱いしてはならない。
+
+Pack v1では`pack_version / recipe_id / step.id`を安定IDとして固定する。v4 Plannerはrecipe採用時に
+これらのIDだけを選び、GatewayがPackの正規step（verbal/target/fill/postconditions）を復元する。
+モデルが返した同名の自由文からpostconditionを推測しない。ID創作、順序逆転、別recipe混在は
+Planner失敗として明示的にdegradeし、署名Taskへ入れない。
+
+#### POST /api/ai/navigate/run
+
+共通bodyは`request_id`と`action`。`BOMB_SQUAD_NAVIGATE_V4_ENABLED=false`なら404
+`FEATURE_NOT_ENABLED`。署名鍵不備、store障害、改ざん、revision競合は成功へfallbackしない。
+
+- `start`: `proposal`必須。署名・期限・認証audienceを検証し、Runを冪等作成してsnapshotを返す。
+- `sync`: `run_snapshot`必須。Task署名とplan identityを検証し、row側の最新progressで再署名する。
+- `cancel`: `run_snapshot`必須。最新revisionだけをcancelし、更新済みsnapshotを返す。同じcancelの
+  再送は最新cancelled snapshotを返す。
+- clientはstep/status/Taskを別フィールドで送れない。`advance`はGA4実画面shadow gateを通るまで存在しない。
+
+```json
+{
+  "request_id": "uuid",
+  "action": "start | sync | cancel",
+  "proposal": "startだけ: SSE result.run_proposal",
+  "run_snapshot": "sync/cancelだけ: 直前のresponse値"
+}
+```
 
 SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
-（`{"result": {"text", "harness", "task"}, "meta": {"model_id"}}`）。エラーは `error` イベント
+（`{"result": {"text", "harness", "task", "grounding", "run_proposal", "verification", "shadow_rendering", "shadow_grounding"}, "meta": {"model_id"}}`）。
+feature flag下の `grounding` は `{capture_id, candidate_id, confidence, method}` または `null` の
+加算フィールドで、
+`BOMB_SQUAD_NAVIGATE_V4_ENABLED` が未設定／falseの間は常に `null`。shadow期間は従来markerを
+置き換えない。エラーは `error` イベント
 または非 2xx の JSON（共通エラー契約）。`result.text` には決定論マーカー
-`[[target:ラベル]]` / `[[loc:x,y,w,h]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
+`[[target:ラベル]]` / `[[loc:x0,y0,x1,y1]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
 クライアント（`NavigatorLocator`）が抽出して OCR grounding と突き合わせる
 （詳細は [navigator-copilot-plan.md](navigator-copilot-plan.md)）。
+`result.meta.notices`は共通規約どおり表示する。初手main fallback、role別model fallback、
+Planner/Grounder/Verifier/Locatorの部分失敗も成功結果から隠さない。
+
+`verification`はRun shadow inputを送った時だけ
+`{source:"rule|model", status, reason, evidence_candidate_ids, confidence}`、それ以外は`null`。statusは
+`verified / not_changed / ambiguous / blocked / complete`。現段階ではresponseとusage trace
+（ruleのstatus/reason、最終source/status/reason/evidence件数、model route/token/failure reason）へ記録するだけで、
+Run revisionもv3 Taskも更新しない。ruleが安定済み・同一capture scopeでなお証拠不足／矛盾の場合だけ
+独立Verifier modelへstrict schemaで昇格する。撮影不安定、scope変更、空postconditionをモデルで
+推測補完しない。`confidence`はmodel結果だけ0〜1、rule結果は`null`。署名検証・
+Run store・rule evaluationが利用不能でも主回答を返せる場合は`STATE_FALLBACK`で
+「新しい検証を使えず従来判定を表示した」ことをユーザーへ明示する。
+
+`shadow_rendering`はverificationがある時だけ、署名済みTaskと構造化Verifier結果をコードで投影した
+`{schema_version:1, state, verification_source, verification_status, step}`。stateは
+`current_step / next_step / needs_confirmation / blocked / complete`、stepは
+`{id, verbal, target, fill}`またはcomplete時の`null`。stream本文やmarkerを入力にせず、modelにも
+生成させない。GA4 shadow gateまではmacOSが比較用に保持するだけで、画面表示の正本はv3のまま。
+usageには本文でなくrenderer stateとstep IDだけを記録する。
+
+`shadow_grounding`はRun verificationがある時だけ、Rendererが選んだ`current_step / next_step`の
+`target`を最新Observation candidateへ解決した加算結果で、それ以外は`null`。shapeは
+`{schema_version:1, status, comparison, safe_to_prompt, capture_id, step_id, candidate_id,
+confidence, method, legacy_candidate_id}`。statusは`grounded / ambiguous / unresolved /
+not_applicable`、comparisonは`agreement / disagreement / not_comparable`。同一captureで構造化経路と
+従来経路が別candidate IDを選んだ場合、または構造化Grounderのconfidenceが0.85未満の場合は
+`ambiguous`かつ`safe_to_prompt=false`とし、`shadow_rendering.state`も`needs_confirmation`へ倒す。
+macOSはこの時だけv3のハイライトを抑止する。`blocked / needs_confirmation / complete`やtarget無しstepを
+Grounderへ送らず、`safe_to_prompt=false`で操作を促さない。Grounder不能の`unresolved`はshadow障害として
+notice/usageへ残し、現行v3表示へfallbackする。usageにはcandidate label/rectを保存せず、status、comparison、
+model route/token、安全判定だけを記録する。
 
 ## Account / Admin（実装済み・簡易記載）
 

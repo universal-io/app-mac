@@ -85,7 +85,10 @@ export async function POST(request: Request): Promise<Response> {
       modelId: output.modelId,
       inputUnits: Math.round(output.durationSeconds),
       latencyMs,
-      metadata,
+      metadata: {
+        ...metadata,
+        operational_notice_codes: output.notices.map((notice) => notice.code),
+      },
     });
 
     return Response.json({
@@ -96,6 +99,7 @@ export async function POST(request: Request): Promise<Response> {
         model_id: output.modelId,
         duration_seconds: output.durationSeconds,
         latency_ms: latencyMs,
+        notices: output.notices,
       },
     });
   } catch (error) {

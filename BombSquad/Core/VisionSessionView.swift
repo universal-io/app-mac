@@ -34,6 +34,7 @@ struct FoundationVisionRootView: View {
 
 struct VisionSessionView: View {
     @ObservedObject var session: VisionSession
+    @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
     @State private var annotations: [ScreenshotAnnotation] = []
     @State private var previewTool: ScreenshotPreviewTool = .pan
     @State private var annotationTint: ScreenshotAnnotation.Tint = .red
@@ -52,6 +53,12 @@ struct VisionSessionView: View {
 
             if let error = session.errorMessage {
                 ErrorBanner(message: error)
+            }
+            if let notice = noticeCenter.current {
+                OperationalNoticeBanner(
+                    message: notice.message,
+                    onDismiss: noticeCenter.dismiss
+                )
             }
 
             HSplitView {
@@ -409,9 +416,16 @@ struct VisionSessionView: View {
 
 private struct CoreCopilotStripView: View {
     @ObservedObject var session: VisionSession
+    @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let notice = noticeCenter.current {
+                OperationalNoticeBanner(
+                    message: notice.message,
+                    onDismiss: noticeCenter.dismiss
+                )
+            }
             HStack(spacing: 6) {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.tint)
@@ -474,12 +488,25 @@ private struct CoreCopilotStripView: View {
             if !stripped.isEmpty { return stripped }
         }
         if session.isCopilotChecking || session.isNavigating {
-            return "最新の画面から次の手順を確認しています…"
+            switch session.copilotCaptureState {
+            case .waitingForChange:
+                return "クリック後の画面変化を待っています…"
+            case .settling:
+                return "画面が切り替わり中です。安定するまで待っています…"
+            default:
+                return "最新の画面から次の手順を確認しています…"
+            }
+        }
+        if session.copilotCaptureState == .timedOut {
+            return "画面遷移の完了を確認できませんでした。反映後に「撮り直す」で再確認してください。"
         }
         return session.navigatorTurns.last(where: { $0.role == .assistant })?.text ?? "案内を待っています…"
     }
 
     private var statusMessage: String {
+        if session.copilotCaptureState == .timedOut {
+            return "画面変化が安定しなかったため自動確認を止めました。「撮り直す」で再確認してください"
+        }
         if session.panelNavigatorHighlight != nil {
             return "赤い枠の場所をクリックしてください。クリック後、自動で進捗を確認します"
         }

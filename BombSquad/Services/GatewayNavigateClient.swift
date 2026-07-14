@@ -13,12 +13,13 @@ struct NavigateTurn {
     var imageBase64: String?
     var mediaType: String?
     var ocrText: String?
+    var observation: VisionObservation? = nil
 }
 
-/// The session's step plan (docs/navigator-copilot-plan.md §3-a). Generated
-/// once by the gateway planner, then owned by the client: it rides on every
-/// request as `input.task`, and `currentStep` advances on the [[step:done]]
-/// marker — the plan is data, not something the model re-derives per turn.
+/// Legacy v3 display/step plan (docs/navigator-copilot-plan.md §3-a).
+/// During v4 shadow it still rides as `input.task` and advances on the
+/// [[step:done]] marker, while the opaque signed Run is measured in parallel.
+/// The rule-first Verifier replaces this client-owned progress in milestone D.
 struct NavigatorTask: Equatable {
     struct Step: Equatable {
         let verbal: String
@@ -35,13 +36,128 @@ struct NavigatorTask: Equatable {
     var isFinished: Bool { currentStep >= steps.count }
 }
 
+struct NavigatorCandidateGrounding {
+    let captureID: UUID
+    let candidateID: String
+    let confidence: Double
+    let method: String
+}
+
+/// Opaque Gateway-signed v4 state. The client transports this JSON unchanged;
+/// it never edits Task, revision, step, tenant, or user fields locally.
+struct NavigatorRunProposal: Equatable {
+    fileprivate let json: Data
+}
+
+struct NavigatorRunSnapshot: Equatable {
+    fileprivate let json: Data
+}
+
+/// Rule-first or escalated model result for one before/after Observation pair.
+/// During shadow it is diagnostic only and cannot advance the v3 task.
+struct NavigatorVerification: Equatable {
+    enum Source: String {
+        case rule
+        case model
+    }
+
+    enum Status: String {
+        case verified
+        case notChanged = "not_changed"
+        case ambiguous
+        case blocked
+        case complete
+    }
+
+    enum Reason: String {
+        case allPostconditionsMet = "ALL_POSTCONDITIONS_MET"
+        case noPostconditions = "NO_POSTCONDITIONS"
+        case observationUnstable = "OBSERVATION_UNSTABLE"
+        case captureScopeChanged = "CAPTURE_SCOPE_CHANGED"
+        case targetDisabled = "TARGET_DISABLED"
+        case noVisibleChange = "NO_VISIBLE_CHANGE"
+        case insufficientOrConflictingEvidence = "INSUFFICIENT_OR_CONFLICTING_EVIDENCE"
+        case modelPostconditionsSupported = "MODEL_POSTCONDITIONS_SUPPORTED"
+        case modelNoVisibleChange = "MODEL_NO_VISIBLE_CHANGE"
+        case modelTargetBlocked = "MODEL_TARGET_BLOCKED"
+        case modelInsufficientEvidence = "MODEL_INSUFFICIENT_EVIDENCE"
+    }
+
+    let source: Source
+    let status: Status
+    let reason: Reason
+    let evidenceCandidateIDs: [String]
+    let confidence: Double?
+}
+
+/// Non-authoritative code projection from the signed v4 Task. It is kept
+/// separate from the streamed model prose so shadow comparisons are possible.
+struct NavigatorShadowRendering: Equatable {
+    enum State: String {
+        case currentStep = "current_step"
+        case nextStep = "next_step"
+        case needsConfirmation = "needs_confirmation"
+        case blocked
+        case complete
+    }
+
+    struct Step: Equatable {
+        let id: String
+        let verbal: String
+        let target: String?
+        let fill: String?
+    }
+
+    let state: State
+    let verificationSource: NavigatorVerification.Source
+    let verificationStatus: NavigatorVerification.Status
+    let step: Step?
+}
+
+/// Candidate selected from the latest Observation for the signed Renderer
+/// step, plus its comparison with the legacy text-driven grounding path.
+struct NavigatorShadowGrounding: Equatable {
+    enum Status: String {
+        case grounded
+        case ambiguous
+        case unresolved
+        case notApplicable = "not_applicable"
+    }
+
+    enum Comparison: String {
+        case agreement
+        case disagreement
+        case notComparable = "not_comparable"
+    }
+
+    let status: Status
+    let comparison: Comparison
+    let safeToPrompt: Bool
+    let captureID: UUID
+    let stepID: String?
+    let candidateID: String?
+    let confidence: Double?
+    let method: String?
+    let legacyCandidateID: String?
+}
+
 /// One event of a streaming navigation answer (SSE from the gateway).
 enum NavigateStreamEvent {
     /// A plain-text increment of the answer as the model produces it.
     case delta(String)
     /// The full answer; always the last event of a successful stream.
     /// `task` is a freshly planned step sequence awaiting the user's consent.
-    case result(text: String, harness: String?, modelID: String?, task: NavigatorTask?)
+    case result(
+        text: String,
+        harness: String?,
+        modelID: String?,
+        task: NavigatorTask?,
+        grounding: NavigatorCandidateGrounding?,
+        runProposal: NavigatorRunProposal?,
+        verification: NavigatorVerification?,
+        shadowRendering: NavigatorShadowRendering?,
+        shadowGrounding: NavigatorShadowGrounding?
+    )
 }
 
 /// Client for the screen navigator (POST /api/ai/navigate, always SSE).
@@ -75,11 +191,20 @@ struct GatewayNavigateClient {
         turns: [NavigateTurn],
         hints: SituationalContext?,
         language: OutputLanguage,
-        task: NavigatorTask? = nil
+        task: NavigatorTask? = nil,
+        runSnapshot: NavigatorRunSnapshot? = nil,
+        previousObservation: VisionObservation? = nil
     ) async throws -> AsyncThrowingStream<NavigateStreamEvent, Error> {
         let events = try await client.postSSE(
             "ai/navigate",
-            body: requestBody(turns: turns, hints: hints, language: language, task: task)
+            body: try requestBody(
+                turns: turns,
+                hints: hints,
+                language: language,
+                task: task,
+                runSnapshot: runSnapshot,
+                previousObservation: previousObservation
+            )
         )
 
         return AsyncThrowingStream { continuation in
@@ -101,7 +226,16 @@ struct GatewayNavigateClient {
                                 text: text,
                                 harness: result["harness"] as? String,
                                 modelID: meta?["model_id"] as? String,
-                                task: Self.parseTask(result["task"])
+                                task: Self.parseTask(result["task"]),
+                                grounding: Self.parseGrounding(result["grounding"]),
+                                runProposal: Self.parseRunProposal(result["run_proposal"]),
+                                verification: try Self.parseVerification(result["verification"]),
+                                shadowRendering: try Self.parseShadowRendering(
+                                    result["shadow_rendering"]
+                                ),
+                                shadowGrounding: try Self.parseShadowGrounding(
+                                    result["shadow_grounding"]
+                                )
                             ))
                         default:
                             break
@@ -138,6 +272,212 @@ struct GatewayNavigateClient {
             steps: steps,
             currentStep: max(0, (dict["current_step"] as? Int) ?? 0)
         )
+    }
+
+    private static func parseGrounding(_ value: Any?) -> NavigatorCandidateGrounding? {
+        guard
+            let dict = value as? [String: Any],
+            let capture = dict["capture_id"] as? String,
+            let captureID = UUID(uuidString: capture),
+            let candidateID = dict["candidate_id"] as? String, !candidateID.isEmpty,
+            let confidence = dict["confidence"] as? NSNumber,
+            (0...1).contains(confidence.doubleValue),
+            let method = dict["method"] as? String,
+            method == "exact_unique" || method == "model"
+        else { return nil }
+        return NavigatorCandidateGrounding(
+            captureID: captureID,
+            candidateID: candidateID,
+            confidence: confidence.doubleValue,
+            method: method
+        )
+    }
+
+    private static func parseVerification(_ value: Any?) throws -> NavigatorVerification? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard
+            let dict = value as? [String: Any],
+            let rawSource = dict["source"] as? String,
+            let source = NavigatorVerification.Source(rawValue: rawSource),
+            let rawStatus = dict["status"] as? String,
+            let status = NavigatorVerification.Status(rawValue: rawStatus),
+            let rawReason = dict["reason"] as? String,
+            let reason = NavigatorVerification.Reason(rawValue: rawReason),
+            let evidence = dict["evidence_candidate_ids"] as? [String],
+            evidence.allSatisfy({ !$0.isEmpty })
+        else {
+            throw ProviderError.decoding("ナビゲーション検証結果の形式が不正です")
+        }
+        let confidence: Double?
+        if source == .model {
+            guard
+                let number = dict["confidence"] as? NSNumber,
+                (0...1).contains(number.doubleValue)
+            else {
+                throw ProviderError.decoding("モデル検証結果に信頼度がありません")
+            }
+            confidence = number.doubleValue
+        } else {
+            confidence = nil
+        }
+        return NavigatorVerification(
+            source: source,
+            status: status,
+            reason: reason,
+            evidenceCandidateIDs: evidence,
+            confidence: confidence
+        )
+    }
+
+    private static func parseShadowRendering(_ value: Any?) throws -> NavigatorShadowRendering? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard
+            let dict = value as? [String: Any],
+            (dict["schema_version"] as? NSNumber)?.intValue == 1,
+            let rawState = dict["state"] as? String,
+            let state = NavigatorShadowRendering.State(rawValue: rawState),
+            let rawSource = dict["verification_source"] as? String,
+            let source = NavigatorVerification.Source(rawValue: rawSource),
+            let rawStatus = dict["verification_status"] as? String,
+            let status = NavigatorVerification.Status(rawValue: rawStatus)
+        else {
+            throw ProviderError.decoding("shadow表示指示の形式が不正です")
+        }
+        let step: NavigatorShadowRendering.Step?
+        if state == .complete {
+            guard dict["step"] is NSNull else {
+                throw ProviderError.decoding("完了したshadow表示に不要なstepがあります")
+            }
+            step = nil
+        } else {
+            guard
+                let rawStep = dict["step"] as? [String: Any],
+                let id = rawStep["id"] as? String, !id.isEmpty,
+                let verbal = rawStep["verbal"] as? String, !verbal.isEmpty
+            else {
+                throw ProviderError.decoding("shadow表示指示に署名済みstepがありません")
+            }
+            step = NavigatorShadowRendering.Step(
+                id: id,
+                verbal: verbal,
+                target: rawStep["target"] as? String,
+                fill: rawStep["fill"] as? String
+            )
+        }
+        return NavigatorShadowRendering(
+            state: state,
+            verificationSource: source,
+            verificationStatus: status,
+            step: step
+        )
+    }
+
+    private static func parseShadowGrounding(_ value: Any?) throws -> NavigatorShadowGrounding? {
+        guard let value, !(value is NSNull) else { return nil }
+        guard
+            let dict = value as? [String: Any],
+            (dict["schema_version"] as? NSNumber)?.intValue == 1,
+            let rawStatus = dict["status"] as? String,
+            let status = NavigatorShadowGrounding.Status(rawValue: rawStatus),
+            let rawComparison = dict["comparison"] as? String,
+            let comparison = NavigatorShadowGrounding.Comparison(rawValue: rawComparison),
+            let safeToPrompt = dict["safe_to_prompt"] as? Bool,
+            let rawCaptureID = dict["capture_id"] as? String,
+            let captureID = UUID(uuidString: rawCaptureID)
+        else {
+            throw ProviderError.decoding("shadow操作対象の形式が不正です")
+        }
+        let confidence = (dict["confidence"] as? NSNumber)?.doubleValue
+        if let confidence, !(0...1).contains(confidence) {
+            throw ProviderError.decoding("shadow操作対象の信頼度が不正です")
+        }
+        let method = dict["method"] as? String
+        if let method, method != "exact_unique" && method != "model" {
+            throw ProviderError.decoding("shadow操作対象の解決方法が不正です")
+        }
+        return NavigatorShadowGrounding(
+            status: status,
+            comparison: comparison,
+            safeToPrompt: safeToPrompt,
+            captureID: captureID,
+            stepID: dict["step_id"] as? String,
+            candidateID: dict["candidate_id"] as? String,
+            confidence: confidence,
+            method: method,
+            legacyCandidateID: dict["legacy_candidate_id"] as? String
+        )
+    }
+
+    /// Starts a v4 Run only after the user accepts the Planner proposal.
+    /// This is shadow state until the rule-first Verifier becomes authoritative.
+    func startRun(_ proposal: NavigatorRunProposal) async throws -> NavigatorRunSnapshot {
+        let proposalObject = try Self.object(from: proposal.json, label: "run proposal")
+        let data = try await client.postJSON("ai/navigate/run", body: [
+            "request_id": UUID().uuidString,
+            "action": "start",
+            "proposal": proposalObject,
+        ])
+        return try Self.runSnapshot(from: data)
+    }
+
+    func syncRun(_ snapshot: NavigatorRunSnapshot) async throws -> NavigatorRunSnapshot {
+        try await updateRun(action: "sync", snapshot: snapshot)
+    }
+
+    func cancelRun(_ snapshot: NavigatorRunSnapshot) async throws -> NavigatorRunSnapshot {
+        try await updateRun(action: "cancel", snapshot: snapshot)
+    }
+
+    private func updateRun(
+        action: String,
+        snapshot: NavigatorRunSnapshot
+    ) async throws -> NavigatorRunSnapshot {
+        let snapshotObject = try Self.object(from: snapshot.json, label: "run snapshot")
+        let data = try await client.postJSON("ai/navigate/run", body: [
+            "request_id": UUID().uuidString,
+            "action": action,
+            "run_snapshot": snapshotObject,
+        ])
+        return try Self.runSnapshot(from: data)
+    }
+
+    private static func parseRunProposal(_ value: Any?) -> NavigatorRunProposal? {
+        guard
+            let value,
+            JSONSerialization.isValidJSONObject(value),
+            let dict = value as? [String: Any],
+            dict["kind"] as? String == "navigate_run_proposal",
+            dict["signature"] is String,
+            let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
+        else { return nil }
+        return NavigatorRunProposal(json: data)
+    }
+
+    private static func runSnapshot(from data: Data) throws -> NavigatorRunSnapshot {
+        let root = try GatewayClient.rootObject(data)
+        guard
+            let result = root["result"] as? [String: Any],
+            let snapshot = result["run_snapshot"] as? [String: Any],
+            snapshot["signature"] is String,
+            JSONSerialization.isValidJSONObject(snapshot),
+            let encoded = try? JSONSerialization.data(
+                withJSONObject: snapshot,
+                options: [.sortedKeys]
+            )
+        else {
+            throw ProviderError.decoding("run response had no signed snapshot")
+        }
+        return NavigatorRunSnapshot(json: encoded)
+    }
+
+    private static func object(from data: Data, label: String) throws -> [String: Any] {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            JSONSerialization.isValidJSONObject(object)
+        else {
+            throw ProviderError.decoding("\(label) was not valid JSON")
+        }
+        return object
     }
 
     // MARK: - Image preparation
@@ -228,21 +568,37 @@ struct GatewayNavigateClient {
         turns: [NavigateTurn],
         hints: SituationalContext?,
         language: OutputLanguage,
-        task: NavigatorTask?
-    ) -> [String: Any] {
-        // An active copilot already carries its complete plan in `task`.
-        // Replaying the whole pre-copilot conversation makes old instructions
-        // compete with the latest screen, so retain only the latest capture and
-        // the final conversational beat. Plain navigator Q&A keeps full history.
+        task: NavigatorTask?,
+        runSnapshot: NavigatorRunSnapshot?,
+        previousObservation: VisionObservation?
+    ) throws -> [String: Any] {
+        // An active copilot already carries its complete goal and plan in
+        // `task`. Its request contract is history-free: latest capture plus an
+        // optional direct user utterance after that capture. Assistant history
+        // and pre-copilot questions must never compete with current state.
+        // Plain navigator Q&A keeps its conversation history for now.
         let effectiveTurns: [NavigateTurn]
         if task != nil {
             let latestCaptureIndex = turns.indices.last {
-                turns[$0].imageBase64 != nil || turns[$0].ocrText != nil
+                turns[$0].imageBase64 != nil
+                    || turns[$0].ocrText != nil
+                    || turns[$0].observation != nil
             }
-            let tailStart = max(0, turns.count - 2)
-            var keptIndices = Set(tailStart..<turns.count)
+            var keptIndices = Set<Int>()
             if let latestCaptureIndex {
                 keptIndices.insert(latestCaptureIndex)
+            }
+            let directUtteranceIndex = turns.indices.last { index in
+                guard index > (latestCaptureIndex ?? -1) else { return false }
+                let turn = turns[index]
+                return turn.role == .user
+                    && turn.imageBase64 == nil
+                    && turn.ocrText == nil
+                    && turn.observation == nil
+                    && !(turn.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            }
+            if let directUtteranceIndex {
+                keptIndices.insert(directUtteranceIndex)
             }
             effectiveTurns = turns.indices
                 .filter { keptIndices.contains($0) }
@@ -257,7 +613,9 @@ struct GatewayNavigateClient {
         // an OCR-only turn as a capture too, so a failed image encode cannot
         // accidentally resurrect the previous screenshot.
         let captureIndices = effectiveTurns.indices.filter {
-            effectiveTurns[$0].imageBase64 != nil || effectiveTurns[$0].ocrText != nil
+            effectiveTurns[$0].imageBase64 != nil
+                || effectiveTurns[$0].ocrText != nil
+                || effectiveTurns[$0].observation != nil
         }
         let latestCaptureIndex = captureIndices.last
 
@@ -266,7 +624,7 @@ struct GatewayNavigateClient {
             if let text = turn.text, !text.isEmpty {
                 payload["text"] = text
             } else if index != latestCaptureIndex,
-                      turn.imageBase64 != nil || turn.ocrText != nil {
+                      turn.imageBase64 != nil || turn.ocrText != nil || turn.observation != nil {
                 // Without a neutral text payload the gateway treats every
                 // image-stripped historical capture as another fresh
                 // re-capture instruction. Preserve the turn boundary while
@@ -279,6 +637,14 @@ struct GatewayNavigateClient {
             }
             if index == latestCaptureIndex, let ocr = turn.ocrText, !ocr.isEmpty {
                 payload["ocr_text"] = ocr
+            }
+            if index == latestCaptureIndex, let observation = turn.observation {
+                // Context exclusion applies to capture-time app/window identity
+                // as well as legacy hints. OCR candidates remain part of the
+                // explicitly captured screen and are still sent.
+                payload["observation"] = observation.wirePayload(
+                    includeEnvironment: hints != nil
+                )
             }
             return payload
         }
@@ -300,6 +666,22 @@ struct GatewayNavigateClient {
                 },
                 "current_step": task.currentStep,
             ] as [String: Any]
+        }
+        switch (runSnapshot, previousObservation) {
+        case let (.some(snapshot), .some(observation)):
+            input["run_snapshot"] = try Self.object(
+                from: snapshot.json,
+                label: "run snapshot"
+            )
+            input["previous_observation"] = observation.wirePayload(
+                includeEnvironment: hints != nil
+            )
+        case (nil, nil):
+            break
+        default:
+            throw ProviderError.decoding(
+                "ナビゲーション検証には署名済み状態と直前の画面情報の両方が必要です"
+            )
         }
 
         return GatewayClient.envelope(operation: "navigate", input: input, language: language)

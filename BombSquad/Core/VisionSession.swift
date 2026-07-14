@@ -32,6 +32,18 @@ private struct CoreNavigatorHighlightResolution {
     let liveBox: CGRect?
 }
 
+enum CopilotCaptureState: Equatable {
+    case idle
+    case waitingForChange
+    case settling
+    case timedOut
+}
+
+private enum CopilotProgressCaptureOutcome {
+    case stable(ScreenshotAttachment)
+    case timedOut
+}
+
 /// Phase 3-c/d screenshot interpretation state. It owns the legacy split:
 /// Navigator-first when available, one-shot Vision only as fallback, plus
 /// Copilot on top of the same screenshot session.
@@ -55,6 +67,7 @@ final class VisionSession: ObservableObject {
     @Published private(set) var navigatorActiveTask: NavigatorTask?
     @Published private(set) var isExecutingNavigatorAction = false
     @Published private(set) var isCopilotChecking = false
+    @Published private(set) var copilotCaptureState: CopilotCaptureState = .idle
     @Published var focusedField: FocusField? = nil
     @Published var isRecording = false
     @Published var isTranscribing = false
@@ -75,8 +88,19 @@ final class VisionSession: ObservableObject {
     private var navigatorWireTurns: [NavigateTurn] = []
     private var navigatorPendingCapture: NavigateTurn?
     private var navigatorOCRFragments: [RecognizedTextFragment] = []
+    private var navigatorObservation: VisionObservation?
     private var navigatorTask: Task<Void, Never>?
     private var navigatorGeneration = 0
+    /// v4 shadow state: transported to Gateway but never used to advance the
+    /// visible v3 Task until the rule-first Verifier is authoritative.
+    private var navigatorProposedRun: NavigatorRunProposal?
+    private var navigatorRunSnapshot: NavigatorRunSnapshot?
+    private var navigatorRunBeforeObservation: VisionObservation?
+    private var navigatorRunVerificationFinished = false
+    private var navigatorRunFallbackActive = false
+    private var navigatorShadowRendering: NavigatorShadowRendering?
+    private var navigatorRunTask: Task<Void, Never>?
+    private var navigatorRunGeneration = 0
     private var queuedNavigatorQuestion: String?
     private var copilotClickMonitor: Any?
     private var copilotRecaptureTask: Task<Void, Never>?
@@ -85,6 +109,12 @@ final class VisionSession: ObservableObject {
     private var didSaveNavigatorSession = false
 
     let outputLanguage: OutputLanguage
+    private static let copilotCaptureSampleDelayNanoseconds: UInt64 = 350_000_000
+    private static let copilotCaptureSettleComparisons = 1
+    private static let copilotCaptureMaxAttempts = 8
+    private static let copilotChangeThreshold = 0.015
+    private static let copilotStableThreshold = 0.003
+    private static let copilotComparisonSide = 48
 
     init(
         attachment: ScreenshotAttachment,
@@ -249,9 +279,11 @@ final class VisionSession: ObservableObject {
 
     func startProposedNavigation() {
         guard let task = navigatorProposedTask, !isNavigating else { return }
+        let runProposal = navigatorProposedRun
         isNavigating = true
         navigatorStreamingText = ""
         navigatorProposedTask = nil
+        navigatorProposedRun = nil
         navigatorActiveTask = task
         navigatorProposedAction = nil
         clearNavigatorHighlights()
@@ -264,14 +296,59 @@ final class VisionSession: ObservableObject {
             text: "案内を開始します。現在の画面に対して次に取るべき操作を案内してください。"
         ))
         enterCopilotMode()
+        if let runProposal, let navigatorObservation {
+            navigatorRunBeforeObservation = navigatorObservation
+            navigatorRunVerificationFinished = false
+            navigatorRunFallbackActive = false
+            startNavigatorRunShadow(runProposal)
+        } else if runProposal != nil {
+            navigatorRunFallbackActive = true
+            OperationalNoticeCenter.shared.publish(
+                code: "STATE_FALLBACK",
+                message: "新しいナビゲーション検証に必要な開始画面がないため、従来のステップ判定で案内しています。画面を撮り直して新しい計画を開始してください。"
+            )
+        }
         navigatorTask?.cancel()
         navigatorTask = Task { [weak self] in
-            await self?.runNavigatorStream()
+            await self?.runNavigatorStream(preservingRunFallback: runProposal != nil)
         }
     }
 
     func dismissProposedNavigation() {
         navigatorProposedTask = nil
+        navigatorProposedRun = nil
+    }
+
+    private func startNavigatorRunShadow(_ proposal: NavigatorRunProposal) {
+        navigatorRunTask?.cancel()
+        navigatorRunGeneration += 1
+        let generation = navigatorRunGeneration
+        navigatorRunTask = Task { [weak self] in
+            guard let self else { return }
+            guard let client = GatewayNavigateClient.make() else {
+                self.navigatorRunFallbackActive = true
+                OperationalNoticeCenter.shared.publish(
+                    code: "STATE_FALLBACK",
+                    message: "新しいナビゲーション状態を開始できなかったため、従来のクライアント管理方式で案内しています。I//O Cloudへのログインを確認してください。"
+                )
+                return
+            }
+            do {
+                let snapshot = try await client.startRun(proposal)
+                guard generation == self.navigatorRunGeneration, !Task.isCancelled else { return }
+                self.navigatorRunSnapshot = snapshot
+                self.navigatorRunFallbackActive = false
+                NSLog("[Copilot] v4 Run shadow started")
+            } catch {
+                guard generation == self.navigatorRunGeneration, !Task.isCancelled else { return }
+                self.navigatorRunFallbackActive = true
+                OperationalNoticeCenter.shared.publish(
+                    code: "STATE_FALLBACK",
+                    message: "新しいナビゲーション状態を開始できなかったため、従来のクライアント管理方式で案内しています。理由: \(error.localizedDescription)"
+                )
+                NSLog("[Copilot] v4 Run shadow start failed: %@", error.localizedDescription)
+            }
+        }
     }
 
     func requestCopilotProgressCheck() {
@@ -343,6 +420,7 @@ final class VisionSession: ObservableObject {
     }
 
     private func runInterpretation() async {
+        OperationalNoticeCenter.shared.beginOperation(preservingCodes: ["CAPTURE_FALLBACK"])
         errorMessage = nil
         result = nil
         isInterpreting = true
@@ -398,10 +476,15 @@ final class VisionSession: ObservableObject {
         navigatorTask?.cancel()
         navigatorGeneration += 1
         let generation = navigatorGeneration
+        let observationTask = VisionObservationCaptureService.captureTask(
+            preferredPID: situationalContext?.pid ?? fallbackTargetPID,
+            attachment: attachment
+        )
         navigatorTask = Task { [weak self] in
             guard let self else { return }
             async let imageAsync = GatewayNavigateClient.preparedImage(from: attachment.url)
             async let ocrAsync = ScreenTextRecognizer.recognize(at: attachment.url)
+            let observationSnapshot = await observationTask.value
             let image = await imageAsync
             let ocr = await ocrAsync
             guard !Task.isCancelled, generation == self.navigatorGeneration else { return }
@@ -418,8 +501,15 @@ final class VisionSession: ObservableObject {
                 text: nil,
                 imageBase64: image?.base64,
                 mediaType: image?.mediaType,
-                ocrText: ocr?.joinedText
+                ocrText: ocr?.joinedText,
+                observation: VisionObservation.make(
+                    attachment: attachment,
+                    environment: observationSnapshot.environment,
+                    ocr: ocr,
+                    axCandidates: observationSnapshot.axCandidates
+                )
             )
+            self.navigatorObservation = turn.observation
             if autoRun {
                 self.navigatorWireTurns.append(turn)
                 await self.runNavigatorStream()
@@ -466,6 +556,7 @@ final class VisionSession: ObservableObject {
         copilotRecaptureTask = nil
         copilotProgressGeneration += 1
         isCopilotChecking = false
+        setCopilotCaptureState(.idle)
         clearNavigatorHighlights()
         if notifyCoordinator {
             onRequestModeTransition(.navigator, "copilotStopped")
@@ -482,6 +573,8 @@ final class VisionSession: ObservableObject {
         copilotProgressGeneration += 1
         let generation = copilotProgressGeneration
         isCopilotChecking = true
+        errorMessage = nil
+        setCopilotCaptureState(.waitingForChange)
         clearNavigatorHighlights()
         copilotRecaptureTask = Task { [weak self] in
             guard let self else { return }
@@ -518,11 +611,19 @@ final class VisionSession: ObservableObject {
             liveNavigatorHighlight = nil
             HighlightOverlayPresenter.shared.hide()
             try await Task.sleep(nanoseconds: 180_000_000)
-            let capture = try await captureCopilotProgressAttachment()
+            let baseline = attachment
+            let outcome = try await captureCopilotProgressAttachment(baseline: baseline)
             guard isCopilotActive,
                   !Task.isCancelled,
                   generation == copilotProgressGeneration else { return }
-            appendNavigatorCapture(capture)
+            switch outcome {
+            case .stable(let capture):
+                setCopilotCaptureState(.idle)
+                appendNavigatorCapture(capture)
+            case .timedOut:
+                setCopilotCaptureState(.timedOut)
+                errorMessage = "画面の変化が安定する前に確認期限を超えました。反映後に「撮り直す」で再確認してください。"
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -532,26 +633,71 @@ final class VisionSession: ObservableObject {
         }
     }
 
-    private func captureCopilotProgressAttachment() async throws -> ScreenshotAttachment {
+    private func captureCopilotProgressAttachment(
+        baseline: ScreenshotAttachment
+    ) async throws -> CopilotProgressCaptureOutcome {
         let displayID = copilotCaptureDisplayID()
         let captureService = ScreenshotCaptureService()
-        let first = try await captureService.captureFullScreen(displayID: displayID)
-        try Task.checkCancellation()
+        var lastChangedCapture: ScreenshotAttachment?
+        var previousChangedCapture: ScreenshotAttachment?
+        var changeDetected = false
+        var stableComparisons = 0
 
-        try await Task.sleep(nanoseconds: 700_000_000)
-        let second = try await captureService.captureFullScreen(displayID: displayID)
-        try Task.checkCancellation()
-        if await Self.capturePixelsMatch(first.url, second.url) {
-            Self.removeDiscardedCapture(first)
-            return second
+        for attempt in 0..<Self.copilotCaptureMaxAttempts {
+            let current = try await captureService.captureFullScreen(displayID: displayID)
+            try Task.checkCancellation()
+
+            if !changeDetected {
+                let difference = await Self.captureDifferenceRatio(baseline.url, current.url)
+                if difference >= Self.copilotChangeThreshold {
+                    changeDetected = true
+                    lastChangedCapture = current
+                    setCopilotCaptureState(.settling)
+                    NSLog("[Copilot] progress change detected (diff=%.4f, attempt=%d)", difference, attempt + 1)
+                } else {
+                    Self.removeDiscardedCapture(current)
+                }
+            } else if let previousChangedCapture {
+                let difference = await Self.captureDifferenceRatio(previousChangedCapture.url, current.url)
+                if difference <= Self.copilotStableThreshold {
+                    stableComparisons += 1
+                } else {
+                    stableComparisons = 0
+                }
+                if let previous = lastChangedCapture, previous.id != previousChangedCapture.id {
+                    Self.removeDiscardedCapture(previous)
+                }
+                lastChangedCapture = current
+                if stableComparisons >= Self.copilotCaptureSettleComparisons {
+                    Self.removeDiscardedCapture(previousChangedCapture)
+                    NSLog("[Copilot] progress screen stabilized (diff=%.4f, attempt=%d)", difference, attempt + 1)
+                    return .stable(current)
+                }
+            }
+
+            if let changed = lastChangedCapture, changed.id != previousChangedCapture?.id {
+                if let previousChangedCapture {
+                    Self.removeDiscardedCapture(previousChangedCapture)
+                }
+                previousChangedCapture = changed
+            }
+
+            if attempt < Self.copilotCaptureMaxAttempts - 1 {
+                try await Task.sleep(nanoseconds: Self.copilotCaptureSampleDelayNanoseconds)
+            }
         }
 
-        try await Task.sleep(nanoseconds: 700_000_000)
-        let third = try await captureService.captureFullScreen(displayID: displayID)
-        try Task.checkCancellation()
-        Self.removeDiscardedCapture(first)
-        Self.removeDiscardedCapture(second)
-        return third
+        if let lastChangedCapture {
+            Self.removeDiscardedCapture(lastChangedCapture)
+        }
+        if let previousChangedCapture, previousChangedCapture.id != lastChangedCapture?.id {
+            Self.removeDiscardedCapture(previousChangedCapture)
+        }
+        NSLog(
+            "[Copilot] progress capture timed out (%@)",
+            changeDetected ? "screen never settled" : "screen never changed"
+        )
+        return .timedOut
     }
 
     private func copilotCaptureDisplayID() -> CGDirectDisplayID {
@@ -569,19 +715,76 @@ final class VisionSession: ObservableObject {
         return CGMainDisplayID()
     }
 
-    private nonisolated static func capturePixelsMatch(_ lhs: URL, _ rhs: URL) async -> Bool {
+    private func setCopilotCaptureState(_ state: CopilotCaptureState) {
+        guard copilotCaptureState != state else { return }
+        copilotCaptureState = state
+        NSLog("[Copilot] progress state -> %@", String(describing: state))
+    }
+
+    private nonisolated static func captureDifferenceRatio(_ lhs: URL, _ rhs: URL) async -> Double {
         await Task.detached(priority: .utility) {
-            guard let left = try? Data(contentsOf: lhs),
-                  let right = try? Data(contentsOf: rhs) else { return false }
-            return left == right
+            guard let left = grayscalePixels(at: lhs),
+                  let right = grayscalePixels(at: rhs),
+                  left.count == right.count,
+                  !left.isEmpty else { return 1 }
+            let totalDifference = zip(left, right).reduce(0) { partial, pair in
+                partial + abs(Int(pair.0) - Int(pair.1))
+            }
+            let maxDifference = left.count * 255
+            guard maxDifference > 0 else { return 1 }
+            return Double(totalDifference) / Double(maxDifference)
         }.value
+    }
+
+    private nonisolated static func grayscalePixels(at url: URL) -> [UInt8]? {
+        guard let data = try? Data(contentsOf: url),
+              let source = NSBitmapImageRep(data: data),
+              let image = source.cgImage,
+              let context = CGContext(
+                  data: nil,
+                  width: copilotComparisonSide,
+                  height: copilotComparisonSide,
+                  bitsPerComponent: 8,
+                  bytesPerRow: copilotComparisonSide,
+                  space: CGColorSpaceCreateDeviceGray(),
+                  bitmapInfo: CGImageAlphaInfo.none.rawValue
+              )
+        else {
+            return nil
+        }
+        context.interpolationQuality = .low
+        context.draw(
+            image,
+            in: CGRect(
+                x: 0,
+                y: 0,
+                width: copilotComparisonSide,
+                height: copilotComparisonSide
+            )
+        )
+        guard let buffer = context.data else { return nil }
+        let pointer = buffer.bindMemory(
+            to: UInt8.self,
+            capacity: copilotComparisonSide * copilotComparisonSide
+        )
+        return Array(
+            UnsafeBufferPointer(
+                start: pointer,
+                count: copilotComparisonSide * copilotComparisonSide
+            )
+        )
     }
 
     private nonisolated static func removeDiscardedCapture(_ attachment: ScreenshotAttachment) {
         try? FileManager.default.removeItem(at: attachment.url)
     }
 
-    private func runNavigatorStream() async {
+    private func runNavigatorStream(preservingRunFallback: Bool = false) async {
+        var preservingCodes: Set<String> = ["CAPTURE_FALLBACK"]
+        if preservingRunFallback || navigatorRunFallbackActive {
+            preservingCodes.insert("STATE_FALLBACK")
+        }
+        OperationalNoticeCenter.shared.beginOperation(preservingCodes: preservingCodes)
         guard !Task.isCancelled else { return }
         guard let client = GatewayNavigateClient.make() else {
             isNavigating = false
@@ -607,16 +810,25 @@ final class VisionSession: ObservableObject {
         let context = await resolveContext()
         guard generation == navigatorGeneration, !Task.isCancelled else { return }
         do {
+            let shadowSnapshot = navigatorRunVerificationFinished ? nil : navigatorRunSnapshot
+            let shadowBefore = shadowSnapshot == nil ? nil : navigatorRunBeforeObservation
             let stream = try await client.navigateStream(
                 turns: navigatorWireTurns,
                 hints: isContextExcluded ? nil : context,
                 language: outputLanguage,
-                task: navigatorActiveTask
+                task: navigatorActiveTask,
+                runSnapshot: shadowSnapshot,
+                previousObservation: shadowBefore
             )
             var finalText: String?
             var harness: String?
             var modelID: String?
             var plannedTask: NavigatorTask?
+            var candidateGrounding: NavigatorCandidateGrounding?
+            var runProposal: NavigatorRunProposal?
+            var runVerification: NavigatorVerification?
+            var shadowRendering: NavigatorShadowRendering?
+            var shadowGrounding: NavigatorShadowGrounding?
             for try await event in stream {
                 guard generation == navigatorGeneration, !Task.isCancelled else { return }
                 switch event {
@@ -626,11 +838,26 @@ final class VisionSession: ObservableObject {
                         lastDurationMs = firstTokenMs
                     }
                     navigatorStreamingText = (navigatorStreamingText ?? "") + text
-                case .result(let text, let resultHarness, let resultModelID, let resultTask):
+                case .result(
+                    let text,
+                    let resultHarness,
+                    let resultModelID,
+                    let resultTask,
+                    let resultGrounding,
+                    let resultRunProposal,
+                    let resultVerification,
+                    let resultShadowRendering,
+                    let resultShadowGrounding
+                ):
                     finalText = text
                     harness = resultHarness
                     modelID = resultModelID
                     plannedTask = resultTask
+                    candidateGrounding = resultGrounding
+                    runProposal = resultRunProposal
+                    runVerification = resultVerification
+                    shadowRendering = resultShadowRendering
+                    shadowGrounding = resultShadowGrounding
                 }
             }
             guard let finalText else {
@@ -638,7 +865,29 @@ final class VisionSession: ObservableObject {
             }
             guard generation == navigatorGeneration, !Task.isCancelled else { return }
 
+            if let runVerification {
+                handleNavigatorRunVerification(runVerification)
+            }
+            if let shadowRendering {
+                navigatorShadowRendering = shadowRendering
+                NSLog(
+                    "[Copilot] v4 shadow Renderer state=%@ step=%@",
+                    shadowRendering.state.rawValue,
+                    shadowRendering.step?.id ?? "none"
+                )
+            }
+            if let shadowGrounding {
+                NSLog(
+                    "[Copilot] v4 shadow Grounder status=%@ comparison=%@ step=%@ safe=%@",
+                    shadowGrounding.status.rawValue,
+                    shadowGrounding.comparison.rawValue,
+                    shadowGrounding.stepID ?? "none",
+                    shadowGrounding.safeToPrompt ? "yes" : "no"
+                )
+            }
+
             let (displayText, vlmBox, target, fill, stepDone) = NavigatorLocator.extract(from: finalText)
+            let groundedCandidate = stepDone ? nil : resolveGroundedCandidate(candidateGrounding)
             navigatorWireTurns.append(NavigateTurn(role: .assistant, text: finalText))
             navigatorTurns.append(CoreNavigatorDisplayTurn(role: .assistant, text: displayText))
 
@@ -659,12 +908,15 @@ final class VisionSession: ObservableObject {
 
             if let plannedTask, navigatorActiveTask == nil {
                 navigatorProposedTask = plannedTask
+                navigatorProposedRun = runProposal
             }
 
             let grounding: (target: String?, resolution: CoreNavigatorHighlightResolution)
             if copilotTurn {
                 let expectedTarget = currentNavigatorTaskTarget()
-                if shouldSuppressCopilotHighlight(
+                if shadowGrounding?.safeToPrompt == false {
+                    grounding = (nil, CoreNavigatorHighlightResolution(panelBox: nil, liveBox: nil))
+                } else if shouldSuppressCopilotHighlight(
                     text: displayText,
                     responseTarget: target,
                     expectedTarget: expectedTarget,
@@ -682,10 +934,26 @@ final class VisionSession: ObservableObject {
                         resolveHighlight(target: expectedTarget, vlmBox: trustedVLMBox)
                     )
                 } else {
-                    grounding = (target, resolveHighlight(target: target, vlmBox: vlmBox))
+                    let groundedTarget = groundedCandidate?.label ?? target
+                    grounding = (
+                        groundedTarget,
+                        resolveHighlight(
+                            target: groundedTarget,
+                            vlmBox: groundedCandidate?.rect ?? vlmBox,
+                            trustedCandidateRect: groundedCandidate?.rect
+                        )
+                    )
                 }
             } else {
-                grounding = (target, resolveHighlight(target: target, vlmBox: vlmBox))
+                let groundedTarget = groundedCandidate?.label ?? target
+                grounding = (
+                    groundedTarget,
+                    resolveHighlight(
+                        target: groundedTarget,
+                        vlmBox: groundedCandidate?.rect ?? vlmBox,
+                        trustedCandidateRect: groundedCandidate?.rect
+                    )
+                )
             }
 
             panelNavigatorHighlight = grounding.resolution.panelBox
@@ -714,6 +982,29 @@ final class VisionSession: ObservableObject {
         } catch {
             guard generation == navigatorGeneration, !Task.isCancelled else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func handleNavigatorRunVerification(_ verification: NavigatorVerification) {
+        NSLog(
+            "[Copilot] v4 Run shadow verification source=%@ status=%@ reason=%@ evidence=%d",
+            verification.source.rawValue,
+            verification.status.rawValue,
+            verification.reason.rawValue,
+            verification.evidenceCandidateIDs.count
+        )
+        switch verification.status {
+        case .verified, .complete:
+            navigatorRunVerificationFinished = true
+        case .blocked:
+            navigatorRunVerificationFinished = true
+            navigatorRunFallbackActive = true
+            OperationalNoticeCenter.shared.publish(
+                code: "STATE_FALLBACK",
+                message: "新しいナビゲーション検証で操作対象を利用できないと判定したため、Runは進めず従来のステップ判定を表示しています。"
+            )
+        case .notChanged, .ambiguous:
+            break
         }
     }
 
@@ -776,7 +1067,29 @@ final class VisionSession: ObservableObject {
         return true
     }
 
-    private func resolveHighlight(target: String?, vlmBox: CGRect?) -> CoreNavigatorHighlightResolution {
+    private func resolveGroundedCandidate(
+        _ grounding: NavigatorCandidateGrounding?
+    ) -> VisionObservation.Candidate? {
+        guard
+            let grounding,
+            grounding.confidence >= 0.85,
+            let observation = navigatorObservation,
+            grounding.captureID == observation.captureID
+        else { return nil }
+        return observation.candidates.first { $0.id == grounding.candidateID }
+    }
+
+    private func resolveHighlight(
+        target: String?,
+        vlmBox: CGRect?,
+        trustedCandidateRect: CGRect? = nil
+    ) -> CoreNavigatorHighlightResolution {
+        if let trustedCandidateRect {
+            return CoreNavigatorHighlightResolution(
+                panelBox: trustedCandidateRect,
+                liveBox: trustedCandidateRect
+            )
+        }
         guard let target, !navigatorOCRFragments.isEmpty else {
             return CoreNavigatorHighlightResolution(panelBox: vlmBox, liveBox: vlmBox)
         }
@@ -878,6 +1191,9 @@ final class VisionSession: ObservableObject {
         navigatorTask?.cancel()
         navigatorTask = nil
         navigatorGeneration += 1
+        navigatorRunTask?.cancel()
+        navigatorRunTask = nil
+        navigatorRunGeneration += 1
         queuedNavigatorQuestion = nil
         navigatorTurns = []
         navigatorWireTurns = []
@@ -887,11 +1203,19 @@ final class VisionSession: ObservableObject {
         isNavigating = false
         panelNavigatorHighlight = nil
         navigatorOCRFragments = []
+        navigatorObservation = nil
         navigatorProposedAction = nil
         navigatorProposedTask = nil
+        navigatorProposedRun = nil
+        navigatorRunSnapshot = nil
+        navigatorRunBeforeObservation = nil
+        navigatorRunVerificationFinished = false
+        navigatorRunFallbackActive = false
+        navigatorShadowRendering = nil
         navigatorActiveTask = nil
         isExecutingNavigatorAction = false
         isCopilotChecking = false
+        copilotCaptureState = .idle
         liveNavigatorHighlight = nil
         HighlightOverlayPresenter.shared.hide()
     }
@@ -899,6 +1223,10 @@ final class VisionSession: ObservableObject {
     private func currentProvider() -> VisionProvider {
         if let overrideProvider { return overrideProvider }
         if let gateway = GatewayVisionClient.make() { return gateway }
+        OperationalNoticeCenter.shared.publish(
+            code: "CLIENT_PROVIDER_FALLBACK",
+            message: "I//O Cloudにアクセスできなかったため、端末のOpenAI Visionで処理します。"
+        )
         return OpenAIVisionClient()
     }
 
