@@ -96,6 +96,22 @@ baseline として維持し、GA4 の1ユースケースだけを新しい実行
   goalも表層文字列の完全一致ではなく、正解として明示した同義語グループのいずれかで採点する。
   評価器の誤判定をモデルの失敗として数えないことを、モデル比較より優先する。
 
+#### 現行v3 baseline（2026-07-14）
+
+ローカルの実効 `openai:gpt-5.4-mini` と `ga4@unversioned-v3` を現行
+`runNavigateStream` 経由で実行し、`ga4-current-v3-gpt-5.4-mini-2026-07-14.json` に保存した。
+
+| role | score | 結果 |
+|---|---:|---|
+| planner | 7/7 | 国・地域→ユーザー属性、device→テクノロジーを正しく分離 |
+| grounding | 0/1 | v3にcandidate ID出力が存在しないため未回答 |
+| verifier | 0/1 | v3に独立した構造化Verifierが存在しないため未回答 |
+| total | 7/9 (77.8%) | 未実装roleを黙って合格扱いしない |
+
+planner 2件の全体所要時間は約4.5秒 / 1.7秒。ただしv3のusageはplanner callのtokenを
+集計していないため、result内のtoken値はmain/locator側だけで完全な原価ではない。また、これは
+合成OCR/AX候補によるsmokeであり、実画面画像を含む品質合格ではない。
+
 ## 1. 現行実装の事実（検証開始点）
 
 ### モデル配線
