@@ -770,8 +770,9 @@ PlannerがTaskを提案したSSE resultには、flag有効時だけ`result.run_p
   最終操作から24時間以内にpurgeする。
 - screenshot、OCR、candidate label/rect、会話、モデル自由文はrun row/usage traceへ保存しない。
   signed Task snapshotはclientが輸送し、server rowにはhashだけを置く。
-- `0005_navigator_runs.sql`、Gateway内部repository、署名／改ざん検知、下記control APIは実装済み。
-  migration適用とmacOS client接続は未実施であり、現行v3の実行状態にはまだ影響しない。
+- `0005_navigator_runs.sql`、Gateway内部repository、署名／改ざん検知、下記control API、macOSの
+  shadow start接続は実装済み。migrationと環境変数は未適用で、Verifier導入までは現行v3 Taskが
+  表示・step進行の正本であり続ける。
 - step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
   strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
 

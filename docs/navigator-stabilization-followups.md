@@ -145,8 +145,8 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 |---|---|---|
 | A. 計測・入力契約 | eval、Observation、OCR/AX candidate、Grounder shadow | 完了 |
 | B. エラー透明性 | model/provider/role fallbackを共通noticeで可視化 | 完了 |
-| C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **進行中**（Gateway API完了、mac shadow接続が次） |
-| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | Cの直後 |
+| C. 実行状態 | Gateway-owned Run、revision、署名付きTask snapshot | **完了**（shadow、環境は未有効） |
+| D. 判定契約 | Pack v1 recipeのtyped postcondition、rule-first Verifier | **次に着手** |
 | E. GA4縦切り | Run→Grounder→Verifier→template Rendererをshadowで完走 | 未着手 |
 | F. 品質上限 | role別にGPT品質優先モデルとchallengerを同一fixtureで比較 | Eの後 |
 | G. 一般化 | Slack / Notionで同じgateを通し、v3を削除 | GA4合格後 |
@@ -164,8 +164,14 @@ GA4 1経路に必要なcreate/read/advance/cancel/expireとtenant隔離、本文
 - [x] Run Gateway API: Planner結果を10分有効・認証identity束縛の署名済みproposalとしてSSEへ加算。
   ユーザー開始時だけ冪等にrowを作る`start`、authoritative rowへ戻す`sync`、最新revisionだけの
   `cancel`をfeature flag下に追加した。Verifierが無いため`advance`はまだ提供しない。
-- [ ] macOS shadow接続: proposalを保持し、ユーザーの既存「開始」操作でRun startを呼ぶ。ただし
-  Verifier導入まではv3 Taskを表示の正本とし、Run失敗・v3継続は`STATE_FALLBACK`で明示する。
+- [x] macOS shadow接続: proposalをopaque JSONとして保持し、ユーザーの既存「開始」操作でRun
+  startを並行実行する。成功snapshotはshadow保持だけとし、Verifier導入まではv3 Taskが表示の正本。
+  start失敗時は理由とv3継続を`STATE_FALLBACK`で表示する。
+
+段階Cのコードは完了。実環境でshadowを有効にする時だけ、既存Supabaseへ`0005`を適用し、Gatewayへ
+32 byte以上の専用`BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`を設定して再deployした後、最後に
+`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`へ切り替える。新規サービス契約は不要。次は段階Dで、GA4
+Pack v1 recipeへtyped postconditionを加え、モデルを呼ばない決定論Verifierから実装する。
 
 #### v4 Observation実装（2026-07-14開始）
 

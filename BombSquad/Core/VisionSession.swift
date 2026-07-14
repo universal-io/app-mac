@@ -91,6 +91,12 @@ final class VisionSession: ObservableObject {
     private var navigatorObservation: VisionObservation?
     private var navigatorTask: Task<Void, Never>?
     private var navigatorGeneration = 0
+    /// v4 shadow state: transported to Gateway but never used to advance the
+    /// visible v3 Task until the rule-first Verifier is authoritative.
+    private var navigatorProposedRun: NavigatorRunProposal?
+    private var navigatorRunSnapshot: NavigatorRunSnapshot?
+    private var navigatorRunTask: Task<Void, Never>?
+    private var navigatorRunGeneration = 0
     private var queuedNavigatorQuestion: String?
     private var copilotClickMonitor: Any?
     private var copilotRecaptureTask: Task<Void, Never>?
@@ -269,9 +275,11 @@ final class VisionSession: ObservableObject {
 
     func startProposedNavigation() {
         guard let task = navigatorProposedTask, !isNavigating else { return }
+        let runProposal = navigatorProposedRun
         isNavigating = true
         navigatorStreamingText = ""
         navigatorProposedTask = nil
+        navigatorProposedRun = nil
         navigatorActiveTask = task
         navigatorProposedAction = nil
         clearNavigatorHighlights()
@@ -284,14 +292,47 @@ final class VisionSession: ObservableObject {
             text: "案内を開始します。現在の画面に対して次に取るべき操作を案内してください。"
         ))
         enterCopilotMode()
+        if let runProposal {
+            startNavigatorRunShadow(runProposal)
+        }
         navigatorTask?.cancel()
         navigatorTask = Task { [weak self] in
-            await self?.runNavigatorStream()
+            await self?.runNavigatorStream(preservingRunFallback: runProposal != nil)
         }
     }
 
     func dismissProposedNavigation() {
         navigatorProposedTask = nil
+        navigatorProposedRun = nil
+    }
+
+    private func startNavigatorRunShadow(_ proposal: NavigatorRunProposal) {
+        navigatorRunTask?.cancel()
+        navigatorRunGeneration += 1
+        let generation = navigatorRunGeneration
+        navigatorRunTask = Task { [weak self] in
+            guard let self else { return }
+            guard let client = GatewayNavigateClient.make() else {
+                OperationalNoticeCenter.shared.publish(
+                    code: "STATE_FALLBACK",
+                    message: "新しいナビゲーション状態を開始できなかったため、従来のクライアント管理方式で案内しています。I//O Cloudへのログインを確認してください。"
+                )
+                return
+            }
+            do {
+                let snapshot = try await client.startRun(proposal)
+                guard generation == self.navigatorRunGeneration, !Task.isCancelled else { return }
+                self.navigatorRunSnapshot = snapshot
+                NSLog("[Copilot] v4 Run shadow started")
+            } catch {
+                guard generation == self.navigatorRunGeneration, !Task.isCancelled else { return }
+                OperationalNoticeCenter.shared.publish(
+                    code: "STATE_FALLBACK",
+                    message: "新しいナビゲーション状態を開始できなかったため、従来のクライアント管理方式で案内しています。理由: \(error.localizedDescription)"
+                )
+                NSLog("[Copilot] v4 Run shadow start failed: %@", error.localizedDescription)
+            }
+        }
     }
 
     func requestCopilotProgressCheck() {
@@ -722,8 +763,12 @@ final class VisionSession: ObservableObject {
         try? FileManager.default.removeItem(at: attachment.url)
     }
 
-    private func runNavigatorStream() async {
-        OperationalNoticeCenter.shared.beginOperation(preservingCodes: ["CAPTURE_FALLBACK"])
+    private func runNavigatorStream(preservingRunFallback: Bool = false) async {
+        var preservingCodes: Set<String> = ["CAPTURE_FALLBACK"]
+        if preservingRunFallback {
+            preservingCodes.insert("STATE_FALLBACK")
+        }
+        OperationalNoticeCenter.shared.beginOperation(preservingCodes: preservingCodes)
         guard !Task.isCancelled else { return }
         guard let client = GatewayNavigateClient.make() else {
             isNavigating = false
@@ -760,6 +805,7 @@ final class VisionSession: ObservableObject {
             var modelID: String?
             var plannedTask: NavigatorTask?
             var candidateGrounding: NavigatorCandidateGrounding?
+            var runProposal: NavigatorRunProposal?
             for try await event in stream {
                 guard generation == navigatorGeneration, !Task.isCancelled else { return }
                 switch event {
@@ -774,13 +820,15 @@ final class VisionSession: ObservableObject {
                     let resultHarness,
                     let resultModelID,
                     let resultTask,
-                    let resultGrounding
+                    let resultGrounding,
+                    let resultRunProposal
                 ):
                     finalText = text
                     harness = resultHarness
                     modelID = resultModelID
                     plannedTask = resultTask
                     candidateGrounding = resultGrounding
+                    runProposal = resultRunProposal
                 }
             }
             guard let finalText else {
@@ -810,6 +858,7 @@ final class VisionSession: ObservableObject {
 
             if let plannedTask, navigatorActiveTask == nil {
                 navigatorProposedTask = plannedTask
+                navigatorProposedRun = runProposal
             }
 
             let grounding: (target: String?, resolution: CoreNavigatorHighlightResolution)
@@ -1067,6 +1116,9 @@ final class VisionSession: ObservableObject {
         navigatorTask?.cancel()
         navigatorTask = nil
         navigatorGeneration += 1
+        navigatorRunTask?.cancel()
+        navigatorRunTask = nil
+        navigatorRunGeneration += 1
         queuedNavigatorQuestion = nil
         navigatorTurns = []
         navigatorWireTurns = []
@@ -1079,6 +1131,8 @@ final class VisionSession: ObservableObject {
         navigatorObservation = nil
         navigatorProposedAction = nil
         navigatorProposedTask = nil
+        navigatorProposedRun = nil
+        navigatorRunSnapshot = nil
         navigatorActiveTask = nil
         isExecutingNavigatorAction = false
         isCopilotChecking = false

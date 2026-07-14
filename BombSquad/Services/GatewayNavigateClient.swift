@@ -16,10 +16,10 @@ struct NavigateTurn {
     var observation: VisionObservation? = nil
 }
 
-/// The session's step plan (docs/navigator-copilot-plan.md §3-a). Generated
-/// once by the gateway planner, then owned by the client: it rides on every
-/// request as `input.task`, and `currentStep` advances on the [[step:done]]
-/// marker — the plan is data, not something the model re-derives per turn.
+/// Legacy v3 display/step plan (docs/navigator-copilot-plan.md §3-a).
+/// During v4 shadow it still rides as `input.task` and advances on the
+/// [[step:done]] marker, while the opaque signed Run is measured in parallel.
+/// The rule-first Verifier replaces this client-owned progress in milestone D.
 struct NavigatorTask: Equatable {
     struct Step: Equatable {
         let verbal: String
@@ -43,6 +43,16 @@ struct NavigatorCandidateGrounding {
     let method: String
 }
 
+/// Opaque Gateway-signed v4 state. The client transports this JSON unchanged;
+/// it never edits Task, revision, step, tenant, or user fields locally.
+struct NavigatorRunProposal: Equatable {
+    fileprivate let json: Data
+}
+
+struct NavigatorRunSnapshot: Equatable {
+    fileprivate let json: Data
+}
+
 /// One event of a streaming navigation answer (SSE from the gateway).
 enum NavigateStreamEvent {
     /// A plain-text increment of the answer as the model produces it.
@@ -54,7 +64,8 @@ enum NavigateStreamEvent {
         harness: String?,
         modelID: String?,
         task: NavigatorTask?,
-        grounding: NavigatorCandidateGrounding?
+        grounding: NavigatorCandidateGrounding?,
+        runProposal: NavigatorRunProposal?
     )
 }
 
@@ -116,7 +127,8 @@ struct GatewayNavigateClient {
                                 harness: result["harness"] as? String,
                                 modelID: meta?["model_id"] as? String,
                                 task: Self.parseTask(result["task"]),
-                                grounding: Self.parseGrounding(result["grounding"])
+                                grounding: Self.parseGrounding(result["grounding"]),
+                                runProposal: Self.parseRunProposal(result["run_proposal"])
                             ))
                         default:
                             break
@@ -172,6 +184,78 @@ struct GatewayNavigateClient {
             confidence: confidence.doubleValue,
             method: method
         )
+    }
+
+    /// Starts a v4 Run only after the user accepts the Planner proposal.
+    /// This is shadow state until the rule-first Verifier becomes authoritative.
+    func startRun(_ proposal: NavigatorRunProposal) async throws -> NavigatorRunSnapshot {
+        let proposalObject = try Self.object(from: proposal.json, label: "run proposal")
+        let data = try await client.postJSON("ai/navigate/run", body: [
+            "request_id": UUID().uuidString,
+            "action": "start",
+            "proposal": proposalObject,
+        ])
+        return try Self.runSnapshot(from: data)
+    }
+
+    func syncRun(_ snapshot: NavigatorRunSnapshot) async throws -> NavigatorRunSnapshot {
+        try await updateRun(action: "sync", snapshot: snapshot)
+    }
+
+    func cancelRun(_ snapshot: NavigatorRunSnapshot) async throws -> NavigatorRunSnapshot {
+        try await updateRun(action: "cancel", snapshot: snapshot)
+    }
+
+    private func updateRun(
+        action: String,
+        snapshot: NavigatorRunSnapshot
+    ) async throws -> NavigatorRunSnapshot {
+        let snapshotObject = try Self.object(from: snapshot.json, label: "run snapshot")
+        let data = try await client.postJSON("ai/navigate/run", body: [
+            "request_id": UUID().uuidString,
+            "action": action,
+            "run_snapshot": snapshotObject,
+        ])
+        return try Self.runSnapshot(from: data)
+    }
+
+    private static func parseRunProposal(_ value: Any?) -> NavigatorRunProposal? {
+        guard
+            let value,
+            JSONSerialization.isValidJSONObject(value),
+            let dict = value as? [String: Any],
+            dict["kind"] as? String == "navigate_run_proposal",
+            dict["signature"] is String,
+            let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
+        else { return nil }
+        return NavigatorRunProposal(json: data)
+    }
+
+    private static func runSnapshot(from data: Data) throws -> NavigatorRunSnapshot {
+        let root = try GatewayClient.rootObject(data)
+        guard
+            let result = root["result"] as? [String: Any],
+            let snapshot = result["run_snapshot"] as? [String: Any],
+            snapshot["signature"] is String,
+            JSONSerialization.isValidJSONObject(snapshot),
+            let encoded = try? JSONSerialization.data(
+                withJSONObject: snapshot,
+                options: [.sortedKeys]
+            )
+        else {
+            throw ProviderError.decoding("run response had no signed snapshot")
+        }
+        return NavigatorRunSnapshot(json: encoded)
+    }
+
+    private static func object(from data: Data, label: String) throws -> [String: Any] {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            JSONSerialization.isValidJSONObject(object)
+        else {
+            throw ProviderError.decoding("\(label) was not valid JSON")
+        }
+        return object
     }
 
     // MARK: - Image preparation
