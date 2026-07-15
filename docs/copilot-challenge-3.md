@@ -240,8 +240,16 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
   `GatewayScreenUnderstandingClient`を独立実装。`SessionCoordinator`のcapture完了後という1箇所だけを
   新Sessionへ切り替え、旧`VisionSession`、Navigator、Copilotへの実行入口を外した。パネル・capture・
   画像表示・入力UI・認証transportは共有している。
-- 検証済み（コードのみ）: web test 68件、対象lint、TypeScript、Next production build、macOS Debug
-  `CODE_SIGNING_ALLOWED=NO`が成功。**実画面でGPT-5.6 Solの初期理解と追加質問が成立した証拠はまだない**。
+- 検証済み（コード）: web test 68件、対象lint、TypeScript、Next production build、macOS Debug
+  `CODE_SIGNING_ALLOWED=NO`が成功。
+- 初回実画面スモーク（2026-07-16）: GA4の「ユーザーの環境の概要」をcaptureし、実効モデル
+  `gpt-5.6-sol`で画面、プロパティ名、表示中の指標を正しく要約した。続く「どのソーシャルメディア
+  からアクセスがあるか」という質問には、現在の画面だけでは判定できないと明示し、確認先を案内した。
+  UI表示は16,791 ms、Gatewayでは3回の`POST /api/ai/screen-understanding`がすべて200で、
+  17.0秒、18.0秒、17.3秒だった。モデル名と経路が開発表示され、fallbackや旧navigate経路への流入は
+  観測されなかった。これを**Vision-firstの初期理解＋追加質問の成立**と判定する。
+- 未検証: candidate収集・選択、ハイライト、クリック後の新規captureによる進捗判定。今回の成功は
+  挑戦3全体やGA4 golden pathの合格を意味しない。
 
 - **仮説**: 最高品質モデル1コール＋候補ID＋決定論外殻で、GA4級のWebアプリの
   「質問→案内→完了」が誤ハイライトなしで通る。
