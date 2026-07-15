@@ -234,8 +234,14 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
 - 最初のMVPは**Vision-first**: immutableな1枚のcaptureについて、短い初期理解を返し、
   追加質問へ答えるところまで。candidate選択、ハイライト、クリック後進捗判定は、このMVPの
   実画面成立を確認するまで接続しない。
-- 完了済み: fail-loudなGPT-5.6 Sol Responses API engine/endpointの実装を開始。固定条件は
+- 完了済み: fail-loudなGPT-5.6 Sol Responses API engine/endpointを独立実装。固定条件は
   `gpt-5.6-sol` / `detail: original` / `reasoning.effort: max` / 25,000 output tokens / fallbackなし。
+- 完了済み: macOSに`Challenge3VisionSession` / `Challenge3VisionSessionView` /
+  `GatewayScreenUnderstandingClient`を独立実装。`SessionCoordinator`のcapture完了後という1箇所だけを
+  新Sessionへ切り替え、旧`VisionSession`、Navigator、Copilotへの実行入口を外した。パネル・capture・
+  画像表示・入力UI・認証transportは共有している。
+- 検証済み（コードのみ）: web test 68件、対象lint、TypeScript、Next production build、macOS Debug
+  `CODE_SIGNING_ALLOWED=NO`が成功。**実画面でGPT-5.6 Solの初期理解と追加質問が成立した証拠はまだない**。
 
 - **仮説**: 最高品質モデル1コール＋候補ID＋決定論外殻で、GA4級のWebアプリの
   「質問→案内→完了」が誤ハイライトなしで通る。

@@ -57,7 +57,7 @@ final class SessionCoordinator {
     private let screenshotSelection = ScreenshotSelectionOverlay()
     private var composeSession: ComposeSession?
     private var transformSession: TransformSession?
-    private var visionSession: VisionSession?
+    private var challenge3VisionSession: Challenge3VisionSession?
     private var summonTargetApp: NSRunningApplication?
     private var isDictating = false
     private var transcriptionTask: Task<Void, Never>?
@@ -171,8 +171,8 @@ final class SessionCoordinator {
         )
         transformSession?.tearDown()
         transformSession = nil
-        visionSession?.tearDown()
-        visionSession = nil
+        challenge3VisionSession?.tearDown()
+        challenge3VisionSession = nil
         composeSession = session
         guard stateMachine.transition(to: .compose, reason: "summon") else {
             session.tearDown()
@@ -193,8 +193,8 @@ final class SessionCoordinator {
         )
         composeSession?.tearDown()
         composeSession = nil
-        visionSession?.tearDown()
-        visionSession = nil
+        challenge3VisionSession?.tearDown()
+        challenge3VisionSession = nil
         transformSession = session
         guard stateMachine.transition(to: .transform, reason: "summonSelection") else {
             session.tearDown()
@@ -212,8 +212,8 @@ final class SessionCoordinator {
         composeSession = nil
         transformSession?.tearDown()
         transformSession = nil
-        visionSession?.tearDown()
-        visionSession = nil
+        challenge3VisionSession?.tearDown()
+        challenge3VisionSession = nil
         summonTargetApp = nil
     }
 
@@ -236,22 +236,23 @@ final class SessionCoordinator {
                 composeSession.errorMessage =
                     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
-        case .vision, .navigator, .copilot:
-            guard let visionSession else { return }
-            guard visionSession.isNavigatorAvailable else { return }
+        case .vision:
+            guard let challenge3VisionSession else { return }
             isDictating = true
-            visionSession.errorMessage = nil
-            visionSession.isRecording = true
-            visionSession.focusedField = .navigator
+            challenge3VisionSession.errorMessage = nil
+            challenge3VisionSession.isRecording = true
+            challenge3VisionSession.focusedField = .navigator
             SoundFeedback.recordingStarted()
             do {
                 try recorder.start()
             } catch {
                 isDictating = false
-                visionSession.isRecording = false
-                visionSession.errorMessage =
+                challenge3VisionSession.isRecording = false
+                challenge3VisionSession.errorMessage =
                     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
+        case .navigator, .copilot:
+            return
         default:
             return
         }
@@ -263,13 +264,13 @@ final class SessionCoordinator {
         recorder.onFinish = { SoundFeedback.recordingStopped() }
         guard let url = recorder.stop() else {
             composeSession?.isRecording = false
-            visionSession?.isRecording = false
+            challenge3VisionSession?.isRecording = false
             return
         }
 
         enum DictationSink {
             case compose(ComposeSession)
-            case navigator(VisionSession)
+            case challenge3(Challenge3VisionSession)
         }
 
         let sink: DictationSink?
@@ -282,11 +283,11 @@ final class SessionCoordinator {
             } else {
                 sink = nil
             }
-        case .vision, .navigator, .copilot:
-            if let visionSession {
-                visionSession.isRecording = false
-                visionSession.isTranscribing = true
-                sink = .navigator(visionSession)
+        case .vision:
+            if let challenge3VisionSession {
+                challenge3VisionSession.isRecording = false
+                challenge3VisionSession.isTranscribing = true
+                sink = .challenge3(challenge3VisionSession)
             } else {
                 sink = nil
             }
@@ -319,9 +320,9 @@ final class SessionCoordinator {
                     if self.composeSession === composeSession {
                         composeSession.isTranscribing = false
                     }
-                case .navigator(let visionSession):
-                    if self.visionSession === visionSession {
-                        visionSession.isTranscribing = false
+                case .challenge3(let session):
+                    if self.challenge3VisionSession === session {
+                        session.isTranscribing = false
                     }
                 }
                 return
@@ -336,14 +337,11 @@ final class SessionCoordinator {
                           self.stateMachine.mode == .compose else { return }
                     composeSession.appendTranscription(text)
                     composeSession.isTranscribing = false
-                case .navigator(let visionSession):
-                    guard self.visionSession === visionSession,
-                          self.stateMachine.mode == .vision
-                            || self.stateMachine.mode == .navigator
-                            || self.stateMachine.mode == .copilot
-                    else { return }
-                    visionSession.appendTranscription(text)
-                    visionSession.isTranscribing = false
+                case .challenge3(let session):
+                    guard self.challenge3VisionSession === session,
+                          self.stateMachine.mode == .vision else { return }
+                    session.appendTranscription(text)
+                    session.isTranscribing = false
                 }
             } catch is CancellationError {
                 return
@@ -354,10 +352,10 @@ final class SessionCoordinator {
                     composeSession.isTranscribing = false
                     composeSession.errorMessage =
                         "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
-                case .navigator(let visionSession):
-                    guard self.visionSession === visionSession else { return }
-                    visionSession.isTranscribing = false
-                    visionSession.errorMessage =
+                case .challenge3(let session):
+                    guard self.challenge3VisionSession === session else { return }
+                    session.isTranscribing = false
+                    session.errorMessage =
                         "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
                 }
             }
@@ -379,8 +377,8 @@ final class SessionCoordinator {
         }
         composeSession?.isRecording = false
         composeSession?.isTranscribing = false
-        visionSession?.isRecording = false
-        visionSession?.isTranscribing = false
+        challenge3VisionSession?.isRecording = false
+        challenge3VisionSession?.isTranscribing = false
     }
 
     // MARK: - Vision capture
@@ -437,34 +435,17 @@ final class SessionCoordinator {
 
         switch completion {
         case .attachment(let attachment):
-            let deployer = PasteDeployer(targetApp: summonTargetApp) { [weak self] in
-                self?.close(reason: "visionDeploy")
-            }
-            let session = VisionSession(
+            let session = Challenge3VisionSession(
                 attachment: attachment,
-                deployer: deployer,
-                contextCaptureTask: composeSession.inheritedContextCaptureTask(),
-                fallbackTargetPID: summonTargetApp?.processIdentifier,
-                onRequestModeTransition: { [weak self] mode, reason in
-                    self?.requestModeTransition(mode, reason: reason)
-                },
                 onRequestPanelClose: { [weak self] in
-                    self?.close(reason: "visionRequestedClose")
-                },
-                onHidePanelForAction: { [weak self] in
-                    self?.panelController.hide()
-                },
-                onShowPanelAfterAction: { [weak self] in
-                    self?.panelController.revealAfterAction()
+                    self?.close(reason: "challenge3VisionRequestedClose")
                 }
-            ) { [weak self] text in
-                self?.returnVisionDraftToCompose(text)
-            }
-            visionSession?.tearDown()
-            visionSession = session
+            )
+            challenge3VisionSession?.tearDown()
+            challenge3VisionSession = session
             guard stateMachine.transition(to: .vision, reason: "captureCompleted") else {
                 session.tearDown()
-                visionSession = nil
+                challenge3VisionSession = nil
                 _ = stateMachine.transition(to: returnTo, reason: "captureTransitionFailed")
                 return
             }
@@ -474,14 +455,6 @@ final class SessionCoordinator {
             composeSession.errorMessage = message
             _ = stateMachine.transition(to: returnTo, reason: "captureFailed")
         }
-    }
-
-    private func returnVisionDraftToCompose(_ text: String) {
-        guard let composeSession else { return }
-        composeSession.adoptSuggestedDraft(text)
-        visionSession?.tearDown()
-        visionSession = nil
-        _ = stateMachine.transition(to: .compose, reason: "visionEditAction")
     }
 
     private func captureAttachment(
@@ -527,9 +500,9 @@ final class SessionCoordinator {
                     FoundationTransformRootView(session: transformSession),
                     for: mode
                 )
-            } else if (mode == .vision || mode == .navigator || mode == .copilot), let visionSession {
+            } else if mode == .vision, let challenge3VisionSession {
                 panelController.present(
-                    FoundationVisionRootView(session: visionSession, mode: mode),
+                    Challenge3VisionRootView(session: challenge3VisionSession),
                     for: mode
                 )
             } else if panelController.isVisible {
@@ -547,10 +520,6 @@ final class SessionCoordinator {
         }
     }
 
-    private func requestModeTransition(_ mode: AppMode, reason: String) {
-        guard stateMachine.mode != mode else { return }
-        _ = stateMachine.transition(to: mode, reason: reason)
-    }
 }
 
 /// Phase 1 placeholder content: proves on device that gestures drive the
