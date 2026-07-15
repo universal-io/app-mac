@@ -834,7 +834,14 @@ feature flag下の `grounding` は `{capture_id, candidate_id, confidence, metho
 または非 2xx の JSON（共通エラー契約）。`result.text` には決定論マーカー
 `[[target:ラベル]]` / `[[loc:x0,y0,x1,y1]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
 クライアント（`NavigatorLocator`）が抽出して OCR grounding と突き合わせる
-（詳細は [navigator-copilot-plan.md](navigator-copilot-plan.md)）。
+（経緯は [old/navigator-copilot-plan.md](old/navigator-copilot-plan.md)）。
+
+> ⚠️ **書き換え予約（2026-07-15）**: 本節が記述する Navigate の役割別 env
+> （PLANNER/GROUNDER/VERIFIER）・`run_proposal`・`shadow_grounding`・`safe_to_prompt` は
+> 現在稼働中の pre-pivot 実装。ワンコール新エンジン
+> （[copilot-challenge-3.md](copilot-challenge-3.md) §5）への切替コミットで、本節を
+> 新契約（構造化単一応答 + candidate ID）へ**同一コミットで**書き換えること。
+> この env 一覧を目標仕様として実装しないこと。
 `result.meta.notices`は共通規約どおり表示する。初手main fallback、role別model fallback、
 Planner/Grounder/Verifier/Locatorの部分失敗も成功結果から隠さない。
 

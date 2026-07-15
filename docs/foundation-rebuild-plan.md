@@ -46,14 +46,14 @@
   [manual-golden-paths.md](manual-golden-paths.md) の該当シナリオを実機で通す。
 - 旧経路はパリティ切替（Phase 4）まで削除しない。切替はエントリポイント 1 箇所で戻せる形にする。
 - スコープ外の機能追加はしない（品質チューニングは
-  [navigator-stabilization-followups.md](navigator-stabilization-followups.md) を起点に再開）。
+  [copilot-challenge-3.md](copilot-challenge-3.md)（旧: old/navigator-stabilization-followups.md） を起点に再開）。
 
 **Phase 3 移植時の規律（2026-07-13 追加。Phase 3-c で「Vision one-shot と Navigator 初期準備の並行起動」
 という旧経路に無い挙動を発明した結果、スピナー残留・フォーカス喪失・空パネル残留の競合バグが
 発生した教訓のルール化）:**
 1. **忠実移植の原則**: Phase 3 の間は挙動の変更・最適化・先回り（プリウォーム等）を一切禁止。
    旧経路の挙動を 1:1 で写すだけ。改善のアイデアは
-   [navigator-stabilization-followups.md](navigator-stabilization-followups.md) に書いて
+   [copilot-challenge-3.md](copilot-challenge-3.md)（旧: old/navigator-stabilization-followups.md） に書いて
    Phase 4 パリティ達成後に別トラックでやる。
 2. **モード完了ゲート**: 1 モード = 実装 → フラグ OFF/ON の A/B 実機比較 → 差分ゼロ →
    **コミット** → 次のモードへ。検証とコミットの先送り禁止（未コミットの複数モード同時進行は
@@ -209,7 +209,7 @@ GP-03〜19 を新経路の正式パリティ確認として通す）
 - [x] main へマージ（`8977f57`。web / Supabase は統合前差分ゼロ）
 
 次の開発トラックは
-[navigator-stabilization-followups.md](navigator-stabilization-followups.md)。main 統合後、
+[copilot-challenge-3.md](copilot-challenge-3.md)（旧: old/navigator-stabilization-followups.md）。main 統合後、
 `feature/copilot-accuracy` でモデル選定と画面遷移検出の検証から再開する。
 
 ## 5. 旧計画からの引き継ぎ対応表

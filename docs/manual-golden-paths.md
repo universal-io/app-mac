@@ -406,9 +406,9 @@ Persona/Relationship カード（メモリ機能, GP-23）が有効な場合と�
   ハイライト（赤枠）される。
 - 2ターン目も会話履歴を踏まえた回答が返る（マルチターンの文脈保持）。
 - 画面内に対象が見えている質問には、なるべく毎回ハイライトが付く
-  （navigator-copilot-plan.md の Phase 1 で修正済みの想定挙動）。
+  （old/navigator-copilot-plan.md の Phase 1 で修正済みの想定挙動・経緯参照）。
 
-**壊れやすさ**: `docs/navigator-copilot-plan.md` に記載の通り、フォローアップターンでマーカーが
+**壊れやすさ**: `docs/old/navigator-copilot-plan.md` に記載の通り、フォローアップターンでマーカーが
 出ない/誤った要素にハイライトが付く既知の精度課題がある（重複ラベルの誤特定など）。完全一致しない
 ことがあっても「機能自体が動くか」を優先して確認し、精度の粗さは記録に留める。
 
@@ -434,14 +434,18 @@ Persona/Relationship カード（メモリ機能, GP-23）が有効な場合と�
 - **パネルの外をクリックしてもコパイロットモードが終了しない**（`handleResignActive` が
   copilot 中は無効化されている）。これは意図的な仕様。
 
-**壊れやすさ**: `docs/navigator-copilot-plan.md` の直接原因として記録された「パネル復帰
+**壊れやすさ**: `docs/old/navigator-copilot-plan.md` の直接原因として記録された「パネル復帰
 （`handleResignActive` → `closePanel`）」問題がコパイロット導入で迂回された経緯がある。
 `AppDelegate.handleResignActive()` の `guard ... != .copilot` 分岐が壊れると、外クリックのたびに
 パネルが閉じてコパイロットが機能しなくなる重大リグレッションになるため必ず確認する。
 再スキャン判定は暫定実装（OCR joinedText が前回と同じなら1回だけ再取得）のため、画面が変化したのに
-「変化なし」と判定されるケースがある（`docs/navigator-stabilization-followups.md`）。
+「変化なし」と判定されるケースがある（`docs/old/navigator-stabilization-followups.md`）。
 
 ### v4 shadow追加観測（次回実施、2026-07-14時点は未実施）
+
+> ⚠️ 書き換え予約（2026-07-15）: 本ブロックは pre-pivot の v4 shadow（Grounder/Verifier
+> 比較）が観測対象。ワンコール新エンジン（copilot-challenge-3.md §5）への切替時に、
+> 新契約（構造化単一応答・candidate ID・fail-loud）の観測項目へ書き換えること。
 
 **追加前提**: `0005`/`0006` migration、Run署名鍵、`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`を
 正本記載の順で適用済み。GA4の「訪問者を国や地域別に見たい」経路を使う。
@@ -473,7 +477,7 @@ Grounder comparison、Verifier status。スクリーンショット/OCR/candidat
 - 最終ステップ完了時は、案内ではなく目的の答え（例:「mobile は◯◯件、△△%です」）が示され、
   通常パネルに戻って結果が見える。
 
-**壊れやすさ**: `docs/navigator-stabilization-followups.md` に明記の既知の弱点:
+**壊れやすさ**: `docs/old/navigator-stabilization-followups.md` に明記の既知の弱点:
 「copilot の終了状態が弱い。完了、停滞、再確認待ちを明示する終端状態が未実装」「案内完了時の
 自動クローズか完了表示+閉じる導線かが未定」。**現状は完了しても自動で閉じない/完了表示が
 弱い可能性がある**——ここでは「現状の挙動をそのまま記録する」ことが目的であり、必ずしも
@@ -677,9 +681,9 @@ Task キャンセル・セッション破棄・世代無効化（foundation-rebu
 ## 付記: 未カバー・意図的に対象外の項目
 
 - パフォーマンス計測（初トークン ≦1.5秒 等の定量目標）は本チェックリストの対象外
-  （`docs/navigator-copilot-plan.md` §5 の計測領域）。
+  （`docs/old/navigator-copilot-plan.md` §5 の計測領域）。
 - 精度チューニング（ナビゲーション文言の質、ステップ数の妥当性）は
-  `docs/navigator-stabilization-followups.md` の "Tuning later" に記録済みのため、本チェックリストは
+  `docs/old/navigator-stabilization-followups.md` の "Tuning later" に記録済みのため、本チェックリストは
   「機能が動くか」に絞り、精度の良し悪しは対象外とする。
 - 配布・公証・DMG 経路（`tools/release.sh`）はこのチェックリストでは扱わない（別途リリース手順で
   検証）。

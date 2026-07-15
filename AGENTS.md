@@ -4,7 +4,7 @@
 
 1. コードやドキュメントに触る前に **[docs/README.md](docs/README.md)（ドキュメント索引）を読む**。
    どのファイルが正本で、どれがアーカイブかはそこが唯一の答え。
-2. 現行の開発正本は [docs/navigator-stabilization-followups.md](docs/navigator-stabilization-followups.md)。
+2. 現行の開発正本は [docs/copilot-challenge-3.md](docs/copilot-challenge-3.md)（第3次挑戦）。
    作業の開始・完了・方針変更は**同じコミットで**この正本に反映する。
 3. ドキュメント管理ルール（増やすなら畳む・索引登録必須・old/ 運用）は
    docs/README.md の「ドキュメント管理ルール」に従う。**新規 .md の無断作成は禁止**。
@@ -24,12 +24,11 @@ Rules:
 - If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `feature/copilot-accuracy`
-
-Branch origin:
-- foundation rebuild merged into `main` as `8977f57`
-- `feature/copilot-accuracy` branched from integrated main after close commit `fdb8efb`
+- `main`（`feature/copilot-accuracy` は 2026-07-14 に main へ統合済み。以後の
+  修正は短命の fix/feat ブランチ → main マージで進行）
 
 Current operational note:
-- The foundation rebuild passed GP-01〜27 and was integrated into main on 2026-07-13.
-- After integration, continue Copilot model/workflow evaluation in this worktree.
+- 2026-07-15: Navigator/Copilot をワンコール・アーキテクチャへピボット
+  （docs/copilot-challenge-3.md、tag `pre-one-call-pivot-20260715`）。
+- 実装凍結中: 第3次挑戦ドキュメントのオーナー確定まで、Navigator エンジンの
+  新規実装は開始しない。

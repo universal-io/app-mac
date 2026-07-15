@@ -11,8 +11,8 @@ Context解決軸として定義。M4 の実装集中は維持）
 関連ドキュメント:
 - [README.md（ドキュメント索引）](README.md) — 全ドキュメントの一覧と役割。**まずここを見る**
 - [foundation-rebuild-plan.md](foundation-rebuild-plan.md) — 現行の開発正本（基盤作り直し）
-- [navigator-copilot-plan.md](navigator-copilot-plan.md) — **Navigator/Copilot（現在の中核機能）の設計正本**。
-  M4 完了後の 2026-07-06〜07 に追加され、Vision のキャプチャ後の既定挙動を置き換えた
+- [copilot-challenge-3.md](copilot-challenge-3.md) — **Navigator/Copilot（現在の中核機能）の正本**。
+  2026-07-15 のワンコール・ピボット後の設計空間・判断・ロードマップ・UX仕様
 - [api-contract.md](api-contract.md) — API 契約の正本
 - [old/implementation-roadmap.md](old/implementation-roadmap.md) / [old/auth-billing-infra-plan.md](old/auth-billing-infra-plan.md) — アーカイブ（経緯資料）
 - [../README.md](../README.md) — 現行実装（Bomb Squad 世代）の仕様
@@ -213,8 +213,11 @@ RunはVision専用の会話履歴ではなく、ユーザーが承認しなが�
   run中に別tenantや無関係な最新packへ暗黙切替しない。再計画はrevisionを上げた明示イベントにする。
 - active/terminal runはいずれも最終操作から24時間以内に失効・purgeする。長期の品質分析は本文を
   持たないaggregate traceと、明示同意・redaction済みeval fixtureへ分離する。
-- Copilotのstep advanceはtyped postconditionを用いるrule-first Verifierが確定する。曖昧時だけ
-  modelへescalateし、自由文回答やclient markerを状態の根拠にしない。
+- Copilotのstep advanceは、クリック後の新規captureという独立証拠に基づく次ターンの判断で
+  確定する（2026-07-15 ピボット。独立Verifierロールと信頼度ゲートは廃止、stale capture等の
+  データ整合性検査は維持。正: [copilot-challenge-3.md](copilot-challenge-3.md) §5）。
+  自由文回答やclient markerを状態の根拠にしない原則は不変。typed postcondition（レシピ）は
+  後から載せる精度レイヤー。
 
 実装原則:
 - **fine-tuning はしない**。構造化カード（Markdown）のプロンプト注入＋類似実例の few-shot 検索
@@ -297,7 +300,7 @@ RunはVision専用の会話履歴ではなく、ユーザーが承認しなが�
 ## 4. 現状コードベースの地図（実装者向け）
 
 > 本表は 2026-07-13 の新中枢切替後を反映。Navigator/Copilot のUX詳細は
-> [navigator-copilot-plan.md](navigator-copilot-plan.md)、基盤作り直しの経緯は
+> [copilot-challenge-3.md](copilot-challenge-3.md) §7.1、基盤作り直しの経緯は
 > [foundation-rebuild-plan.md](foundation-rebuild-plan.md) を参照。
 
 リポジトリ: `git@github.com:universal-io/app-mac.git`（ローカル: `~/projects/universal-io/app-mac`。
@@ -677,7 +680,7 @@ M3 の Gateway 移行時にサーバー側へ移す。
 > Navigator v3 以降、キャプチャ直後の既定挙動は Navigator セッション（軽い現状認識 →
 > 質問チャット → コパイロット）に置き換わり、本節のフル解釈フローは Navigator 利用不可時の
 > フォールバックに降格した**。現在の挙動の正本は
-> [navigator-copilot-plan.md](navigator-copilot-plan.md)、コードの正は
+> [copilot-challenge-3.md](copilot-challenge-3.md)、コードの正は
 > `ReviewViewModel.enterVisionMode`。本節を「現在の Vision の仕様」として移植・実装しないこと
 > （foundation-rebuild-plan.md §3 移植規律 6 の事故事例参照）。
 

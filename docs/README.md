@@ -1,7 +1,8 @@
 # ドキュメント索引（単一の入口）
 
-最終更新: 2026-07-14（Copilot外部技術レビューを現行開発正本・Navigator設計・API契約・
-全体アーキテクチャへ統合。Run/Verifier/traceの正本を既存文書へ集約し、新規文書は増やしていない）
+最終更新: 2026-07-15（Navigator/Copilot をワンコール・アーキテクチャへピボット。
+copilot-challenge-3.md を唯一の Navigator 正本とし、前身2文書は内容を吸収して old/ へ。
+ピボット直前の状態は tag `pre-one-call-pivot-20260715`）
 
 > 🔴 **仕様の優先順位**: 2026-07-13 に新 `SessionCoordinator` 経路へ切替済みで、現在の
 > `BombSquad/Core/` が実装の正。Phase 3 の移植パリティを再確認する場合だけ、削除直前の旧経路を
@@ -14,7 +15,7 @@
 
 1. [../README.md](../README.md) — 製品と現行実装の仕様
 2. このファイル — どのドキュメントが正本かを把握
-3. [navigator-stabilization-followups.md](navigator-stabilization-followups.md) — **今やっている作業の正本**
+3. [copilot-challenge-3.md](copilot-challenge-3.md) — **今やっている作業の正本**（第3次挑戦）
 4. 作業対象に応じて下表の該当ドキュメント
 
 ## 正本（living documents — 役割ごとに1つだけ）
@@ -25,8 +26,7 @@
 | [manual-golden-paths.md](manual-golden-paths.md) | 手動検証チェックリスト（GP-01〜27）。フェーズ完了ごとに実施 | 現役 |
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョン・アーキテクチャ・マイルストーン（M1〜M5）の正本 | 現役 |
 | [api-contract.md](api-contract.md) | クライアント⇔Gateway の API 契約の正本 | 現役 |
-| [navigator-copilot-plan.md](navigator-copilot-plan.md) | Navigator/Copilot 機能の設計正本 | 現役 |
-| [navigator-stabilization-followups.md](navigator-stabilization-followups.md) | **現行開発の正本**。Copilot のモデル選定・画面遷移検出・精度検証 | 進行中 |
+| [copilot-challenge-3.md](copilot-challenge-3.md) | **現行開発の正本**。Navigator/Copilot の設計空間・CTO判断・反復ロードマップ・UX仕様（§7.1） | 進行中（アイデア段階） |
 
 ## 参照資料（安定・変更頻度低）
 
@@ -44,6 +44,8 @@
 | [old/implementation-roadmap.md](old/implementation-roadmap.md) | 旧実装ロードマップ。凍結済みで現状と不一致 → 後継: foundation-rebuild-plan.md |
 | [old/auth-billing-infra-plan.md](old/auth-billing-infra-plan.md) | 認証・課金の設計草案 → 後継: api-contract.md（契約）+ 実装そのもの |
 | [old/foundation-recovery-handoff.md](old/foundation-recovery-handoff.md) | ビッグバン失敗からのリカバリ記録（クローズ） → 後継: foundation-rebuild-plan.md |
+| [old/navigator-copilot-plan.md](old/navigator-copilot-plan.md) | v3設計正本（第1次挑戦）。UX仕様・却下案・教訓は吸収済み → 後継: copilot-challenge-3.md |
+| [old/navigator-stabilization-followups.md](old/navigator-stabilization-followups.md) | v4精度計画（第2次挑戦）とピボット決定の記録 → 後継: copilot-challenge-3.md |
 
 リポジトリに無い歴史資料: 旧リファクタリング計画 `foundation-redesign-plan.md` は
 `git show backup/foundation-bigbang-broken-bc1070e:docs/foundation-redesign-plan.md` で参照。
