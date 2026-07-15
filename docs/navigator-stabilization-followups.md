@@ -1,6 +1,6 @@
 # Navigator / Copilot Accuracy Plan
 
-最終更新: 2026-07-14 ／ ステータス: **進行中**（`main`へ統合済み。v4 GA4実画面shadow開始可能）
+最終更新: 2026-07-15 ／ ステータス: **進行中**（`main`へ統合済み。v4 GA4実画面shadow開始可能）
 
 基盤リファクタ完了後の**現行開発の正本**。現在の Copilot は機能導線は動くが、
 案内精度と画面遷移待ちが実用水準に達していない。場当たり的なプロンプト修正ではなく、
@@ -94,6 +94,8 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
 - ルールで一意に判定できればモデルを呼ばない。矛盾・情報不足時だけ独立Verifier modelへ送り、
   `verified / not_changed / ambiguous / blocked / complete` のstrict schemaで返す。
   モデル判定だけで危険操作やstep advanceを確定しない。
+  （2026-07-15改訂: typed postconditionが無いstepも同じ独立Verifier modelへ送る汎用judgmentへ
+  フォールバックする。「空条件は必ずambiguous」は撤回。詳細は§0.7。）
 - Copilot帯はTaskとVerifier結果をcode/templateで表示する。決定済みの次stepを自然文へ直すためだけの
   Renderer LLMは置かず、自由文本文や `[[step:done]]` を状態遷移の入力にしない。
 
@@ -120,6 +122,28 @@ projectionだけを先に実装し、`vision tenant` や `navigator user pack` �
   二重実装を残さない。
 - Pack v1の実装範囲はGA4合格まで `id/version/match/ui_map/recipes/golden_cases` に凍結する。
   typed pre/postconditionはrecipe内に含めるが、tenant overlay、RAG、fine-tuning、管理UIは増やさない。
+
+### 0.7 汎用ファースト方針への転換（2026-07-15、オーナー決定）
+
+§0.6で採用した「空条件は必ずambiguous」（モデルへも送らない）を撤回する。実運用では
+GA4の「デバイス別」のようにrecipeのtyped postcondition整備が追いついていない経路で
+Verifierが常にambiguousを返し、Renderer側が`needs_confirmation` / `safe_to_prompt=false`へ
+倒れてhighlightまで抑止され、汎用ナビゲーションそのものが機能しなくなっていた。製品方針は
+「未対応領域でも動く汎用Visionが土台、Pack/レシピは後から載る精度レイヤー」（§0.5）であり、
+上記の実装はこの優先順位を逆転させていた。
+
+- stepにtyped postconditionが無い（空配列の）場合も、rule証拠が不足／矛盾する既存の
+  ambiguous model escalationと同じ経路で独立Verifier modelへ送る。入力はpostconditionsの
+  代わりにgoal・step verbal・step targetを渡し、client側が現在turnのafterキャプチャ画像を
+  observationと一緒に送っていれば、その画像も添付する（`navigate-model-verifier.ts`の
+  `GenericVerifierContext`）。
+- 不安定capture（`transition_state !== "stable"`）・capture scope不一致は従来どおりmodelへ
+  送らない。この安全条件は、rule評価で不安定／scope不一致チェックを空postconditionチェックより
+  前に置くことで維持する（`navigate-verifier.ts`の`verifyPostconditions`）。
+- trace/usageの`verifier_source`に`model_generic`を追加し、typed postconditionを伴う既存の
+  `model`判定と区別できるようにする（`navigate-model-verifier.ts` / `navigate-run-verifier.ts`）。
+- typed postconditionがあるstepの挙動は変更しない。rule-firstのまま、rule証拠が不足・矛盾する
+  時だけ独立Verifier modelへ送る既存契約を維持する。
 
 ### 個別最適化と fine-tuning の境界
 
@@ -175,7 +199,10 @@ Renderer対象Grounderを構造化データだけでshadow完走でき、従来g
 
 - [x] typed postcondition / rule-first純粋契約: URL/title、candidate出現・消失・state、environment変化を
   strict schema化。stable・同一capture scopeだけを決定論評価し、verified/not_changed/ambiguous/
-  blocked/completeと非本文reason code、evidence candidate IDを返す。空条件は必ずambiguous。
+  blocked/completeと非本文reason code、evidence candidate IDを返す。
+  （2026-07-15改訂: 当初は「空条件は必ずambiguous」でmodelへも送らなかったが、§0.7の
+  オーナー決定によりtyped postconditionが無いstepも独立Verifier modelの汎用judgmentへ
+  フォールバックする。不安定capture・scope不一致の安全gateは空条件チェックより前段に残す。）
 - [x] Pack v1 ID接続: `pack_version / recipe_id / step.id`を固定。v4 PlannerのID選択からGatewayが
   正規stepとpostconditionを復元し、ID創作・逆順・別recipe混在を拒否する。GA4国・地域経路へ
   URL/title/candidate根拠を付与し、DB用`0006_harness_pack_versions.sql`と組み込みfallbackを揃えた。
@@ -183,10 +210,13 @@ Renderer対象Grounderを構造化データだけでshadow完走でき、従来g
   認証scope付きrowとの一致を確認してから、現在stepのpostconditionを最新Observationへ適用する。
   status/reason/evidence件数をtrace、構造化結果をSSEへ返すが、Run revisionとv3 Taskは更新しない。
   検証不能は`STATE_FALLBACK`で従来判定へ移った理由を表示し、改ざん・入力片落ちはfail-closed。
-- [x] ambiguous model escalation: stable・同一scopeでもrule証拠が不足／矛盾する時だけ独立Verifier roleを
-  strict schemaで呼び、rule判定とmodelのroute/token/resultを分離してtraceする。不安定capture、
-  scope変更、空条件はmodelへ送らない。role失敗／model fallbackは警告表示し、model判定単独では
-  危険操作もstep advanceも確定しない。役割env未設定時はmain modelを継承する。
+- [x] ambiguous model escalation: stable・同一scopeでもrule証拠が不足／矛盾する時、または
+  typed postconditionが無い（空条件の）stepの時だけ独立Verifier roleをstrict schemaで呼び、
+  rule判定とmodelのroute/token/resultを分離してtraceする。空条件のフォールバックはgoal・
+  step verbal/targetと、送られていればafterキャプチャ画像をmodelへ渡し、`verifier_source`に
+  `model_generic`を残して既存のtyped postcondition経路（`model`）と区別する（2026-07-15、§0.7）。
+  不安定capture・scope変更は引き続きmodelへ送らない。role失敗／model fallbackは警告表示し、
+  model判定単独では危険操作もstep advanceも確定しない。役割env未設定時はmain modelを継承する。
 
 #### 段階E: GA4縦切り（進行中）
 

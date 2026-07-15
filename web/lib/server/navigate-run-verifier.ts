@@ -47,6 +47,10 @@ export async function verifyNavigateRunInShadow(args: {
   snapshot: unknown;
   before: VisionObservation;
   after: VisionObservation;
+  /** The current turn's screen capture, when the client sent one alongside
+   * the after Observation. Only used for the generic (no-postcondition)
+   * model fallback below; the rule-ambiguous escalation path is unchanged. */
+  afterImageDataURL?: string;
 }): Promise<NavigateRunVerificationExecution> {
   const env = getServerEnv();
   if (!env.navigateV4Enabled) {
@@ -90,9 +94,14 @@ export async function verifyNavigateRunInShadow(args: {
     rendering: renderNavigateRunInShadow(snapshot, ruleResult),
     notices: [],
   };
-  // Unstable/scope-changed/conditionless observations are capture-contract
-  // failures, not model questions. A model must never reason around them.
-  if (ruleResult.reason !== "INSUFFICIENT_OR_CONFLICTING_EVIDENCE") {
+  // Unstable/scope-changed observations are capture-contract failures, not
+  // model questions. A model must never reason around them. A step with no
+  // typed postcondition, however, is escalated too: owner decision
+  // 2026-07-15 makes generic Vision judgment the base layer and recipes an
+  // added precision layer, so "no postcondition" must not mean "always
+  // ambiguous" (docs/navigator-stabilization-followups.md §0.6).
+  const isGenericFallback = ruleResult.reason === "NO_POSTCONDITIONS";
+  if (ruleResult.reason !== "INSUFFICIENT_OR_CONFLICTING_EVIDENCE" && !isGenericFallback) {
     return base;
   }
 
@@ -128,6 +137,14 @@ export async function verifyNavigateRunInShadow(args: {
       after: args.after,
       postconditions: step.postconditions,
       completesTask,
+      generic: isGenericFallback
+        ? {
+            goal: snapshot.plan.task.goal,
+            stepVerbal: step.verbal,
+            stepTarget: step.target,
+            afterImageDataURL: args.afterImageDataURL,
+          }
+        : undefined,
     });
     if (!model.result) {
       notices.push(roleDegradedNotice(

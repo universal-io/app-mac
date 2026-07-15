@@ -141,6 +141,65 @@ describe("Navigator route Run shadow verification", () => {
       modelOutputTokens: 30,
     });
   });
+
+  test("escalates a step with no typed postcondition to the generic model fallback", async () => {
+    // Owner decision 2026-07-15: generic Vision judgment is the base layer,
+    // so an empty postcondition list must reach the independent Verifier
+    // model instead of being returned as ambiguous without a model call.
+    mocks.verifySnapshot.mockReturnValue({
+      run_id: run.id,
+      current_step: 0,
+      plan: {
+        task: {
+          goal: "GA4でユーザーのデバイス別内訳を確認する",
+          steps: [{
+            verbal: "デバイスカテゴリのレポートを開く",
+            target: "デバイスカテゴリ",
+            postconditions: [],
+          }],
+        },
+      },
+    });
+    mocks.verifyWithModel.mockResolvedValue({
+      result: {
+        source: "model_generic",
+        status: "verified",
+        reason: "MODEL_POSTCONDITIONS_SUPPORTED",
+        evidenceCandidateIds: ["ax:country"],
+        confidence: 0.82,
+      },
+      inputTokens: 80,
+      outputTokens: 20,
+    });
+    const before = observation([{ id: "ax:overview", label: "概要" }]);
+    const after = observation([{ id: "ax:country", label: "国" }]);
+
+    const result = await verifyNavigateRunInShadow({
+      ...auth,
+      snapshot: { signed: true },
+      before,
+      after,
+      afterImageDataURL: "data:image/png;base64,AAAA",
+    });
+
+    expect(result.ruleResult).toMatchObject({
+      source: "rule",
+      status: "ambiguous",
+      reason: "NO_POSTCONDITIONS",
+    });
+    expect(mocks.verifyWithModel).toHaveBeenCalledWith(expect.objectContaining({
+      postconditions: [],
+      generic: {
+        goal: "GA4でユーザーのデバイス別内訳を確認する",
+        stepVerbal: "デバイスカテゴリのレポートを開く",
+        stepTarget: "デバイスカテゴリ",
+        afterImageDataURL: "data:image/png;base64,AAAA",
+      },
+    }));
+    // (b) the model's verified verdict becomes the final result.
+    expect(result.result).toMatchObject({ source: "model_generic", status: "verified" });
+    expect(result.modelAttempted).toBe(true);
+  });
 });
 
 function observation(

@@ -20,6 +20,18 @@ describe("Navigator model Verifier contract", () => {
     });
   });
 
+  test("tags the generic (no-postcondition) fallback with model_generic", () => {
+    expect(parseModelVerifierResponse(JSON.stringify({
+      status: "verified",
+      reason: "MODEL_POSTCONDITIONS_SUPPORTED",
+      evidence_candidate_ids: ["ax:country"],
+      confidence: 0.8,
+    }), allowed, false, "model_generic")).toMatchObject({
+      source: "model_generic",
+      status: "verified",
+    });
+  });
+
   test("rejects invented evidence, mismatched reasons, and surrounding prose", () => {
     expect(parseModelVerifierResponse(JSON.stringify({
       status: "verified",
