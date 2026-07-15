@@ -143,7 +143,13 @@ export async function* runNavigateStream(
   input: NavigateEngineInput,
 ): AsyncGenerator<NavigateStreamEvent> {
   const env = getServerEnv();
-  const firstTurn = isAutoFirstTurn(input.messages);
+  // A Copilot turn always carries `task` (docs/navigator-copilot-plan.md
+  // §3-a), including its history-free progress-capture turns, which collapse
+  // to the same "single textless image message" shape as the real hotkey
+  // auto first turn. Task presence is the only reliable disambiguator: it
+  // must route to the main model with full Task context, never the fast
+  // recognition-only route.
+  const firstTurn = isAutoFirstTurn(input.messages) && !input.task;
 
   // Vendor staging: fast model for the first-turn one-liner when its key is
   // configured, main model otherwise and for every follow-up turn.
@@ -205,7 +211,7 @@ export async function* runNavigateStream(
   const providerMessages: Array<Record<string, unknown>> = [
     { role: "system", content: systemPrompt(input.language, harness, input.hints, input.task) },
     ...input.messages.map((message, index) =>
-      providerMessage(message, index === 0, input.messages.length === 1),
+      providerMessage(message, index === 0, input.messages.length === 1, Boolean(input.task)),
     ),
   ];
   const body: Record<string, unknown> = {
@@ -930,6 +936,7 @@ function providerMessage(
   message: NavigateMessage,
   isFirst: boolean,
   soloTurn: boolean,
+  hasTask: boolean,
 ): Record<string, unknown> {
   if (message.role === "assistant") {
     return { role: "assistant", content: message.text ?? "" };
@@ -940,10 +947,15 @@ function providerMessage(
   // A mid-conversation image is always a fresh look at the screen; the
   // verification protocol applies whether or not the turn carries text
   // (an executed-action note rides as text on the capture turn).
+  // A Copilot progress-capture turn is textless and solo (history-free
+  // contract), the same shape as the real auto first turn — `hasTask` tells
+  // them apart so an active Task always gets the recapture/step protocol,
+  // never the "one-line recognition, no markers" first-turn instruction.
   const pieces: string[] = [];
   if (text) pieces.push(text);
-  if (isFirst && !text) pieces.push(soloTurn ? FIRST_TURN_INSTRUCTION : FIRST_TURN_HISTORY_NOTE);
-  else if (!isFirst && message.imageDataURL) pieces.push(RECAPTURE_INSTRUCTION);
+  if (isFirst && !text && !hasTask) {
+    pieces.push(soloTurn ? FIRST_TURN_INSTRUCTION : FIRST_TURN_HISTORY_NOTE);
+  } else if (!isFirst && message.imageDataURL) pieces.push(RECAPTURE_INSTRUCTION);
   else if (!text) pieces.push(RECAPTURE_INSTRUCTION);
   parts.push({ type: "text", text: pieces.join("\n\n") });
   const ocr = message.ocrText?.trim();
