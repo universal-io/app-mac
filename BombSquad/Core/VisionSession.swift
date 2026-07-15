@@ -482,6 +482,12 @@ final class VisionSession: ObservableObject {
         )
         navigatorTask = Task { [weak self] in
             guard let self else { return }
+            // Cover the OCR/image-prep window with the "working" state so the
+            // strip doesn't fall back to the previous step's stale instruction
+            // (CoreCopilotStripView.currentInstruction) before this turn lands.
+            if autoRun {
+                self.isNavigating = true
+            }
             async let imageAsync = GatewayNavigateClient.preparedImage(from: attachment.url)
             async let ocrAsync = ScreenTextRecognizer.recognize(at: attachment.url)
             let observationSnapshot = await observationTask.value
