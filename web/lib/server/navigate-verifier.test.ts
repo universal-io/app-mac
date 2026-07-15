@@ -133,4 +133,21 @@ describe("rule-first Navigator Verifier", () => {
       completesTask: true,
     })).toMatchObject({ status: "ambiguous", reason: "NO_POSTCONDITIONS" });
   });
+
+  test("keeps the capture safety gate ahead of NO_POSTCONDITIONS", () => {
+    const before = observation();
+    // Owner decision 2026-07-15: an empty condition list now escalates to
+    // the generic model Verifier (navigate-run-verifier.ts), but unstable or
+    // scope-changed captures must still short-circuit to ambiguous first.
+    expect(verifyPostconditions({
+      before,
+      after: observation({ transition_state: "settling" }),
+      postconditions: [],
+    })).toMatchObject({ status: "ambiguous", reason: "OBSERVATION_UNSTABLE" });
+    expect(verifyPostconditions({
+      before,
+      after: observation({ capture_scope: "region" }),
+      postconditions: [],
+    })).toMatchObject({ status: "ambiguous", reason: "CAPTURE_SCOPE_CHANGED" });
+  });
 });

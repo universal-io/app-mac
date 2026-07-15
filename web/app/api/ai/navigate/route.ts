@@ -208,7 +208,8 @@ export async function POST(request: Request): Promise<Response> {
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
 
-    const latestObservation = messages.find((message) => message.observation)?.observation;
+    const latestObservationMessage = messages.find((message) => message.observation);
+    const latestObservation = latestObservationMessage?.observation;
     let previousObservation: VisionObservation | undefined;
     if (body.input?.run_snapshot !== undefined) {
       const parsedPrevious = visionObservationSchema.safeParse(
@@ -272,6 +273,10 @@ export async function POST(request: Request): Promise<Response> {
             snapshot: body.input.run_snapshot,
             before: previousObservation,
             after: latestObservation,
+            // The current turn's screen capture, when the client sent one
+            // alongside the observation. Used only by the generic (no
+            // typed postcondition) model verifier fallback.
+            afterImageDataURL: latestObservationMessage?.imageDataURL,
           }
         : undefined,
       runShadowInactiveReason:
@@ -299,6 +304,7 @@ type StreamingResponseInput = {
     snapshot: unknown;
     before: VisionObservation;
     after: VisionObservation;
+    afterImageDataURL?: string;
   };
   runShadowInactiveReason?: string;
 };
@@ -515,6 +521,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
                   reason: verification.result.reason,
                   evidence_candidate_ids: verification.result.evidenceCandidateIds,
                   confidence: verification.result.source === "model"
+                    || verification.result.source === "model_generic"
                     ? verification.result.confidence
                     : null,
                 }

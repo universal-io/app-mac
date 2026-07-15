@@ -37,8 +37,12 @@ export type ModelVerifierReason =
   | "MODEL_TARGET_BLOCKED"
   | "MODEL_INSUFFICIENT_EVIDENCE";
 
+/** "model_generic" marks a result reached without a typed postcondition
+ * (owner decision 2026-07-15: generic Vision judgment is the base layer,
+ * recipes/postconditions are an added precision layer). See
+ * docs/navigator-stabilization-followups.md §0.6. */
 export type ModelVerifierResult = {
-  source: "model";
+  source: "model" | "model_generic";
   status: RuleVerifierStatus;
   reason: ModelVerifierReason;
   evidenceCandidateIds: string[];
@@ -59,14 +63,17 @@ export function verifyPostconditions(args: {
   completesTask?: boolean;
 }): RuleVerifierResult {
   const postconditions = navigatePostconditionsSchema.parse(args.postconditions);
-  if (postconditions.length === 0) {
-    return result("ambiguous", "NO_POSTCONDITIONS");
-  }
+  // Capture-contract failures take priority over the postcondition check so a
+  // step with no typed postcondition still gets the same safety gate before
+  // it is offered to the generic model fallback (see navigate-run-verifier).
   if (args.after.transition_state !== "stable") {
     return result("ambiguous", "OBSERVATION_UNSTABLE");
   }
   if (args.before.capture_scope !== args.after.capture_scope) {
     return result("ambiguous", "CAPTURE_SCOPE_CHANGED");
+  }
+  if (postconditions.length === 0) {
+    return result("ambiguous", "NO_POSTCONDITIONS");
   }
 
   const checks = postconditions.map((condition) =>
