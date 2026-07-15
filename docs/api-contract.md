@@ -24,6 +24,7 @@ drift.
   - `POST /api/ai/transcribe` (2026-07-02, M3-B)
   - `POST /api/ai/memory/distill` (2026-07-02, M3-B)
   - `POST /api/ai/vision` (2026-07-02, M3-B)
+  - `POST /api/ai/screen-understanding` (2026-07-16, Challenge 3 isolated Vision MVP)
   - `GET/PUT /api/memory/cards` (2026-07-02, M3-B)
   - `POST /api/ai/navigate` (2026-07-06, Navigator v3 — 契約は下記「Navigate」節)
   - `GET /api/account` (アカウント要約＋quota)
@@ -466,6 +467,80 @@ any of this content.
 
 Usage events: `operation = memory_distill`, `unit_type = call`, token counts
 in `input_units` / `output_units`.
+
+## POST /api/ai/screen-understanding
+
+Added 2026-07-16 for the isolated Challenge 3 Vision-first MVP. This route is
+deliberately independent from `/api/ai/vision`, `/api/ai/navigate`, and every
+v3/v4 Navigator engine.
+
+Quality-ceiling configuration is fixed in code during Challenge 3:
+
+- provider/API: OpenAI Responses API
+- model: `gpt-5.6-sol`
+- image detail: `original`
+- reasoning effort: `max`
+- output budget: 25,000 tokens
+- fallback: none; any provider/model failure returns non-2xx
+
+### Request Body
+
+```json
+{
+  "request_id": "...",
+  "operation": "screen_understanding",
+  "input": {
+    "capture_id": "immutable-client-capture-id",
+    "image_base64": "（base64。最大4M文字）",
+    "media_type": "image/png",
+    "question": "この表は何を示していますか？",
+    "turns": [
+      { "role": "assistant", "text": "Google Analyticsのユーザー属性画面です。" },
+      { "role": "user", "text": "日本について教えてください。" }
+    ]
+  },
+  "preferences": { "output_language": "japanese" },
+  "client": { "platform": "macos", "app_version": "0.1.0" }
+}
+```
+
+- `capture_id` and `image_base64` are required. Every turn remains bound to
+  the same immutable capture until the user explicitly recaptures.
+- `question` is omitted for the initial observation. It is required by the
+  client for follow-up turns.
+- `turns` contains at most 20 text-only turns about that capture. The current
+  screenshot is sent on every request so model-side conversation state is not
+  authoritative.
+
+### Success Response
+
+```json
+{
+  "request_id": "...",
+  "capture_id": "immutable-client-capture-id",
+  "result": {
+    "mode": "observation | answer | clarification",
+    "message": "ユーザーへ表示する短い回答",
+    "observations": ["画面から直接確認できた事実"],
+    "uncertainties": ["画面からは断定できない点"]
+  },
+  "meta": {
+    "model_vendor": "openai",
+    "model_id": "gpt-5.6-sol",
+    "api": "responses",
+    "image_detail": "original",
+    "reasoning_effort": "max",
+    "fallback_used": false,
+    "latency_ms": 1234
+  }
+}
+```
+
+The client must treat a mismatched `capture_id`, any model other than
+`gpt-5.6-sol`, or `fallback_used != false` as a failed Challenge 3 turn.
+Usage events use `operation = screen_understanding` and retain only request
+metadata, token counts, effective model, and `capture_id`; image/question text
+is not persisted by this route.
 
 ## POST /api/ai/vision
 

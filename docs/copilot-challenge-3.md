@@ -1,6 +1,6 @@
 # 画面コパイロット 第3次挑戦 — 設計空間の全列挙と判断
 
-作成: 2026-07-15 ／ ステータス: **アイデア段階（確定仕様ではない）**
+作成: 2026-07-15 ／ 最終更新: 2026-07-16 ／ ステータス: **挑戦3 実装中**
 本書は Navigator/Copilot（視覚コパイロット機能）の**新しい正本**。前身の
 navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md（v4精度計画）は
 本書に総括を引き継いで old/ へ移す。
@@ -223,6 +223,19 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
   テスト合格は完了ではない。
 
 ### 挑戦3（本書の構成）
+
+開始記録（2026-07-16）:
+
+- 復帰点: tag `challenge-3-start`（main `93f35f7`）。
+- 開発branch: `experiment/copilot-challenge-3`。runtime feature flagで新旧を切り替えない。
+- 隔離境界: 新Gateway endpoint `/api/ai/screen-understanding` と新しいmacOS Session/Viewを
+  白紙実装する。既存`VisionSession`、`GatewayNavigateClient`、`/api/ai/navigate`、v3/v4 engineを
+  importしない。共有するのはPanelController、capture、画像表示、入力UI、認証、Gateway transport。
+- 最初のMVPは**Vision-first**: immutableな1枚のcaptureについて、短い初期理解を返し、
+  追加質問へ答えるところまで。candidate選択、ハイライト、クリック後進捗判定は、このMVPの
+  実画面成立を確認するまで接続しない。
+- 完了済み: fail-loudなGPT-5.6 Sol Responses API engine/endpointの実装を開始。固定条件は
+  `gpt-5.6-sol` / `detail: original` / `reasoning.effort: max` / 25,000 output tokens / fallbackなし。
 
 - **仮説**: 最高品質モデル1コール＋候補ID＋決定論外殻で、GA4級のWebアプリの
   「質問→案内→完了」が誤ハイライトなしで通る。
