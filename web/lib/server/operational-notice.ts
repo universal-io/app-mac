@@ -1,3 +1,6 @@
+// These operational notices are developer-facing diagnostics. Owner decision
+// 2026-07-15: they must be hidden or gated behind a developer setting before
+// public release; end users must never see them.
 export type OperationalNotice = {
   severity: "warning";
   code:

@@ -35,6 +35,10 @@ struct ErrorBanner: View {
 
 /// A successful request that recovered from an error must not look identical
 /// to a clean request. The user can dismiss the notice after reading it.
+///
+/// These operational notices are developer-facing diagnostics. Owner decision
+/// 2026-07-15: they must be hidden or gated behind a developer setting before
+/// public release; end users must never see them.
 struct OperationalNoticeBanner: View {
     let message: String
     let onDismiss: () -> Void

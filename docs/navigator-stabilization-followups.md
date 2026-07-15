@@ -145,6 +145,17 @@ Verifierが常にambiguousを返し、Renderer側が`needs_confirmation` / `safe
 - typed postconditionがあるstepの挙動は変更しない。rule-firstのまま、rule証拠が不足・矛盾する
   時だけ独立Verifier modelへ送る既存契約を維持する。
 
+### 0.8 OperationalNotice バナーの公開範囲（2026-07-15、オーナー決定）
+
+「署名済みステップの操作対象を開始できなかったため、ハイライトを表示しない安全な状態で案内
+しています。理由: 新旧の候補が矛盾したか、信頼度が基準未満でした。」等の OperationalNotice
+バナーは、開発期の精度計測用として意図的に画面へ残している（動作は変更しない）。一般公開前に
+は、開発者向け設定の背後へ隔離すること。ユーザー向け表示は「調べています…」程度の中立表現へ
+置き換えるか、非表示にする。実装箇所は Gateway側 `web/lib/server/operational-notice.ts` の
+`OperationalNotice` 型と、macOS側 `BombSquad/Core/GatewayClient.swift` の
+`OperationalNoticeCenter` および `BombSquad/Views/FoundationSharedViews.swift` の
+`OperationalNoticeBanner`。
+
 ### 個別最適化と fine-tuning の境界
 
 - UI構造、社内用語、操作手順、権限差、更新頻度の高い知識は Pack + RAG + recipe で扱う。
