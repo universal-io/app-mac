@@ -114,7 +114,7 @@ final class Challenge3VisionSession: ObservableObject {
     private func run(question: String?, priorTurns: [ScreenUnderstandingTurn]) {
         requestTask?.cancel()
         guard let client else {
-            errorMessage = "Challenge 3 Gatewayを利用できません。ログインとGateway設定を確認してください。"
+            errorMessage = "画面読み取りサービスを利用できません。ログインと接続設定を確認してください。"
             return
         }
 
@@ -175,8 +175,12 @@ final class Challenge3VisionSession: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
+#if DEBUG
                 self.errorMessage =
                     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+#else
+                self.errorMessage = "画面の読み取りに失敗しました。少し待ってからもう一度お試しください。"
+#endif
             }
         }
     }

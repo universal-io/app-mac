@@ -59,6 +59,7 @@ struct Challenge3VisionSessionView: View {
         HStack(spacing: 10) {
             Label("画面を読む", systemImage: "eye")
                 .font(.headline)
+#if DEBUG
             Text("Challenge 3")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.tint)
@@ -68,6 +69,7 @@ struct Challenge3VisionSessionView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
+#endif
             GatewayOverrideBadge()
             Spacer()
             FoundationManagementMenu()
@@ -90,6 +92,7 @@ struct Challenge3VisionSessionView: View {
                 .help("画像を移動・拡大する")
                 .accessibilityLabel("画像を移動・拡大する")
                 Spacer()
+#if DEBUG
                 Text(axStatus)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
@@ -98,6 +101,7 @@ struct Challenge3VisionSessionView: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
                     .help("固定capture ID")
+#endif
             }
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
@@ -113,6 +117,7 @@ struct Challenge3VisionSessionView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+#if DEBUG
             if let candidate = session.selectedCandidate {
                 Label(
                     "\(session.metadata?.route ?? "unknown") · \(candidate.id) · \(candidate.label)",
@@ -123,6 +128,7 @@ struct Challenge3VisionSessionView: View {
                 .lineLimit(1)
                 .help("選択経路・candidate ID・AXラベル")
             }
+#endif
         }
         .padding()
     }
@@ -193,6 +199,7 @@ struct Challenge3VisionSessionView: View {
                     .font(.body)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+#if DEBUG
                 if !turn.uncertainties.isEmpty {
                     ForEach(turn.uncertainties, id: \.self) { uncertainty in
                         Label(uncertainty, systemImage: "questionmark.circle")
@@ -200,6 +207,7 @@ struct Challenge3VisionSessionView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+#endif
             }
         }
     }

@@ -280,6 +280,19 @@ Copilot（後続段階）
   赤枠が対象より大きく画像左端へはみ出した原因は、rendererがAX矩形を横30%・縦45%膨張させ、
   画像境界へclampしていなかったこと。表示paddingを左右6 pt・上下4 ptへ固定し、画像内の安全領域へ
   clampするよう修正した。修正後の赤枠サイズは実画面再確認待ち。
+- Spot Vision劣化調査（2026-07-16）: 同じGA4系画面で案内文は概ね正しかったが、
+  `target_candidate_id = null`となり赤枠が出ず、「候補IDに対応する操作対象がない」という内部説明が
+  uncertaintiesとして表示された。Gatewayは`snapshot_vlm`で200を返しておりfallbackではない。
+  AX診断は250候補・402 ms・`candidate_limit`で、時間切れではなく候補上限による打切りだった。
+  収集対象に`AXStaticText / AXRow / AXCell`を含めていたため、GA4の表が候補枠を消費してサイドバーの
+  操作対象を落とし得ること、プロンプトがcandidate不在時に文章案内まで弱めていたことを原因と判定。
+- 劣化修正（2026-07-16）: AX候補をButton/Link/Tab/Menu/Input等の操作roleへ限定し、ラベルなしの
+  操作親配下にあるStaticTextだけは親roleを継承して採用する。上限を500へ拡張した。また、candidateが
+  無くても視覚的に根拠のある文章案内を維持し、message/uncertaintiesへAX・DOM・candidate ID等の
+  内部語を出さないよう契約を修正。route/model/AX診断/candidate ID/uncertaintiesと生の契約エラーは
+  Debug限定表示とし、Releaseでは回答・赤枠・一般ユーザー向けエラーだけを表示する。さらに内部語が
+  user-visible出力へ混入したモデル応答はGatewayで拒否する。web test 71件、対象lint、TypeScript、
+  Next production build、macOS Debug/Release buildが成功。実画面再確認待ち。
 
 - **仮説**: 1枚の固定画像・同時点のAX候補・会話履歴を単一VLMへ渡せば、モード切替や役職分割なしで
   Spot Visionの回答と画面内案内が成立し、その1ターンを再帰化してCopilotへ発展できる。

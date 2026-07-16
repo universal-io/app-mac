@@ -37,7 +37,7 @@ enum VisionObservationCaptureService {
 
     private enum Budget {
         static let maxNodes = 2_000
-        static let maxCandidates = 250
+        static let maxCandidates = 500
         static let deadline: TimeInterval = 1.0
         static let axMessagingTimeout: Float = 0.1
     }
@@ -46,7 +46,6 @@ enum VisionObservationCaptureService {
         "AXButton", "AXLink", "AXPopUpButton", "AXCheckBox", "AXRadioButton",
         "AXMenuItem", "AXMenuButton", "AXTab", "AXDisclosureTriangle",
         "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField",
-        "AXHeading", "AXStaticText", "AXRow", "AXCell",
     ]
 
     /// Resolves the target synchronously before our panel can alter focus, then
@@ -144,8 +143,8 @@ enum VisionObservationCaptureService {
         let deadline = Date().addingTimeInterval(Budget.deadline)
         var visited = 0
         var candidates: [VisionObservation.Candidate] = []
-        var stack: [(element: AXUIElement, parentLabel: String?)] = [
-            (root, nil),
+        var stack: [(element: AXUIElement, parentLabel: String?, actionRole: String?)] = [
+            (root, nil, nil),
         ]
 
         var truncatedReason: String?
@@ -170,14 +169,16 @@ enum VisionObservationCaptureService {
             let subrole = copyString(item.element, kAXSubroleAttribute) ?? ""
             let isSecure = subrole == "AXSecureTextField"
             let elementLabel = isSecure ? nil : label(for: item.element, role: role)
-            if candidateRoles.contains(role),
+            let directActionRole = candidateRoles.contains(role) ? role : nil
+            let inheritedActionRole = role == "AXStaticText" ? item.actionRole : nil
+            if let candidateRole = directActionRole ?? inheritedActionRole,
                let elementLabel,
                let frame = copyFrame(item.element),
                let normalizedRect = normalized(frame, within: captureRect) {
                 candidates.append(VisionObservation.Candidate(
                     id: "ax:\(visited - 1)",
                     source: "ax",
-                    role: normalizedRole(role),
+                    role: normalizedRole(candidateRole),
                     label: String(elementLabel.prefix(512)),
                     rect: normalizedRect,
                     parentLabel: item.parentLabel.map { String($0.prefix(512)) },
@@ -186,9 +187,10 @@ enum VisionObservationCaptureService {
             }
 
             let nearestParentLabel = elementLabel ?? item.parentLabel
+            let nearestActionRole = directActionRole ?? item.actionRole
             if let children = copyChildren(item.element) {
                 for child in children.reversed() {
-                    stack.append((child, nearestParentLabel))
+                    stack.append((child, nearestParentLabel, nearestActionRole))
                 }
             }
         }

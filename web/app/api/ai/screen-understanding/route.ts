@@ -20,7 +20,7 @@ const MAX_IMAGE_BASE64_CHARS = 4 * 1024 * 1024;
 const MAX_CAPTURE_ID_CHARS = 128;
 const MAX_TURNS = 20;
 const MAX_TURN_CHARS = 4_000;
-const MAX_CANDIDATES = 250;
+const MAX_CANDIDATES = 500;
 
 type ScreenUnderstandingRequestBody = {
   request_id?: string;

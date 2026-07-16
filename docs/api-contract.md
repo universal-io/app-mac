@@ -527,7 +527,7 @@ user-visible read/action mode and no secondary model route.
 ```
 
 - `capture_id` and `image_base64` are required on every turn. A follow-up accepts at
-  most 250 capture-fixed AX/DOM candidates.
+  most 500 capture-fixed AX/DOM candidates.
 - Every turn remains bound to the same immutable capture until the user explicitly recaptures.
 - `question` is omitted for the initial observation. It is required by the
   client for follow-up turns.

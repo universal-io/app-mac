@@ -62,7 +62,7 @@ describe("Challenge 3 screen understanding engine", () => {
       max_output_tokens: number;
       reasoning: { effort: string };
       text: { format: { type: string; strict: boolean } };
-      input: Array<{ content: Array<Record<string, unknown>> }>;
+      input: Array<{ content: Array<{ type: string; text?: string }> }>;
     };
     expect(body).toMatchObject({
       model: "gpt-5.6-luna",
@@ -76,6 +76,9 @@ describe("Challenge 3 screen understanding engine", () => {
       image_url: "data:image/png;base64,abc",
       detail: "original",
     });
+    expect(body.input[0].content[0].text).toContain(
+      "Never mention candidates, candidate IDs, AX, DOM",
+    );
   });
 
   test("fails loudly without trying another model", async () => {
@@ -108,6 +111,24 @@ describe("Challenge 3 screen understanding engine", () => {
     })).rejects.toThrow("did not match the Challenge 3 schema");
   });
 
+  test("rejects internal implementation vocabulary in user-visible output", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(providerResponse({
+      mode: "clarification",
+      message: "現在の候補IDには対応する操作対象がありません。",
+      observations: [],
+      uncertainties: ["AX候補が不足しています。"],
+      targetCandidateId: null,
+    })));
+
+    await expect(runScreenUnderstanding({
+      imageDataURL: "data:image/png;base64,abc",
+      question: "次は何をしたらいいですか？",
+      turns: [],
+      candidates: [],
+      language: "japanese",
+    })).rejects.toThrow("internal implementation vocabulary");
+  });
+
   test("uses the same screenshot and fixed candidates for action guidance", async () => {
     const fetchMock = vi.fn().mockResolvedValue(providerResponse({
       mode: "guide",
@@ -137,11 +158,14 @@ describe("Challenge 3 screen understanding engine", () => {
     expect(output.modelId).toBe(SCREEN_UNDERSTANDING_MODEL_ID);
     expect(output.result.targetCandidateId).toBe("ax:technology");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
-      input: Array<{ content: Array<{ type: string }> }>;
+      input: Array<{ content: Array<{ type: string; text?: string }> }>;
     };
     expect(body.input.flatMap((item) => item.content).some(
       (content) => content.type === "input_image",
     )).toBe(true);
+    expect(body.input[1].content[0].text).toContain(
+      "A missing target must never suppress or weaken the verbal guidance.",
+    );
   });
 
   test("rejects a model-selected candidate outside the supplied AX set", async () => {
