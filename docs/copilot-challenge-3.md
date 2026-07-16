@@ -108,8 +108,8 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
 | B5 | アプリ固有API（GA4 API等） | 最高精度 | 個別連携=ゼロインテグレーション違反。個社ハーネスの領域 |
 | B6 | ユーザー協働（見つからない時に人間に探させる/教えさせる） | 原理的限界の脱出口 | UX設計が必要。「確証がなければ止まる」の先の一手として有望、挑戦4以降の候補 |
 
-→ 当初案はB2+B3+B4を常にモデルへ渡す構成だったが、2026-07-16に用途別へ更新した。
-Visionは画像のみ、操作はAX候補から開始し、DOM/OCR/画像探索は候補欠落の実測後に一つずつ加える。
+→ Spot Visionは同一captureの画像とAXを固定する。初期コメントは画像中心、後続質問は同じ画像＋
+固定AX候補＋履歴を1コールへ渡す。DOM/OCRはAX候補欠落の実測後に一つずつ加える。
 
 ### 軸C: 位置決め（どこを光らせるか）
 
@@ -172,28 +172,29 @@ Visionは画像のみ、操作はAX候補から開始し、DOM/OCR/画像探索�
 
 ## 5. CTO判断（第3次挑戦の構成）
 
-**選択（2026-07-16更新）: 用途別センサー経路 × C3 × D2 × E2 × G1 × H2+H3**
+**選択（2026-07-16更新）: 固定snapshot単一経路 × C3 × D2 × E2 × G1 × H2+H3**
 
 ```
-安定キャプチャ（遷移検知で stale を排除）
-  ├─ Vision: 画像 → VLM → observation|answer|clarification
-  └─ Copilot: AX/DOM候補（画像なし）
-       ├─ 一意なラベル一致 → ax_exact（モデルなし）
-       ├─ 曖昧 → text-only LLM → ax_llm（提示されたcandidate IDのみ）
-       └─ 候補なし → ax_unavailable / clarification（自動画像fallbackなし）
-             ↓
-       candidate ID → 決定論的な矩形変換 → 拡大・赤枠
-             ↓
-       クリック・画面安定化 → 新captureで次ターン
+Spot Vision（1枚の固定capture）
+  ├─ 画像 → Luna VLM → 短い初期コメント
+  └─ AX収集を並列実行し、同一captureへ固定
+       ↓
+後続質問: 同じ画像 + 固定AX候補 + 履歴 → Luna VLM 1コール
+  出力: answer|guide|clarification + optional candidate ID
+       ↓ candidate IDがある場合のみ
+決定論的な矩形変換 → スクリーンショット拡大・赤枠
+
+Copilot（後続段階）
+  人間のクリック → 画面安定化 → 新しい固定snapshot → 同じ1ターンを反復
 ```
 
 **この構成を選ぶ理由（他を選ばない理由）**:
 - 第1次の死因（同名ラベル・再現性）はC3とE2が直接潰す。第2次の死因（接合部・検閲・
   入力劣化）はA1とH1廃止が直接潰す。過去の死因に同じ形で当たらない最小構成がこれ。
-- Visionと操作を明示モードで分け、自然言語による隠れたルーティングを置かない。操作経路は
-  `ax_exact / ax_llm / ax_unavailable`に限定し、どれを通ったかを毎ターン表示・記録する。
-- DOMと画像探索は、AX候補欠落の実測後に追加する精度レイヤーとする。自動fallbackを先に
-  入れないことで、失敗原因と実効経路を隠さない。
+- ユーザーに内部経路の選択を要求しない。回答と案内を同じ出力契約にし、candidate IDの有無だけで
+  決定論的レンダラーを動かす。
+- Spot Visionでは画像・AXを途中更新せず、画像だけ古くAXだけ新しい不整合を作らない。
+- DOM/OCRは、AX候補欠落の実測後に追加する精度レイヤーとする。
 - 堅牢性は決定論的外殻（H3＋trace/replay＋実効モデル記録）で第2次より**強く**なる。
 
 **ただし、これはアイデアであり、実測で棄却されうる。** 確定仕様ではない。
@@ -263,16 +264,26 @@ Visionは画像のみ、操作はAX候補から開始し、DOM/OCR/画像探索�
   DOM、画像fallback、実画面上の常駐ハイライト、クリック後進捗判定は未接続。
 - 操作経路のコード検証: web test 73件、対象lint、TypeScript、Next production build、macOS Debug
   `CODE_SIGNING_ALLOWED=NO`が成功。実画面のAX candidate recall、`ax_exact / ax_llm`選択、赤枠位置は未検証。
+- 二モード実験の棄却（2026-07-16）: `読む / 案内`は内部経路の比較には使えるが、ユーザーに
+  システム都合の分類を要求して不便であり、Spot Visionの製品UIとして棄却。action専用の
+  `ax_exact / ax_llm / ax_unavailable`分岐も同時に削除した。
+- Spot Vision統合（2026-07-16）: 入力欄を再び一つにし、初期コメントでは固定画像を軽く読み、
+  AXを同時点でバックグラウンド収集する。後続質問は同じ画像・固定AX候補・履歴をLunaの
+  `snapshot_vlm` 1コールへ渡す。`target_candidate_id`が返った場合だけ同一captureの候補へ解決し、
+  スクリーンショットを拡大・赤枠表示する。AXには取得時間・探索node数・候補数・打切理由を追加し、
+  開発UIとusage metadataへ記録する。DOMとCopilotの再capture反復は未接続。
+- Spot Vision統合のコード検証: web test 70件、対象lint、TypeScript、Next production build、
+  macOS Debug `CODE_SIGNING_ALLOWED=NO`が成功。固定画像＋AXによる実画面回答・赤枠は未検証。
 
-- **仮説**: Visionは画像VLM、操作はAXの決定論一致またはtext-only candidate選択へ分離しても、
-  GA4級のWebアプリの「質問→案内→完了」が誤ハイライトなしで通り、常時VLMより速く安くなる。
+- **仮説**: 1枚の固定画像・同時点のAX候補・会話履歴を単一VLMへ渡せば、モード切替や役職分割なしで
+  Spot Visionの回答と画面内案内が成立し、その1ターンを再帰化してCopilotへ発展できる。
 - **合格条件**: §5の受け入れ条件 ＋ GA4 golden path（国・地域／デバイス別／同名概要の
   区別を含む20〜30ケース）で誤ハイライト0・誤advance 0・stale採用0。
-- **棄却条件（早期判定）**: (a) 正解候補がAXにあるのにtext-only選択が親文脈付きでも頻繁に誤る、
+- **棄却条件（早期判定）**: (a) 正解候補がAXにあるのに画像＋親文脈付きでも頻繁に誤る、
   (b) 正解候補のAX欠落が頻発する、または (c) 新規captureでも進捗判断を誤る場合。死因ごとに
   DOM追加、明示的な画像探索、typed postconditionのいずれか一つだけを次の比較へ加える。
-- **実装順**: ①Vision-first品質上限 → ②Luna / `none`比較 → ③明示`読む / 案内`モード →
-  ④AX候補固定・経路表示・スクリーンショット赤枠 → ⑤実画面で候補recall/selection計測 →
+- **実装順**: ①Vision-first品質上限 → ②Luna / `none`比較 → ③固定snapshot単一入力 →
+  ④AX候補固定・診断表示・スクリーンショット赤枠 → ⑤実画面で候補recall/selection計測 →
   ⑥不足したセンサーだけ追加 → ⑦クリック後の新capture反復 → ⑧golden path計測。
 
 ### 挑戦4以降のバックログ（挑戦3の死因別の分岐）

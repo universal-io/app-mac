@@ -8,7 +8,6 @@ import {
 } from "@/lib/server/gateway";
 import { ProviderCallError } from "@/lib/server/review-engine";
 import {
-  runScreenAction,
   runScreenUnderstanding,
   SCREEN_UNDERSTANDING_IMAGE_DETAIL,
   SCREEN_UNDERSTANDING_MODEL_ID,
@@ -27,12 +26,17 @@ type ScreenUnderstandingRequestBody = {
   request_id?: string;
   operation?: string;
   input?: {
-    task?: "vision" | "action";
     capture_id?: string;
     image_base64?: string;
     media_type?: string;
     question?: string;
     turns?: ScreenUnderstandingTurn[];
+    candidate_diagnostics?: {
+      elapsed_ms?: number;
+      visited_nodes?: number;
+      candidate_count?: number;
+      truncated_reason?: string;
+    };
     candidates?: Array<{
       id?: string;
       source?: string;
@@ -60,7 +64,6 @@ export async function POST(request: Request): Promise<Response> {
     if (validationError) return validationError;
 
     const imageBase64 = body.input!.image_base64!;
-    const task = body.input!.task!;
     const mediaType = body.input!.media_type ?? "image/png";
     const captureId = body.input!.capture_id!;
     const question = body.input!.question?.trim();
@@ -80,13 +83,13 @@ export async function POST(request: Request): Promise<Response> {
 
     const metadata = {
       challenge: 3,
-      task,
       capture_id: captureId,
       platform: body.client!.platform,
       app_version: body.client?.app_version,
       media_type: mediaType,
-      image_base64_chars: imageBase64?.length ?? 0,
+      image_base64_chars: imageBase64.length,
       candidate_count: candidates.length,
+      candidate_diagnostics: body.input!.candidate_diagnostics ?? null,
       turn_count: turns.length,
       has_question: Boolean(question),
       api: "responses",
@@ -97,14 +100,13 @@ export async function POST(request: Request): Promise<Response> {
 
     const started = Date.now();
     try {
-      const output = task === "action"
-        ? await runScreenAction({ question: question!, turns, candidates, language })
-        : await runScreenUnderstanding({
-          imageDataURL: `data:${mediaType};base64,${imageBase64}`,
-          question,
-          turns,
-          language,
-        });
+      const output = await runScreenUnderstanding({
+        imageDataURL: `data:${mediaType};base64,${imageBase64}`,
+        question,
+        turns,
+        candidates,
+        language,
+      });
       const latencyMs = Date.now() - started;
       await recordUsage(tenantId, userId, {
         operation: "screen_understanding",
@@ -112,7 +114,7 @@ export async function POST(request: Request): Promise<Response> {
         requestId: requestId!,
         status: "success",
         modelVendor: output.modelVendor,
-        modelId: output.modelId ?? undefined,
+        modelId: output.modelId,
         inputUnits: output.inputTokens,
         outputUnits: output.outputTokens,
         latencyMs,
@@ -199,12 +201,8 @@ function validateBody(
   if (!captureId || captureId.length > MAX_CAPTURE_ID_CHARS) {
     return errorResponse(400, "BAD_REQUEST", "A valid input.capture_id is required.", requestId);
   }
-  const task = body.input?.task;
-  if (task !== "vision" && task !== "action") {
-    return errorResponse(400, "BAD_REQUEST", "input.task must be 'vision' or 'action'.", requestId);
-  }
   const imageBase64 = body.input?.image_base64;
-  if (task === "vision" && (!imageBase64 || imageBase64.length > MAX_IMAGE_BASE64_CHARS)) {
+  if (!imageBase64 || imageBase64.length > MAX_IMAGE_BASE64_CHARS) {
     return errorResponse(400, "BAD_REQUEST", "A valid input.image_base64 is required.", requestId);
   }
   const mediaType = body.input?.media_type ?? "image/png";
@@ -218,9 +216,6 @@ function validateBody(
   }
   if (body.input?.question && body.input.question.length > MAX_TURN_CHARS) {
     return errorResponse(400, "BAD_REQUEST", "input.question is too long.", requestId);
-  }
-  if (task === "action" && !body.input?.question?.trim()) {
-    return errorResponse(400, "BAD_REQUEST", "input.question is required for action tasks.", requestId);
   }
   const turns = body.input?.turns ?? [];
   if (
@@ -254,6 +249,37 @@ function validateBody(
     || new Set(candidates.map((candidate) => candidate.id)).size !== candidates.length
   ) {
     return errorResponse(400, "BAD_REQUEST", "input.candidates is invalid.", requestId);
+  }
+  const diagnostics = body.input?.candidate_diagnostics;
+  const allowedTruncationReasons = new Set([
+    "no_target_app",
+    "unknown_capture_rect",
+    "permission_denied",
+    "node_limit",
+    "candidate_limit",
+    "deadline",
+    "not_configured",
+  ]);
+  if (diagnostics && (
+    !Number.isInteger(diagnostics.elapsed_ms)
+    || diagnostics.elapsed_ms! < 0
+    || diagnostics.elapsed_ms! > 60_000
+    || !Number.isInteger(diagnostics.visited_nodes)
+    || diagnostics.visited_nodes! < 0
+    || diagnostics.visited_nodes! > 100_000
+    || !Number.isInteger(diagnostics.candidate_count)
+    || diagnostics.candidate_count! < 0
+    || diagnostics.candidate_count! > MAX_CANDIDATES
+    || diagnostics.candidate_count !== candidates.length
+    || (diagnostics.truncated_reason !== undefined
+      && !allowedTruncationReasons.has(diagnostics.truncated_reason))
+  )) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "input.candidate_diagnostics is invalid.",
+      requestId,
+    );
   }
   const language = body.preferences?.output_language;
   if (language !== "japanese" && language !== "english") {

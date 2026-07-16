@@ -1,12 +1,5 @@
 import Foundation
 
-enum Challenge3InteractionMode: String, CaseIterable, Identifiable {
-    case vision
-    case action
-
-    var id: String { rawValue }
-}
-
 struct Challenge3VisionDisplayTurn: Identifiable, Equatable {
     let id = UUID()
     let role: ScreenUnderstandingTurn.Role
@@ -24,9 +17,9 @@ final class Challenge3VisionSession: ObservableObject {
     @Published private(set) var metadata: ScreenUnderstandingMetadata?
     @Published private(set) var candidates: [VisionObservation.Candidate] = []
     @Published private(set) var candidatesReady = false
+    @Published private(set) var candidateDiagnostics: VisionObservationCaptureService.Diagnostics?
     @Published private(set) var selectedCandidate: VisionObservation.Candidate?
     @Published private(set) var screenshotHighlight: CGRect?
-    @Published private(set) var interactionMode: Challenge3InteractionMode = .vision
     @Published var input = ""
     @Published var errorMessage: String?
     @Published var focusedField: FocusField? = .navigator
@@ -48,7 +41,16 @@ final class Challenge3VisionSession: ObservableObject {
     ) {
         self.attachment = attachment
         self.candidateCaptureTask = candidateCaptureTask ?? Task {
-            VisionObservationCaptureService.Snapshot(environment: nil, axCandidates: [])
+            VisionObservationCaptureService.Snapshot(
+                environment: nil,
+                axCandidates: [],
+                diagnostics: VisionObservationCaptureService.Diagnostics(
+                    elapsedMs: 0,
+                    visitedNodes: 0,
+                    candidateCount: 0,
+                    truncatedReason: "not_configured"
+                )
+            )
         }
         self.client = client
         self.outputLanguage = AppSettings.outputLanguage()
@@ -67,9 +69,10 @@ final class Challenge3VisionSession: ObservableObject {
             let snapshot = await self.candidateCaptureTask.value
             guard !Task.isCancelled else { return }
             self.candidates = snapshot.axCandidates
+            self.candidateDiagnostics = snapshot.diagnostics
             self.candidatesReady = true
         }
-        run(question: nil, priorTurns: [], task: .vision)
+        run(question: nil, priorTurns: [])
     }
 
     func sendQuestion() {
@@ -85,15 +88,7 @@ final class Challenge3VisionSession: ObservableObject {
             mode: nil,
             uncertainties: []
         ))
-        run(question: question, priorTurns: priorTurns, task: interactionMode)
-    }
-
-    func setInteractionMode(_ mode: Challenge3InteractionMode) {
-        guard mode != interactionMode, !isLoading else { return }
-        interactionMode = mode
-        selectedCandidate = nil
-        screenshotHighlight = nil
-        errorMessage = nil
+        run(question: question, priorTurns: priorTurns)
     }
 
     func appendTranscription(_ text: String) {
@@ -116,11 +111,7 @@ final class Challenge3VisionSession: ObservableObject {
         turns.map { ScreenUnderstandingTurn(role: $0.role, text: $0.text) }
     }
 
-    private func run(
-        question: String?,
-        priorTurns: [ScreenUnderstandingTurn],
-        task: Challenge3InteractionMode
-    ) {
+    private func run(question: String?, priorTurns: [ScreenUnderstandingTurn]) {
         requestTask?.cancel()
         guard let client else {
             errorMessage = "Challenge 3 Gatewayを利用できません。ログインとGateway設定を確認してください。"
@@ -134,22 +125,26 @@ final class Challenge3VisionSession: ObservableObject {
             guard let self else { return }
             defer { self.isLoading = false }
             do {
-                let actionCandidates: [VisionObservation.Candidate]
-                if task == .action {
+                let fixedCandidates: [VisionObservation.Candidate]
+                let fixedDiagnostics: VisionObservationCaptureService.Diagnostics?
+                if question != nil {
                     let snapshot = await self.candidateCaptureTask.value
                     try Task.checkCancellation()
-                    actionCandidates = snapshot.axCandidates
-                    self.candidates = actionCandidates
+                    fixedCandidates = snapshot.axCandidates
+                    fixedDiagnostics = snapshot.diagnostics
+                    self.candidates = fixedCandidates
+                    self.candidateDiagnostics = snapshot.diagnostics
                     self.candidatesReady = true
                 } else {
-                    actionCandidates = []
+                    fixedCandidates = []
+                    fixedDiagnostics = nil
                 }
                 let response = try await client.understand(
                     attachment: self.attachment,
                     question: question,
                     turns: priorTurns,
-                    task: task.rawValue,
-                    candidates: actionCandidates,
+                    candidates: fixedCandidates,
+                    candidateDiagnostics: fixedDiagnostics,
                     language: self.outputLanguage
                 )
                 try Task.checkCancellation()
@@ -159,7 +154,7 @@ final class Challenge3VisionSession: ObservableObject {
                 }
                 self.metadata = response.metadata
                 if let targetID = response.result.targetCandidateID {
-                    guard let candidate = actionCandidates.first(where: { $0.id == targetID }),
+                    guard let candidate = fixedCandidates.first(where: { $0.id == targetID }),
                           let rect = candidate.rect else {
                         throw ProviderError.decoding(
                             "Challenge 3 selected a candidate without a usable capture rectangle."

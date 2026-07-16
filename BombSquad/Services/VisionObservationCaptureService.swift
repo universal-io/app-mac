@@ -6,9 +6,33 @@ import ApplicationServices
 /// visible, bounded candidates from the app associated with this capture.
 /// No AX handles survive the snapshot.
 enum VisionObservationCaptureService {
+    struct Diagnostics {
+        let elapsedMs: Int
+        let visitedNodes: Int
+        let candidateCount: Int
+        let truncatedReason: String?
+
+        var wirePayload: [String: Any] {
+            var payload: [String: Any] = [
+                "elapsed_ms": elapsedMs,
+                "visited_nodes": visitedNodes,
+                "candidate_count": candidateCount,
+            ]
+            if let truncatedReason { payload["truncated_reason"] = truncatedReason }
+            return payload
+        }
+    }
+
     struct Snapshot {
         let environment: AppEnvironmentSnapshot?
         let axCandidates: [VisionObservation.Candidate]
+        let diagnostics: Diagnostics
+    }
+
+    private struct CollectionResult {
+        let candidates: [VisionObservation.Candidate]
+        let visitedNodes: Int
+        let truncatedReason: String?
     }
 
     private enum Budget {
@@ -42,7 +66,18 @@ enum VisionObservationCaptureService {
             app = nil
         }
         guard let app else {
-            return Task { Snapshot(environment: nil, axCandidates: []) }
+            return Task {
+                Snapshot(
+                    environment: nil,
+                    axCandidates: [],
+                    diagnostics: Diagnostics(
+                        elapsedMs: 0,
+                        visitedNodes: 0,
+                        candidateCount: 0,
+                        truncatedReason: "no_target_app"
+                    )
+                )
+            }
         }
 
         let pid = app.processIdentifier
@@ -52,8 +87,11 @@ enum VisionObservationCaptureService {
         let mayReadAX = AXIsProcessTrusted()
 
         return Task.detached(priority: .userInitiated) {
+            let started = Date()
             var windowTitle: String?
             var candidates: [VisionObservation.Candidate] = []
+            var visitedNodes = 0
+            var truncatedReason: String?
             if mayReadAX {
                 let appElement = AXUIElementCreateApplication(pid)
                 AXUIElementSetMessagingTimeout(appElement, Budget.axMessagingTimeout)
@@ -66,11 +104,18 @@ enum VisionObservationCaptureService {
                 windowTitle = window.flatMap { copyString($0, kAXTitleAttribute) }
                 if let captureRect = attachment.captureRect,
                    captureRect.width > 0, captureRect.height > 0 {
-                    candidates = collectCandidates(
+                    let result = collectCandidates(
                         from: window ?? appElement,
                         captureRect: captureRect
                     )
+                    candidates = result.candidates
+                    visitedNodes = result.visitedNodes
+                    truncatedReason = result.truncatedReason
+                } else {
+                    truncatedReason = "unknown_capture_rect"
                 }
+            } else {
+                truncatedReason = "permission_denied"
             }
 
             let environment = includeEnvironment ? AppEnvironmentSnapshot(
@@ -79,14 +124,23 @@ enum VisionObservationCaptureService {
                 windowTitle: windowTitle,
                 url: nil
             ) : nil
-            return Snapshot(environment: environment, axCandidates: candidates)
+            return Snapshot(
+                environment: environment,
+                axCandidates: candidates,
+                diagnostics: Diagnostics(
+                    elapsedMs: Int(Date().timeIntervalSince(started) * 1_000),
+                    visitedNodes: visitedNodes,
+                    candidateCount: candidates.count,
+                    truncatedReason: truncatedReason
+                )
+            )
         }
     }
 
     private static func collectCandidates(
         from root: AXUIElement,
         captureRect: CGRect
-    ) -> [VisionObservation.Candidate] {
+    ) -> CollectionResult {
         let deadline = Date().addingTimeInterval(Budget.deadline)
         var visited = 0
         var candidates: [VisionObservation.Candidate] = []
@@ -94,12 +148,22 @@ enum VisionObservationCaptureService {
             (root, nil),
         ]
 
-        while let item = stack.popLast() {
-            if visited >= Budget.maxNodes
-                || candidates.count >= Budget.maxCandidates
-                || Date() >= deadline {
+        var truncatedReason: String?
+
+        while !stack.isEmpty {
+            if visited >= Budget.maxNodes {
+                truncatedReason = "node_limit"
                 break
             }
+            if candidates.count >= Budget.maxCandidates {
+                truncatedReason = "candidate_limit"
+                break
+            }
+            if Date() >= deadline {
+                truncatedReason = "deadline"
+                break
+            }
+            let item = stack.removeLast()
             visited += 1
 
             let role = copyString(item.element, kAXRoleAttribute) ?? ""
@@ -128,7 +192,11 @@ enum VisionObservationCaptureService {
                 }
             }
         }
-        return candidates
+        return CollectionResult(
+            candidates: candidates,
+            visitedNodes: visited,
+            truncatedReason: truncatedReason
+        )
     }
 
     private static func label(for element: AXUIElement, role: String) -> String? {

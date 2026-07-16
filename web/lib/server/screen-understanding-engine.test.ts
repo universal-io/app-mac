@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
-  runScreenAction,
   runScreenUnderstanding,
   SCREEN_UNDERSTANDING_MAX_OUTPUT_TOKENS,
   SCREEN_UNDERSTANDING_MODEL_ID,
@@ -44,6 +43,7 @@ describe("Challenge 3 screen understanding engine", () => {
     const output = await runScreenUnderstanding({
       imageDataURL: "data:image/png;base64,abc",
       turns: [],
+      candidates: [],
       language: "japanese",
     });
 
@@ -87,6 +87,7 @@ describe("Challenge 3 screen understanding engine", () => {
     await expect(runScreenUnderstanding({
       imageDataURL: "data:image/png;base64,abc",
       turns: [],
+      candidates: [],
       language: "japanese",
     })).rejects.toThrow("GPT-5.6 Luna Responses API failed");
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -102,35 +103,12 @@ describe("Challenge 3 screen understanding engine", () => {
     await expect(runScreenUnderstanding({
       imageDataURL: "data:image/png;base64,abc",
       turns: [],
+      candidates: [],
       language: "japanese",
     })).rejects.toThrow("did not match the Challenge 3 schema");
   });
 
-  test("selects a unique AX label without calling a model", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const output = await runScreenAction({
-      question: "左メニューのテクノロジーを押してください。",
-      turns: [],
-      candidates: [{
-        id: "ax:technology",
-        source: "ax",
-        role: "link",
-        label: "テクノロジー",
-        parentLabel: "ユーザー",
-        states: [],
-      }],
-      language: "japanese",
-    });
-
-    expect(output.route).toBe("ax_exact");
-    expect(output.modelId).toBeNull();
-    expect(output.result.targetCandidateId).toBe("ax:technology");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  test("uses text-only Luna selection when AX labels do not exactly match the request", async () => {
+  test("uses the same screenshot and fixed candidates for action guidance", async () => {
     const fetchMock = vi.fn().mockResolvedValue(providerResponse({
       mode: "guide",
       message: "テクノロジーを開いてください。",
@@ -140,7 +118,8 @@ describe("Challenge 3 screen understanding engine", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const output = await runScreenAction({
+    const output = await runScreenUnderstanding({
+      imageDataURL: "data:image/png;base64,abc",
       question: "デバイス別の利用状況を見るには何をしたらいいですか？",
       turns: [],
       candidates: [{
@@ -154,7 +133,7 @@ describe("Challenge 3 screen understanding engine", () => {
       language: "japanese",
     });
 
-    expect(output.route).toBe("ax_llm");
+    expect(output.route).toBe("snapshot_vlm");
     expect(output.modelId).toBe(SCREEN_UNDERSTANDING_MODEL_ID);
     expect(output.result.targetCandidateId).toBe("ax:technology");
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
@@ -162,59 +141,7 @@ describe("Challenge 3 screen understanding engine", () => {
     };
     expect(body.input.flatMap((item) => item.content).some(
       (content) => content.type === "input_image",
-    )).toBe(false);
-  });
-
-  test("does not use exact matching when the request mentions multiple candidate labels", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(providerResponse({
-      mode: "guide",
-      message: "概要を選んでください。",
-      observations: [],
-      uncertainties: [],
-      targetCandidateId: "ax:overview",
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const output = await runScreenAction({
-      question: "テクノロジーの概要を開いてください。",
-      turns: [],
-      candidates: [{
-        id: "ax:technology",
-        source: "ax",
-        role: "link",
-        label: "テクノロジー",
-        states: [],
-      }, {
-        id: "ax:overview",
-        source: "ax",
-        role: "link",
-        label: "概要",
-        parentLabel: "テクノロジー",
-        states: [],
-      }],
-      language: "japanese",
-    });
-
-    expect(output.route).toBe("ax_llm");
-    expect(output.result.targetCandidateId).toBe("ax:overview");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("stops without a model when the capture has no AX candidates", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const output = await runScreenAction({
-      question: "次は何をしたらいいですか？",
-      turns: [],
-      candidates: [],
-      language: "japanese",
-    });
-
-    expect(output.route).toBe("ax_unavailable");
-    expect(output.result.mode).toBe("clarification");
-    expect(output.result.targetCandidateId).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    )).toBe(true);
   });
 
   test("rejects a model-selected candidate outside the supplied AX set", async () => {
@@ -226,7 +153,8 @@ describe("Challenge 3 screen understanding engine", () => {
       targetCandidateId: "ax:invented",
     })));
 
-    await expect(runScreenAction({
+    await expect(runScreenUnderstanding({
+      imageDataURL: "data:image/png;base64,abc",
       question: "次は何をしたらいいですか？",
       turns: [],
       candidates: [{

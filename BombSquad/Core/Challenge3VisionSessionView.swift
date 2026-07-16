@@ -29,8 +29,12 @@ struct Challenge3VisionSessionView: View {
         Binding(get: { session.focusedField }, set: { session.focusedField = $0 })
     }
 
-    private var interactionMode: Binding<Challenge3InteractionMode> {
-        Binding(get: { session.interactionMode }, set: { session.setInteractionMode($0) })
+    private var axStatus: String {
+        guard let diagnostics = session.candidateDiagnostics else {
+            return session.candidatesReady ? "AX \(session.candidates.count)" : "AX …"
+        }
+        let completion = diagnostics.truncatedReason ?? "complete"
+        return "AX \(diagnostics.candidateCount) · \(diagnostics.elapsedMs)ms · \(completion)"
     }
 
     var body: some View {
@@ -59,21 +63,13 @@ struct Challenge3VisionSessionView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.tint)
             if let metadata = session.metadata {
-                Text("\(metadata.route) · \(metadata.modelID ?? "no-model") · \(metadata.latencyMs) ms")
+                Text("\(metadata.route) · \(metadata.modelID) · \(metadata.latencyMs) ms")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             GatewayOverrideBadge()
             Spacer()
-            Picker("モード", selection: interactionMode) {
-                Text("読む").tag(Challenge3InteractionMode.vision)
-                Text("案内").tag(Challenge3InteractionMode.action)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 116)
-            .disabled(session.isLoading)
             FoundationManagementMenu()
         }
         .background(WindowDragHandle())
@@ -94,9 +90,10 @@ struct Challenge3VisionSessionView: View {
                 .help("画像を移動・拡大する")
                 .accessibilityLabel("画像を移動・拡大する")
                 Spacer()
-                Text(session.candidatesReady ? "AX \(session.candidates.count)" : "AX …")
+                Text(axStatus)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
+                    .help("AX候補数・取得時間・打切理由")
                 Text(session.attachment.id.uuidString.prefix(8))
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
@@ -132,12 +129,7 @@ struct Challenge3VisionSessionView: View {
 
     private var conversationColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(
-                session.interactionMode == .vision ? "読み取り結果" : "操作案内",
-                systemImage: session.interactionMode == .vision
-                    ? "doc.text.magnifyingglass"
-                    : "cursorarrow.rays"
-            )
+            Label("読み取り結果", systemImage: "doc.text.magnifyingglass")
                 .font(.headline)
 
             ScrollViewReader { proxy in

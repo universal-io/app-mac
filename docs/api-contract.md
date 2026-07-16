@@ -483,12 +483,11 @@ The active Challenge 3 comparison configuration is fixed in code:
 - output budget: 25,000 tokens
 - fallback: none; any provider/model failure returns non-2xx
 
-The route has two explicit tasks. It never infers the task from natural language:
-
-- `vision`: sends the immutable screenshot to the VLM. AX/DOM candidates are not sent.
-- `action`: sends AX/DOM candidates without an image. A unique label match uses no model;
-  otherwise Luna selects one supplied candidate from text only. Candidate absence or an
-  unsupported target stops explicitly; there is no automatic visual fallback.
+The Spot Vision panel has one route and one user input. The initial observation sends
+the immutable screenshot while AX collection runs locally in parallel. Every follow-up
+sends that same screenshot, the capture-fixed AX candidates, and conversation history
+to one multimodal call. The model returns an optional supplied candidate ID; there is no
+user-visible read/action mode and no secondary model route.
 
 ### Request Body
 
@@ -497,7 +496,6 @@ The route has two explicit tasks. It never infers the task from natural language
   "request_id": "...",
   "operation": "screen_understanding",
   "input": {
-    "task": "vision",
     "capture_id": "immutable-client-capture-id",
     "image_base64": "（base64。最大4M文字）",
     "media_type": "image/png",
@@ -505,24 +503,7 @@ The route has two explicit tasks. It never infers the task from natural language
     "turns": [
       { "role": "assistant", "text": "Google Analyticsのユーザー属性画面です。" },
       { "role": "user", "text": "日本について教えてください。" }
-    ]
-  },
-  "preferences": { "output_language": "japanese" },
-  "client": { "platform": "macos", "app_version": "0.1.0" }
-}
-```
-
-Action request example:
-
-```json
-{
-  "request_id": "...",
-  "operation": "screen_understanding",
-  "input": {
-    "task": "action",
-    "capture_id": "immutable-client-capture-id",
-    "question": "次は何をしたらいいですか？",
-    "turns": [],
+    ],
     "candidates": [
       {
         "id": "ax:42",
@@ -532,21 +513,29 @@ Action request example:
         "parent_label": "ユーザー",
         "states": []
       }
-    ]
+    ],
+    "candidate_diagnostics": {
+      "elapsed_ms": 184,
+      "visited_nodes": 631,
+      "candidate_count": 1,
+      "truncated_reason": "deadline"
+    }
   },
   "preferences": { "output_language": "japanese" },
   "client": { "platform": "macos", "app_version": "0.1.0" }
 }
 ```
 
-- `task` and `capture_id` are required. `vision` requires `image_base64`; `action`
-  requires `question` and accepts at most 250 capture-fixed candidates.
+- `capture_id` and `image_base64` are required on every turn. A follow-up accepts at
+  most 250 capture-fixed AX/DOM candidates.
 - Every turn remains bound to the same immutable capture until the user explicitly recaptures.
 - `question` is omitted for the initial observation. It is required by the
   client for follow-up turns.
-- `turns` contains at most 20 text-only turns about that capture. `vision` sends
-  the current screenshot on every request; `action` never sends it. Model-side
-  conversation state is not authoritative.
+- `turns` contains at most 20 text-only turns about that capture. The same screenshot
+  is sent on every request, so model-side conversation state is not authoritative.
+- `candidate_diagnostics` is optional and must match the candidate count. Truncation
+  reasons are `no_target_app`, `unknown_capture_rect`, `permission_denied`,
+  `node_limit`, `candidate_limit`, `deadline`, or `not_configured`.
 
 ### Success Response
 
@@ -564,7 +553,7 @@ Action request example:
   "meta": {
     "model_vendor": "openai",
     "model_id": "gpt-5.6-luna",
-    "route": "vision_vlm | ax_exact | ax_llm | ax_unavailable",
+    "route": "snapshot_vlm",
     "api": "responses",
     "image_detail": "original",
     "reasoning_effort": "none",
@@ -574,9 +563,8 @@ Action request example:
 }
 ```
 
-For `ax_exact` and `ax_unavailable`, `model_id` is `null` and token usage is zero. For `vision_vlm`
-and `ax_llm`, `model_id` must be `gpt-5.6-luna`. The client resolves
-`target_candidate_id` only against the candidate set from the same capture;
+`model_id` must be `gpt-5.6-luna`. The client resolves `target_candidate_id`
+only against the candidate set from the same capture;
 unknown IDs and candidates without a usable rectangle are rejected.
 
 The client must treat a mismatched `capture_id`, a route/model mismatch, an unknown

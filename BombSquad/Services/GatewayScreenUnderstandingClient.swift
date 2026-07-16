@@ -28,7 +28,7 @@ struct ScreenUnderstandingResult: Equatable {
 
 struct ScreenUnderstandingMetadata: Equatable {
     let modelVendor: String
-    let modelID: String?
+    let modelID: String
     let route: String
     let api: String
     let imageDetail: String
@@ -63,21 +63,20 @@ struct GatewayScreenUnderstandingClient {
         attachment: ScreenshotAttachment,
         question: String?,
         turns: [ScreenUnderstandingTurn],
-        task: String = "vision",
         candidates: [VisionObservation.Candidate] = [],
+        candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
         language: OutputLanguage
     ) async throws -> ScreenUnderstandingResponse {
+        let encoded = try Self.encodedImage(at: attachment.url)
         var input: [String: Any] = [
-            "task": task,
             "capture_id": attachment.id.uuidString,
+            "image_base64": encoded.data.base64EncodedString(),
+            "media_type": encoded.mediaType,
             "turns": turns.map { ["role": $0.role.rawValue, "text": $0.text] },
+            "candidates": candidates.map(\.wirePayload),
         ]
-        if task == "vision" {
-            let encoded = try Self.encodedImage(at: attachment.url)
-            input["image_base64"] = encoded.data.base64EncodedString()
-            input["media_type"] = encoded.mediaType
-        } else {
-            input["candidates"] = candidates.map(\.wirePayload)
+        if let candidateDiagnostics {
+            input["candidate_diagnostics"] = candidateDiagnostics.wirePayload
         }
         if let question = question?.trimmingCharacters(in: .whitespacesAndNewlines),
            !question.isEmpty {
@@ -131,6 +130,7 @@ struct GatewayScreenUnderstandingClient {
             let meta = root["meta"] as? [String: Any],
             let route = meta["route"] as? String,
             let modelVendor = meta["model_vendor"] as? String,
+            let modelID = meta["model_id"] as? String,
             let api = meta["api"] as? String,
             let imageDetail = meta["image_detail"] as? String,
             let reasoningEffort = meta["reasoning_effort"] as? String,
@@ -139,7 +139,6 @@ struct GatewayScreenUnderstandingClient {
         else {
             throw ProviderError.decoding("Challenge 3 response did not match its contract.")
         }
-        let modelID = meta["model_id"] as? String
         let targetCandidateID = resultObject["target_candidate_id"] as? String
 
         guard
@@ -148,7 +147,8 @@ struct GatewayScreenUnderstandingClient {
             imageDetail == "original",
             reasoningEffort == "none",
             fallbackUsed == false,
-            Self.validRoute(route, modelID: modelID)
+            route == "snapshot_vlm",
+            modelID == requiredModelID
         else {
             throw ProviderError.decoding(
                 "Challenge 3 active model configuration was not used; the turn was rejected."
@@ -177,14 +177,4 @@ struct GatewayScreenUnderstandingClient {
         )
     }
 
-    private static func validRoute(_ route: String, modelID: String?) -> Bool {
-        switch route {
-        case "vision_vlm", "ax_llm":
-            return modelID == requiredModelID
-        case "ax_exact", "ax_unavailable":
-            return modelID == nil
-        default:
-            return false
-        }
-    }
 }
