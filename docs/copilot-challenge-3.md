@@ -199,8 +199,9 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
 
 ### 検証モードの受け入れ条件（fail-loud）
 
-1. 全ターンの実効モデルが GPT-5.6 Sol（Responses API・detail高・十分な予算）。
-   使えなければ明示的エラー。フォールバック発生 = テスト失敗。
+1. 各比較区間で固定した実効モデル・reasoning effortを開発UIとtraceで確認する。
+   使えなければ明示的エラー。フォールバック発生 = テスト失敗。最初の品質上限確認は
+   GPT-5.6 Sol / `max`、成立後の最初の軽量化比較はGPT-5.6 Luna / `none`とする。
 2. 位置指定は candidate ID のみ（低信頼bbox経路は件数を記録し、UIで低信頼と明示）。
 3. 同名ラベル（GA4「概要」×2）を親文脈で正しく区別できる。
 4. stale capture / capture scope不一致の採用 0。
@@ -250,6 +251,10 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
   観測されなかった。これを**Vision-firstの初期理解＋追加質問の成立**と判定する。
 - 未検証: candidate収集・選択、ハイライト、クリック後の新規captureによる進捗判定。今回の成功は
   挑戦3全体やGA4 golden pathの合格を意味しない。
+- 方針更新（2026-07-16）: オーナーがVision-firstパネルの初回成立を確認し、次段階への移行を承認。
+  Sol / `max`は品質上限の基準として保持し、実行設定をGPT-5.6 Luna / `none`へ固定変更する。
+  fallbackなし、`detail: original`、25,000 output token上限、実効設定の開発表示は維持する。
+  同一画面でLuna基準を1回確認してから、candidate収集結果の開発表示へ進む。
 
 - **仮説**: 最高品質モデル1コール＋候補ID＋決定論外殻で、GA4級のWebアプリの
   「質問→案内→完了」が誤ハイライトなしで通る。

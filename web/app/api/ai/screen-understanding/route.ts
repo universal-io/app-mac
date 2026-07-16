@@ -114,7 +114,7 @@ export async function POST(request: Request): Promise<Response> {
       const rateLimited = error instanceof ProviderCallError && error.rateLimited;
       const detail = error instanceof Error ? error.message : String(error);
       console.error(
-        `[/api/ai/screen-understanding] GPT-5.6 Sol failed (request ${requestId}):`,
+        `[/api/ai/screen-understanding] GPT-5.6 Luna failed (request ${requestId}):`,
         detail,
       );
       await recordUsage(tenantId, userId, {
@@ -131,7 +131,7 @@ export async function POST(request: Request): Promise<Response> {
       return errorResponse(
         rateLimited ? 429 : 502,
         rateLimited ? "RATE_LIMITED" : "PROVIDER_ERROR",
-        "GPT-5.6 Solで画面を読み取れませんでした。Challenge 3では別モデルへ切り替えません。",
+        "GPT-5.6 Lunaで画面を読み取れませんでした。Challenge 3では別モデルへ切り替えません。",
         requestId,
         {
           model_id: SCREEN_UNDERSTANDING_MODEL_ID,

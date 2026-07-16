@@ -3,8 +3,8 @@ import { ProviderCallError } from "@/lib/server/review-engine";
 
 const RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
 
-export const SCREEN_UNDERSTANDING_MODEL_ID = "gpt-5.6-sol";
-export const SCREEN_UNDERSTANDING_REASONING_EFFORT = "max";
+export const SCREEN_UNDERSTANDING_MODEL_ID = "gpt-5.6-luna";
+export const SCREEN_UNDERSTANDING_REASONING_EFFORT = "none";
 export const SCREEN_UNDERSTANDING_IMAGE_DETAIL = "original";
 export const SCREEN_UNDERSTANDING_MAX_OUTPUT_TOKENS = 25_000;
 
@@ -57,14 +57,14 @@ export async function runScreenUnderstanding(
 
   if (response.status === 429) {
     throw new ProviderCallError(
-      "GPT-5.6 Sol is rate limited. Challenge 3 does not fall back to another model.",
+      "GPT-5.6 Luna is rate limited. Challenge 3 does not fall back to another model.",
       { rateLimited: true },
     );
   }
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 500);
     throw new ProviderCallError(
-      `GPT-5.6 Sol Responses API failed with HTTP ${response.status}: ${detail}`,
+      `GPT-5.6 Luna Responses API failed with HTTP ${response.status}: ${detail}`,
     );
   }
 
@@ -80,23 +80,23 @@ export async function runScreenUnderstanding(
   };
   if (root.status === "incomplete") {
     throw new ProviderCallError(
-      `GPT-5.6 Sol returned an incomplete response: ${root.incomplete_details?.reason ?? "unknown"}`,
+      `GPT-5.6 Luna returned an incomplete response: ${root.incomplete_details?.reason ?? "unknown"}`,
     );
   }
 
   const text = outputText(root);
   if (!text) {
-    throw new ProviderCallError("GPT-5.6 Sol returned no structured output.");
+    throw new ProviderCallError("GPT-5.6 Luna returned no structured output.");
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new ProviderCallError("GPT-5.6 Sol structured output was not valid JSON.");
+    throw new ProviderCallError("GPT-5.6 Luna structured output was not valid JSON.");
   }
   if (!isScreenUnderstandingResult(parsed)) {
-    throw new ProviderCallError("GPT-5.6 Sol output did not match the Challenge 3 schema.");
+    throw new ProviderCallError("GPT-5.6 Luna output did not match the Challenge 3 schema.");
   }
 
   return {
@@ -184,7 +184,7 @@ function outputText(root: {
     if (item.type !== "message") continue;
     for (const content of item.content ?? []) {
       if (content.type === "refusal" && content.refusal) {
-        throw new ProviderCallError(`GPT-5.6 Sol refused the request: ${content.refusal}`);
+        throw new ProviderCallError(`GPT-5.6 Luna refused the request: ${content.refusal}`);
       }
       if (content.type === "output_text" && content.text?.trim()) {
         return content.text;

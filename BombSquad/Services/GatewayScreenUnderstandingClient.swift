@@ -42,7 +42,7 @@ struct ScreenUnderstandingResponse: Equatable {
 
 /// Isolated Challenge 3 transport. It has no BYOK or legacy model fallback.
 struct GatewayScreenUnderstandingClient {
-    static let requiredModelID = "gpt-5.6-sol"
+    static let requiredModelID = "gpt-5.6-luna"
     private static let maxRawImageBytes = 3_000_000
 
     private let client: GatewayClient
@@ -135,11 +135,11 @@ struct GatewayScreenUnderstandingClient {
             modelID == requiredModelID,
             api == "responses",
             imageDetail == "original",
-            reasoningEffort == "max",
+            reasoningEffort == "none",
             fallbackUsed == false
         else {
             throw ProviderError.decoding(
-                "Challenge 3 quality ceiling was not used; the turn was rejected."
+                "Challenge 3 active model configuration was not used; the turn was rejected."
             )
         }
 

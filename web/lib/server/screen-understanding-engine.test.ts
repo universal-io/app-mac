@@ -30,7 +30,7 @@ describe("Challenge 3 screen understanding engine", () => {
     vi.unstubAllGlobals();
   });
 
-  test("pins the quality ceiling request and returns strict metadata", async () => {
+  test("pins the active comparison request and returns strict metadata", async () => {
     const fetchMock = vi.fn().mockResolvedValue(providerResponse({
       mode: "observation",
       message: "Google Analyticsのユーザー属性画面です。",
@@ -63,10 +63,10 @@ describe("Challenge 3 screen understanding engine", () => {
       input: Array<{ content: Array<Record<string, unknown>> }>;
     };
     expect(body).toMatchObject({
-      model: "gpt-5.6-sol",
+      model: "gpt-5.6-luna",
       store: false,
       max_output_tokens: SCREEN_UNDERSTANDING_MAX_OUTPUT_TOKENS,
-      reasoning: { effort: "max" },
+      reasoning: { effort: "none" },
       text: { format: { type: "json_schema", strict: true } },
     });
     expect(body.input[1].content[1]).toEqual({
@@ -86,7 +86,7 @@ describe("Challenge 3 screen understanding engine", () => {
       imageDataURL: "data:image/png;base64,abc",
       turns: [],
       language: "japanese",
-    })).rejects.toThrow("GPT-5.6 Sol Responses API failed");
+    })).rejects.toThrow("GPT-5.6 Luna Responses API failed");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
