@@ -442,6 +442,9 @@ final class SessionCoordinator {
             let session = Challenge3VisionSession(
                 attachment: attachment,
                 candidateCaptureTask: candidateCaptureTask,
+                onRequestModeTransition: { [weak self] target, reason in
+                    self?.transitionChallenge3(to: target, reason: reason)
+                },
                 onRequestPanelClose: { [weak self] in
                     self?.close(reason: "challenge3VisionRequestedClose")
                 }
@@ -460,6 +463,16 @@ final class SessionCoordinator {
             composeSession.errorMessage = message
             _ = stateMachine.transition(to: returnTo, reason: "captureFailed")
         }
+    }
+
+    private func transitionChallenge3(to target: AppMode, reason: String) {
+        guard challenge3VisionSession != nil else { return }
+        if target == .copilot, stateMachine.mode == .vision {
+            guard stateMachine.transition(to: .navigator, reason: "challenge3GuideReady") else {
+                return
+            }
+        }
+        _ = stateMachine.transition(to: target, reason: reason)
     }
 
     private func captureAttachment(

@@ -7,7 +7,11 @@ struct Challenge3VisionRootView: View {
     var body: some View {
         Group {
             if authViewModel.hasSession {
-                Challenge3VisionSessionView(session: session)
+                if session.isCopilotActive {
+                    Challenge3CopilotStripView(session: session)
+                } else {
+                    Challenge3VisionSessionView(session: session)
+                }
             } else {
                 LoginRequiredView(
                     viewModel: authViewModel,
@@ -181,6 +185,15 @@ struct Challenge3VisionSessionView: View {
                 .help("質問を送る（Enter）")
                 .accessibilityLabel("質問を送る")
             }
+            if session.canStartCopilot {
+                Button {
+                    session.startCopilot()
+                } label: {
+                    Label("案内を開始", systemImage: "location.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
         .padding()
     }
@@ -210,5 +223,50 @@ struct Challenge3VisionSessionView: View {
 #endif
             }
         }
+    }
+}
+
+private struct Challenge3CopilotStripView: View {
+    @ObservedObject var session: Challenge3VisionSession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "location.fill")
+                    .foregroundStyle(.tint)
+                Text("案内中")
+                    .font(.caption.weight(.semibold))
+                Text(session.copilotGoal ?? "")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    session.stopCopilot()
+                } label: {
+                    Label("終了", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Divider()
+
+            Text(session.latestInstruction)
+                .font(.callout)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .textSelection(.enabled)
+
+            HStack(spacing: 8) {
+                Image(systemName: "cursorarrow.click.2")
+                    .foregroundStyle(.secondary)
+                Text("赤い枠の場所をクリックしてください")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
+        .padding(14)
+        .background(WindowDragHandle())
     }
 }

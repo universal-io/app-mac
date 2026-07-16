@@ -20,6 +20,8 @@ final class Challenge3VisionSession: ObservableObject {
     @Published private(set) var candidateDiagnostics: VisionObservationCaptureService.Diagnostics?
     @Published private(set) var selectedCandidate: VisionObservation.Candidate?
     @Published private(set) var screenshotHighlight: CGRect?
+    @Published private(set) var isCopilotActive = false
+    @Published private(set) var copilotGoal: String?
     @Published var input = ""
     @Published var errorMessage: String?
     @Published var focusedField: FocusField? = .navigator
@@ -30,6 +32,7 @@ final class Challenge3VisionSession: ObservableObject {
     private let outputLanguage: OutputLanguage
     private let candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>
     private let onRequestPanelClose: () -> Void
+    private let onRequestModeTransition: (AppMode, String) -> Void
     private var requestTask: Task<Void, Never>?
     private var hasStarted = false
 
@@ -37,6 +40,7 @@ final class Challenge3VisionSession: ObservableObject {
         attachment: ScreenshotAttachment,
         candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>? = nil,
         client: GatewayScreenUnderstandingClient? = GatewayScreenUnderstandingClient.make(),
+        onRequestModeTransition: @escaping (AppMode, String) -> Void = { _, _ in },
         onRequestPanelClose: @escaping () -> Void = {}
     ) {
         self.attachment = attachment
@@ -54,11 +58,23 @@ final class Challenge3VisionSession: ObservableObject {
         }
         self.client = client
         self.outputLanguage = AppSettings.outputLanguage()
+        self.onRequestModeTransition = onRequestModeTransition
         self.onRequestPanelClose = onRequestPanelClose
     }
 
     var canSend: Bool {
         !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLoading
+    }
+
+    var canStartCopilot: Bool {
+        !isLoading
+            && selectedCandidate?.rect != nil
+            && turns.last(where: { $0.role == .assistant })?.mode == .guide
+            && turns.last(where: { $0.role == .user }) != nil
+    }
+
+    var latestInstruction: String {
+        turns.last(where: { $0.role == .assistant })?.text ?? "案内を準備しています…"
     }
 
     func startIfNeeded() {
@@ -102,9 +118,27 @@ final class Challenge3VisionSession: ObservableObject {
         onRequestPanelClose()
     }
 
+    func startCopilot() {
+        guard canStartCopilot,
+              let goal = turns.last(where: { $0.role == .user })?.text else { return }
+        copilotGoal = goal
+        isCopilotActive = true
+        focusedField = nil
+        showLiveHighlight()
+        onRequestModeTransition(.copilot, "challenge3CopilotStarted")
+    }
+
+    func stopCopilot() {
+        guard isCopilotActive else { return }
+        isCopilotActive = false
+        HighlightOverlayPresenter.shared.hide()
+        onRequestModeTransition(.navigator, "challenge3CopilotStopped")
+    }
+
     func tearDown() {
         requestTask?.cancel()
         requestTask = nil
+        HighlightOverlayPresenter.shared.hide()
     }
 
     private var wireTurns: [ScreenUnderstandingTurn] {
@@ -162,9 +196,15 @@ final class Challenge3VisionSession: ObservableObject {
                     }
                     self.selectedCandidate = candidate
                     self.screenshotHighlight = rect
+                    if self.isCopilotActive {
+                        self.showLiveHighlight()
+                    }
                 } else {
                     self.selectedCandidate = nil
                     self.screenshotHighlight = nil
+                    if self.isCopilotActive {
+                        HighlightOverlayPresenter.shared.hide()
+                    }
                 }
                 self.turns.append(Challenge3VisionDisplayTurn(
                     role: .assistant,
@@ -183,5 +223,17 @@ final class Challenge3VisionSession: ObservableObject {
 #endif
             }
         }
+    }
+
+    private func showLiveHighlight() {
+        guard let rect = selectedCandidate?.rect,
+              let captureRect = attachment.captureRect else { return }
+        let globalRect = CGRect(
+            x: captureRect.minX + rect.minX * captureRect.width,
+            y: captureRect.minY + rect.minY * captureRect.height,
+            width: rect.width * captureRect.width,
+            height: rect.height * captureRect.height
+        )
+        HighlightOverlayPresenter.shared.show(around: globalRect, duration: nil, padding: 6)
     }
 }

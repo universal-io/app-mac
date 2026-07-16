@@ -20,7 +20,11 @@ final class HighlightOverlayPresenter {
     /// `ScreenshotAttachment.captureRect`. `duration: nil` keeps the ring up
     /// until the next `show`/`hide` — copilot mode needs the target to stay
     /// marked while the user moves the mouse over to click it.
-    func show(around cgRect: CGRect, duration: TimeInterval? = 2.6) {
+    func show(
+        around cgRect: CGRect,
+        duration: TimeInterval? = 2.6,
+        padding: CGFloat = 14
+    ) {
         hide()
 
         // CG (top-left origin) → Cocoa global (bottom-left of main display).
@@ -33,8 +37,7 @@ final class HighlightOverlayPresenter {
         )
         // Padding so the ring surrounds rather than covers, plus room for
         // the stroke and glow.
-        let margin: CGFloat = 14
-        let frame = cocoaTarget.insetBy(dx: -margin, dy: -margin)
+        let frame = cocoaTarget.insetBy(dx: -padding, dy: -padding)
 
         let window = NSWindow(
             contentRect: frame,
