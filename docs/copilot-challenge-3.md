@@ -108,7 +108,8 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
 | B5 | アプリ固有API（GA4 API等） | 最高精度 | 個別連携=ゼロインテグレーション違反。個社ハーネスの領域 |
 | B6 | ユーザー協働（見つからない時に人間に探させる/教えさせる） | 原理的限界の脱出口 | UX設計が必要。「確証がなければ止まる」の先の一手として有望、挑戦4以降の候補 |
 
-→ 方針: B2+B3+B4を**候補（candidate）として全部モデルに渡し、単独では決めさせない**。
+→ 当初案はB2+B3+B4を常にモデルへ渡す構成だったが、2026-07-16に用途別へ更新した。
+Visionは画像のみ、操作はAX候補から開始し、DOM/OCR/画像探索は候補欠落の実測後に一つずつ加える。
 
 ### 軸C: 位置決め（どこを光らせるか）
 
@@ -171,28 +172,28 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
 
 ## 5. CTO判断（第3次挑戦の構成）
 
-**選択: A1(+A2の反復) × B2+B3+B4候補統合 × C3(+C6例外) × D2 × E2 × F1 × G1 × H2+H3**
+**選択（2026-07-16更新）: 用途別センサー経路 × C3 × D2 × E2 × G1 × H2+H3**
 
 ```
 安定キャプチャ（遷移検知で stale を排除）
-  ↓
-画面情報の収集: 画像 + AX/DOM由来/OCR候補（親子関係・状態・矩形付き）
-  ↓
-最高品質マルチモーダルモデル 1コール
-  入力: 現在画面（十分な解像度）/ ユーザーの目的 / 直近の案内と画面変化 / 候補一覧
-  出力: { mode: answer|guide|completed|clarification,
-          message, target_candidate_id, progress }
-  ↓
-決定論的レンダラー: candidate ID → 矩形変換 → ハイライト（コードが座標を保証）
-  ↓
-クリック・画面変化・安定化を監視 → 新しい画面で次ターン（毎ターン再計画）
+  ├─ Vision: 画像 → VLM → observation|answer|clarification
+  └─ Copilot: AX/DOM候補（画像なし）
+       ├─ 一意なラベル一致 → ax_exact（モデルなし）
+       ├─ 曖昧 → text-only LLM → ax_llm（提示されたcandidate IDのみ）
+       └─ 候補なし → ax_unavailable / clarification（自動画像fallbackなし）
+             ↓
+       candidate ID → 決定論的な矩形変換 → 拡大・赤枠
+             ↓
+       クリック・画面安定化 → 新captureで次ターン
 ```
 
 **この構成を選ぶ理由（他を選ばない理由）**:
 - 第1次の死因（同名ラベル・再現性）はC3とE2が直接潰す。第2次の死因（接合部・検閲・
   入力劣化）はA1とH1廃止が直接潰す。過去の死因に同じ形で当たらない最小構成がこれ。
-- 唯一の未知数を「最高品質モデル1コールの実力」に**集約**できる。第3次が失敗した場合、
-  死因が構成のどこかではなくモデル上限だと特定でき、挑戦4の分岐（§6）が明確になる。
+- Visionと操作を明示モードで分け、自然言語による隠れたルーティングを置かない。操作経路は
+  `ax_exact / ax_llm / ax_unavailable`に限定し、どれを通ったかを毎ターン表示・記録する。
+- DOMと画像探索は、AX候補欠落の実測後に追加する精度レイヤーとする。自動fallbackを先に
+  入れないことで、失敗原因と実効経路を隠さない。
 - 堅牢性は決定論的外殻（H3＋trace/replay＋実効モデル記録）で第2次より**強く**なる。
 
 **ただし、これはアイデアであり、実測で棄却されうる。** 確定仕様ではない。
@@ -255,17 +256,24 @@ navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md�
   Sol / `max`は品質上限の基準として保持し、実行設定をGPT-5.6 Luna / `none`へ固定変更する。
   fallbackなし、`detail: original`、25,000 output token上限、実効設定の開発表示は維持する。
   同一画面でLuna基準を1回確認してから、candidate収集結果の開発表示へ進む。
+- 操作経路開始（2026-07-16）: `読む / 案内`を明示モード化。capture時にAX候補を最大250件・
+  1秒で固定し、`案内`では画像を送らない。一意一致は`ax_exact`、それ以外はLuna / `none`の
+  text-only `ax_llm`、候補不足は明示停止とした。route・実効モデル・AX件数・candidate IDを
+  開発UIへ表示し、選択candidateの矩形をスクリーンショット上で自動拡大・赤枠表示する。
+  DOM、画像fallback、実画面上の常駐ハイライト、クリック後進捗判定は未接続。
+- 操作経路のコード検証: web test 73件、対象lint、TypeScript、Next production build、macOS Debug
+  `CODE_SIGNING_ALLOWED=NO`が成功。実画面のAX candidate recall、`ax_exact / ax_llm`選択、赤枠位置は未検証。
 
-- **仮説**: 最高品質モデル1コール＋候補ID＋決定論外殻で、GA4級のWebアプリの
-  「質問→案内→完了」が誤ハイライトなしで通る。
+- **仮説**: Visionは画像VLM、操作はAXの決定論一致またはtext-only candidate選択へ分離しても、
+  GA4級のWebアプリの「質問→案内→完了」が誤ハイライトなしで通り、常時VLMより速く安くなる。
 - **合格条件**: §5の受け入れ条件 ＋ GA4 golden path（国・地域／デバイス別／同名概要の
   区別を含む20〜30ケース）で誤ハイライト0・誤advance 0・stale採用0。
-- **棄却条件（早期判定）**: 十分な入力を与えた最高品質モデルでも、(a) candidate選択の
-  誤りが親文脈があっても頻発する、または (b) 進捗判断が新規captureを与えても誤る場合、
-  「単一コールの認知品質」が原因と確定し、挑戦4へ。
-- **実装順**: ①Responses APIアダプタ（fail-loud） → ②ワンコールエンジン（白紙モジュール、
-  旧navigate-engineへのimport禁止） → ③クライアント切替（継ぎ目1つ・フラグなし） →
-  ④ゲート/言い訳バナー撤去 → ⑤golden path計測 → 合格で旧経路削除。
+- **棄却条件（早期判定）**: (a) 正解候補がAXにあるのにtext-only選択が親文脈付きでも頻繁に誤る、
+  (b) 正解候補のAX欠落が頻発する、または (c) 新規captureでも進捗判断を誤る場合。死因ごとに
+  DOM追加、明示的な画像探索、typed postconditionのいずれか一つだけを次の比較へ加える。
+- **実装順**: ①Vision-first品質上限 → ②Luna / `none`比較 → ③明示`読む / 案内`モード →
+  ④AX候補固定・経路表示・スクリーンショット赤枠 → ⑤実画面で候補recall/selection計測 →
+  ⑥不足したセンサーだけ追加 → ⑦クリック後の新capture反復 → ⑧golden path計測。
 
 ### 挑戦4以降のバックログ（挑戦3の死因別の分岐）
 

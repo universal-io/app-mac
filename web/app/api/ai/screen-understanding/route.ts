@@ -8,10 +8,12 @@ import {
 } from "@/lib/server/gateway";
 import { ProviderCallError } from "@/lib/server/review-engine";
 import {
+  runScreenAction,
   runScreenUnderstanding,
   SCREEN_UNDERSTANDING_IMAGE_DETAIL,
   SCREEN_UNDERSTANDING_MODEL_ID,
   SCREEN_UNDERSTANDING_REASONING_EFFORT,
+  type ScreenUnderstandingCandidate,
   type ScreenUnderstandingTurn,
 } from "@/lib/server/screen-understanding-engine";
 
@@ -19,16 +21,26 @@ const MAX_IMAGE_BASE64_CHARS = 4 * 1024 * 1024;
 const MAX_CAPTURE_ID_CHARS = 128;
 const MAX_TURNS = 20;
 const MAX_TURN_CHARS = 4_000;
+const MAX_CANDIDATES = 250;
 
 type ScreenUnderstandingRequestBody = {
   request_id?: string;
   operation?: string;
   input?: {
+    task?: "vision" | "action";
     capture_id?: string;
     image_base64?: string;
     media_type?: string;
     question?: string;
     turns?: ScreenUnderstandingTurn[];
+    candidates?: Array<{
+      id?: string;
+      source?: string;
+      role?: string;
+      label?: string;
+      parent_label?: string;
+      states?: string[];
+    }>;
   };
   preferences?: { output_language?: string };
   client?: { platform?: string; app_version?: string };
@@ -48,10 +60,19 @@ export async function POST(request: Request): Promise<Response> {
     if (validationError) return validationError;
 
     const imageBase64 = body.input!.image_base64!;
+    const task = body.input!.task!;
     const mediaType = body.input!.media_type ?? "image/png";
     const captureId = body.input!.capture_id!;
     const question = body.input!.question?.trim();
     const turns = body.input!.turns ?? [];
+    const candidates = (body.input!.candidates ?? []).map((candidate) => ({
+      id: candidate.id!,
+      source: candidate.source as "ax" | "dom",
+      role: candidate.role,
+      label: candidate.label!,
+      parentLabel: candidate.parent_label,
+      states: candidate.states ?? [],
+    })) satisfies ScreenUnderstandingCandidate[];
     const language = body.preferences!.output_language as "japanese" | "english";
 
     const { userId, tenantId, entitlement } = await authenticate(request);
@@ -59,11 +80,13 @@ export async function POST(request: Request): Promise<Response> {
 
     const metadata = {
       challenge: 3,
+      task,
       capture_id: captureId,
       platform: body.client!.platform,
       app_version: body.client?.app_version,
       media_type: mediaType,
-      image_base64_chars: imageBase64.length,
+      image_base64_chars: imageBase64?.length ?? 0,
+      candidate_count: candidates.length,
       turn_count: turns.length,
       has_question: Boolean(question),
       api: "responses",
@@ -74,12 +97,14 @@ export async function POST(request: Request): Promise<Response> {
 
     const started = Date.now();
     try {
-      const output = await runScreenUnderstanding({
-        imageDataURL: `data:${mediaType};base64,${imageBase64}`,
-        question,
-        turns,
-        language,
-      });
+      const output = task === "action"
+        ? await runScreenAction({ question: question!, turns, candidates, language })
+        : await runScreenUnderstanding({
+          imageDataURL: `data:${mediaType};base64,${imageBase64}`,
+          question,
+          turns,
+          language,
+        });
       const latencyMs = Date.now() - started;
       await recordUsage(tenantId, userId, {
         operation: "screen_understanding",
@@ -87,7 +112,7 @@ export async function POST(request: Request): Promise<Response> {
         requestId: requestId!,
         status: "success",
         modelVendor: output.modelVendor,
-        modelId: output.modelId,
+        modelId: output.modelId ?? undefined,
         inputUnits: output.inputTokens,
         outputUnits: output.outputTokens,
         latencyMs,
@@ -97,11 +122,18 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({
         request_id: requestId,
         capture_id: captureId,
-        result: output.result,
+        result: {
+          mode: output.result.mode,
+          message: output.result.message,
+          observations: output.result.observations,
+          uncertainties: output.result.uncertainties,
+          target_candidate_id: output.result.targetCandidateId,
+        },
         meta: {
           output_language: language,
           model_vendor: output.modelVendor,
           model_id: output.modelId,
+          route: output.route,
           api: "responses",
           image_detail: SCREEN_UNDERSTANDING_IMAGE_DETAIL,
           reasoning_effort: SCREEN_UNDERSTANDING_REASONING_EFFORT,
@@ -167,8 +199,12 @@ function validateBody(
   if (!captureId || captureId.length > MAX_CAPTURE_ID_CHARS) {
     return errorResponse(400, "BAD_REQUEST", "A valid input.capture_id is required.", requestId);
   }
+  const task = body.input?.task;
+  if (task !== "vision" && task !== "action") {
+    return errorResponse(400, "BAD_REQUEST", "input.task must be 'vision' or 'action'.", requestId);
+  }
   const imageBase64 = body.input?.image_base64;
-  if (!imageBase64 || imageBase64.length > MAX_IMAGE_BASE64_CHARS) {
+  if (task === "vision" && (!imageBase64 || imageBase64.length > MAX_IMAGE_BASE64_CHARS)) {
     return errorResponse(400, "BAD_REQUEST", "A valid input.image_base64 is required.", requestId);
   }
   const mediaType = body.input?.media_type ?? "image/png";
@@ -183,6 +219,9 @@ function validateBody(
   if (body.input?.question && body.input.question.length > MAX_TURN_CHARS) {
     return errorResponse(400, "BAD_REQUEST", "input.question is too long.", requestId);
   }
+  if (task === "action" && !body.input?.question?.trim()) {
+    return errorResponse(400, "BAD_REQUEST", "input.question is required for action tasks.", requestId);
+  }
   const turns = body.input?.turns ?? [];
   if (
     !Array.isArray(turns)
@@ -194,6 +233,27 @@ function validateBody(
     ))
   ) {
     return errorResponse(400, "BAD_REQUEST", "input.turns is invalid.", requestId);
+  }
+  const candidates = body.input?.candidates ?? [];
+  if (
+    !Array.isArray(candidates)
+    || candidates.length > MAX_CANDIDATES
+    || candidates.some((candidate) => (
+      typeof candidate.id !== "string" || candidate.id.length === 0 || candidate.id.length > 128
+      || (candidate.source !== "ax" && candidate.source !== "dom")
+      || typeof candidate.label !== "string" || candidate.label.length === 0
+      || candidate.label.length > 512
+      || (candidate.role !== undefined
+        && (typeof candidate.role !== "string" || candidate.role.length > 64))
+      || (candidate.parent_label !== undefined
+        && (typeof candidate.parent_label !== "string" || candidate.parent_label.length > 512))
+      || !Array.isArray(candidate.states)
+      || candidate.states.length > 16
+      || candidate.states.some((state) => typeof state !== "string" || state.length > 64)
+    ))
+    || new Set(candidates.map((candidate) => candidate.id)).size !== candidates.length
+  ) {
+    return errorResponse(400, "BAD_REQUEST", "input.candidates is invalid.", requestId);
   }
   const language = body.preferences?.output_language;
   if (language !== "japanese" && language !== "english") {

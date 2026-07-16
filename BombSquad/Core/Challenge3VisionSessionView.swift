@@ -29,6 +29,10 @@ struct Challenge3VisionSessionView: View {
         Binding(get: { session.focusedField }, set: { session.focusedField = $0 })
     }
 
+    private var interactionMode: Binding<Challenge3InteractionMode> {
+        Binding(get: { session.interactionMode }, set: { session.setInteractionMode($0) })
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
@@ -55,13 +59,21 @@ struct Challenge3VisionSessionView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.tint)
             if let metadata = session.metadata {
-                Text("\(metadata.modelID) · \(metadata.latencyMs) ms")
+                Text("\(metadata.route) · \(metadata.modelID ?? "no-model") · \(metadata.latencyMs) ms")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
             GatewayOverrideBadge()
             Spacer()
+            Picker("モード", selection: interactionMode) {
+                Text("読む").tag(Challenge3InteractionMode.vision)
+                Text("案内").tag(Challenge3InteractionMode.action)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 116)
+            .disabled(session.isLoading)
             FoundationManagementMenu()
         }
         .background(WindowDragHandle())
@@ -82,6 +94,9 @@ struct Challenge3VisionSessionView: View {
                 .help("画像を移動・拡大する")
                 .accessibilityLabel("画像を移動・拡大する")
                 Spacer()
+                Text(session.candidatesReady ? "AX \(session.candidates.count)" : "AX …")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
                 Text(session.attachment.id.uuidString.prefix(8))
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
@@ -95,19 +110,34 @@ struct Challenge3VisionSessionView: View {
                     tool: previewTool,
                     annotationTint: .red,
                     annotations: $annotations,
-                    highlight: nil
+                    highlight: session.screenshotHighlight
                 )
                 .padding(4)
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let candidate = session.selectedCandidate {
+                Label(
+                    "\(session.metadata?.route ?? "unknown") · \(candidate.id) · \(candidate.label)",
+                    systemImage: "scope"
+                )
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help("選択経路・candidate ID・AXラベル")
+            }
         }
         .padding()
     }
 
     private var conversationColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("読み取り結果", systemImage: "doc.text.magnifyingglass")
+            Label(
+                session.interactionMode == .vision ? "読み取り結果" : "操作案内",
+                systemImage: session.interactionMode == .vision
+                    ? "doc.text.magnifyingglass"
+                    : "cursorarrow.rays"
+            )
                 .font(.headline)
 
             ScrollViewReader { proxy in

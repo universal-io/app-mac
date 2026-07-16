@@ -435,8 +435,13 @@ final class SessionCoordinator {
 
         switch completion {
         case .attachment(let attachment):
+            let candidateCaptureTask = VisionObservationCaptureService.captureTask(
+                preferredPID: summonTargetApp?.processIdentifier,
+                attachment: attachment
+            )
             let session = Challenge3VisionSession(
                 attachment: attachment,
+                candidateCaptureTask: candidateCaptureTask,
                 onRequestPanelClose: { [weak self] in
                     self?.close(reason: "challenge3VisionRequestedClose")
                 }

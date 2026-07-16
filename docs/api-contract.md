@@ -483,6 +483,13 @@ The active Challenge 3 comparison configuration is fixed in code:
 - output budget: 25,000 tokens
 - fallback: none; any provider/model failure returns non-2xx
 
+The route has two explicit tasks. It never infers the task from natural language:
+
+- `vision`: sends the immutable screenshot to the VLM. AX/DOM candidates are not sent.
+- `action`: sends AX/DOM candidates without an image. A unique label match uses no model;
+  otherwise Luna selects one supplied candidate from text only. Candidate absence or an
+  unsupported target stops explicitly; there is no automatic visual fallback.
+
 ### Request Body
 
 ```json
@@ -490,6 +497,7 @@ The active Challenge 3 comparison configuration is fixed in code:
   "request_id": "...",
   "operation": "screen_understanding",
   "input": {
+    "task": "vision",
     "capture_id": "immutable-client-capture-id",
     "image_base64": "（base64。最大4M文字）",
     "media_type": "image/png",
@@ -504,13 +512,41 @@ The active Challenge 3 comparison configuration is fixed in code:
 }
 ```
 
-- `capture_id` and `image_base64` are required. Every turn remains bound to
-  the same immutable capture until the user explicitly recaptures.
+Action request example:
+
+```json
+{
+  "request_id": "...",
+  "operation": "screen_understanding",
+  "input": {
+    "task": "action",
+    "capture_id": "immutable-client-capture-id",
+    "question": "次は何をしたらいいですか？",
+    "turns": [],
+    "candidates": [
+      {
+        "id": "ax:42",
+        "source": "ax",
+        "role": "link",
+        "label": "テクノロジー",
+        "parent_label": "ユーザー",
+        "states": []
+      }
+    ]
+  },
+  "preferences": { "output_language": "japanese" },
+  "client": { "platform": "macos", "app_version": "0.1.0" }
+}
+```
+
+- `task` and `capture_id` are required. `vision` requires `image_base64`; `action`
+  requires `question` and accepts at most 250 capture-fixed candidates.
+- Every turn remains bound to the same immutable capture until the user explicitly recaptures.
 - `question` is omitted for the initial observation. It is required by the
   client for follow-up turns.
-- `turns` contains at most 20 text-only turns about that capture. The current
-  screenshot is sent on every request so model-side conversation state is not
-  authoritative.
+- `turns` contains at most 20 text-only turns about that capture. `vision` sends
+  the current screenshot on every request; `action` never sends it. Model-side
+  conversation state is not authoritative.
 
 ### Success Response
 
@@ -519,14 +555,16 @@ The active Challenge 3 comparison configuration is fixed in code:
   "request_id": "...",
   "capture_id": "immutable-client-capture-id",
   "result": {
-    "mode": "observation | answer | clarification",
+    "mode": "observation | answer | guide | clarification",
     "message": "ユーザーへ表示する短い回答",
     "observations": ["画面から直接確認できた事実"],
-    "uncertainties": ["画面からは断定できない点"]
+    "uncertainties": ["画面からは断定できない点"],
+    "target_candidate_id": null
   },
   "meta": {
     "model_vendor": "openai",
     "model_id": "gpt-5.6-luna",
+    "route": "vision_vlm | ax_exact | ax_llm | ax_unavailable",
     "api": "responses",
     "image_detail": "original",
     "reasoning_effort": "none",
@@ -536,8 +574,13 @@ The active Challenge 3 comparison configuration is fixed in code:
 }
 ```
 
-The client must treat a mismatched `capture_id`, any model other than
-`gpt-5.6-luna`, or `fallback_used != false` as a failed Challenge 3 turn.
+For `ax_exact` and `ax_unavailable`, `model_id` is `null` and token usage is zero. For `vision_vlm`
+and `ax_llm`, `model_id` must be `gpt-5.6-luna`. The client resolves
+`target_candidate_id` only against the candidate set from the same capture;
+unknown IDs and candidates without a usable rectangle are rejected.
+
+The client must treat a mismatched `capture_id`, a route/model mismatch, an unknown
+candidate ID, or `fallback_used != false` as a failed Challenge 3 turn.
 Usage events use `operation = screen_understanding` and retain only request
 metadata, token counts, effective model, and `capture_id`; image/question text
 is not persisted by this route.
