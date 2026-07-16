@@ -252,21 +252,66 @@ private struct Challenge3CopilotStripView: View {
 
             Divider()
 
+            if let errorMessage = session.errorMessage {
+                ErrorBanner(message: errorMessage)
+            }
+
             Text(session.latestInstruction)
                 .font(.callout)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .textSelection(.enabled)
 
             HStack(spacing: 8) {
-                Image(systemName: "cursorarrow.click.2")
-                    .foregroundStyle(.secondary)
-                Text("赤い枠の場所をクリックしてください")
+                if session.isCopilotChecking {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: statusIcon)
+                        .foregroundStyle(.secondary)
+                }
+                Text(statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                if session.copilotState != .complete {
+                    Button {
+                        session.requestCopilotProgressCheck()
+                    } label: {
+                        Label("再確認", systemImage: "arrow.clockwise")
+                    }
+                    .controlSize(.small)
+                    .disabled(session.isCopilotChecking)
+                }
             }
         }
         .padding(14)
         .background(WindowDragHandle())
+    }
+
+    private var statusText: String {
+        switch session.copilotState {
+        case .idle:
+            return "赤い枠の場所をクリックしてください。画面変化を自動で確認します"
+        case .waitingForChange:
+            return "クリック後の画面変化と安定を待っています…"
+        case .evaluating:
+            return "新しい画面から次の案内を確認しています…"
+        case .timedOut:
+            return "画面変化を確認できませんでした。反映後に再確認してください"
+        case .complete:
+            return "目的の情報を確認しました"
+        case .clarification:
+            return "次の操作を特定できませんでした。画面を確認して再試行してください"
+        }
+    }
+
+    private var statusIcon: String {
+        switch session.copilotState {
+        case .complete:
+            return "checkmark.circle.fill"
+        case .timedOut, .clarification:
+            return "exclamationmark.circle"
+        default:
+            return "cursorarrow.click.2"
+        }
     }
 }

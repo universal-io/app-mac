@@ -305,6 +305,13 @@ Copilot（後続段階）
   中央パネルを既存`AppMode.copilot`の右下帯へ切り替え、candidateの正規化矩形をcapture座標へ
   決定論的に戻して実画面へ永続赤枠を表示する。旧`VisionSession`、Navigator、Run、Verifierは
   呼び出さない。macOS Debug build成功。クリック後の新snapshot反復は次コミットで接続する。
+- Copilot新snapshot反復（2026-07-16）: 右下帯の表示中だけglobal mouse-upを監視し、クリック後に
+  元captureと同じdisplay/regionを最大8回・350 ms間隔で撮影する。48×48 grayscale差分で画面変化を
+  検知し、変化後の連続captureが安定閾値内に入った一枚だけを採用する。新captureではAX候補を取り直し、
+  `goal + previous_instruction + 新画像 + 新AX`をLunaの単一`snapshot_vlm`へ渡す。`guide`なら新candidateを
+  実画面へ永続表示、`answer`なら完了、`clarification`なら自動反復停止、変化/安定を確認できなければ
+  fail-loudで手動「再確認」を残す。旧captureの候補は新画像へ持ち越さない。web test 72件、対象lint、
+  TypeScript、Next production build、macOS Debug/Release buildが成功。実画面クリック反復は未検証。
 
 - **仮説**: 1枚の固定画像・同時点のAX候補・会話履歴を単一VLMへ渡せば、モード切替や役職分割なしで
   Spot Visionの回答と画面内案内が成立し、その1ターンを再帰化してCopilotへ発展できる。

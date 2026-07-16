@@ -1,4 +1,14 @@
+import AppKit
 import Foundation
+
+enum Challenge3CopilotState: Equatable {
+    case idle
+    case waitingForChange
+    case evaluating
+    case timedOut
+    case complete
+    case clarification
+}
 
 struct Challenge3VisionDisplayTurn: Identifiable, Equatable {
     let id = UUID()
@@ -22,6 +32,8 @@ final class Challenge3VisionSession: ObservableObject {
     @Published private(set) var screenshotHighlight: CGRect?
     @Published private(set) var isCopilotActive = false
     @Published private(set) var copilotGoal: String?
+    @Published private(set) var isCopilotChecking = false
+    @Published private(set) var copilotState: Challenge3CopilotState = .idle
     @Published var input = ""
     @Published var errorMessage: String?
     @Published var focusedField: FocusField? = .navigator
@@ -30,20 +42,25 @@ final class Challenge3VisionSession: ObservableObject {
 
     private let client: GatewayScreenUnderstandingClient?
     private let outputLanguage: OutputLanguage
+    private let preferredTargetPID: pid_t?
     private let candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>
     private let onRequestPanelClose: () -> Void
     private let onRequestModeTransition: (AppMode, String) -> Void
     private var requestTask: Task<Void, Never>?
+    private var copilotProgressTask: Task<Void, Never>?
+    private var copilotClickMonitor: Any?
     private var hasStarted = false
 
     init(
         attachment: ScreenshotAttachment,
+        preferredTargetPID: pid_t? = nil,
         candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>? = nil,
         client: GatewayScreenUnderstandingClient? = GatewayScreenUnderstandingClient.make(),
         onRequestModeTransition: @escaping (AppMode, String) -> Void = { _, _ in },
         onRequestPanelClose: @escaping () -> Void = {}
     ) {
         self.attachment = attachment
+        self.preferredTargetPID = preferredTargetPID
         self.candidateCaptureTask = candidateCaptureTask ?? Task {
             VisionObservationCaptureService.Snapshot(
                 environment: nil,
@@ -80,10 +97,11 @@ final class Challenge3VisionSession: ObservableObject {
     func startIfNeeded() {
         guard !hasStarted else { return }
         hasStarted = true
+        let expectedCaptureID = attachment.id
         Task { [weak self] in
             guard let self else { return }
             let snapshot = await self.candidateCaptureTask.value
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, self.attachment.id == expectedCaptureID else { return }
             self.candidates = snapshot.axCandidates
             self.candidateDiagnostics = snapshot.diagnostics
             self.candidatesReady = true
@@ -123,14 +141,20 @@ final class Challenge3VisionSession: ObservableObject {
               let goal = turns.last(where: { $0.role == .user })?.text else { return }
         copilotGoal = goal
         isCopilotActive = true
+        copilotState = .idle
         focusedField = nil
         showLiveHighlight()
+        installCopilotClickMonitor()
         onRequestModeTransition(.copilot, "challenge3CopilotStarted")
     }
 
     func stopCopilot() {
         guard isCopilotActive else { return }
         isCopilotActive = false
+        copilotProgressTask?.cancel()
+        copilotProgressTask = nil
+        isCopilotChecking = false
+        removeCopilotClickMonitor()
         HighlightOverlayPresenter.shared.hide()
         onRequestModeTransition(.navigator, "challenge3CopilotStopped")
     }
@@ -138,7 +162,14 @@ final class Challenge3VisionSession: ObservableObject {
     func tearDown() {
         requestTask?.cancel()
         requestTask = nil
+        copilotProgressTask?.cancel()
+        copilotProgressTask = nil
+        removeCopilotClickMonitor()
         HighlightOverlayPresenter.shared.hide()
+    }
+
+    func requestCopilotProgressCheck() {
+        scheduleCopilotProgressCheck(after: 0)
     }
 
     private var wireTurns: [ScreenUnderstandingTurn] {
@@ -162,13 +193,18 @@ final class Challenge3VisionSession: ObservableObject {
                 let fixedCandidates: [VisionObservation.Candidate]
                 let fixedDiagnostics: VisionObservationCaptureService.Diagnostics?
                 if question != nil {
-                    let snapshot = await self.candidateCaptureTask.value
-                    try Task.checkCancellation()
-                    fixedCandidates = snapshot.axCandidates
-                    fixedDiagnostics = snapshot.diagnostics
-                    self.candidates = fixedCandidates
-                    self.candidateDiagnostics = snapshot.diagnostics
-                    self.candidatesReady = true
+                    if self.candidatesReady {
+                        fixedCandidates = self.candidates
+                        fixedDiagnostics = self.candidateDiagnostics
+                    } else {
+                        let snapshot = await self.candidateCaptureTask.value
+                        try Task.checkCancellation()
+                        fixedCandidates = snapshot.axCandidates
+                        fixedDiagnostics = snapshot.diagnostics
+                        self.candidates = fixedCandidates
+                        self.candidateDiagnostics = snapshot.diagnostics
+                        self.candidatesReady = true
+                    }
                 } else {
                     fixedCandidates = []
                     fixedDiagnostics = nil
@@ -186,32 +222,7 @@ final class Challenge3VisionSession: ObservableObject {
                       self.attachment.id == expectedCaptureID else {
                     throw ProviderError.decoding("Challenge 3 capture changed during the request.")
                 }
-                self.metadata = response.metadata
-                if let targetID = response.result.targetCandidateID {
-                    guard let candidate = fixedCandidates.first(where: { $0.id == targetID }),
-                          let rect = candidate.rect else {
-                        throw ProviderError.decoding(
-                            "Challenge 3 selected a candidate without a usable capture rectangle."
-                        )
-                    }
-                    self.selectedCandidate = candidate
-                    self.screenshotHighlight = rect
-                    if self.isCopilotActive {
-                        self.showLiveHighlight()
-                    }
-                } else {
-                    self.selectedCandidate = nil
-                    self.screenshotHighlight = nil
-                    if self.isCopilotActive {
-                        HighlightOverlayPresenter.shared.hide()
-                    }
-                }
-                self.turns.append(Challenge3VisionDisplayTurn(
-                    role: .assistant,
-                    text: response.result.message,
-                    mode: response.result.mode,
-                    uncertainties: response.result.uncertainties
-                ))
+                try self.apply(response, candidates: fixedCandidates)
             } catch is CancellationError {
                 return
             } catch {
@@ -223,6 +234,187 @@ final class Challenge3VisionSession: ObservableObject {
 #endif
             }
         }
+    }
+
+    private func installCopilotClickMonitor() {
+        guard copilotClickMonitor == nil else { return }
+        copilotClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) {
+            [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.scheduleCopilotProgressCheck(after: 700_000_000)
+            }
+        }
+    }
+
+    private func removeCopilotClickMonitor() {
+        if let copilotClickMonitor {
+            NSEvent.removeMonitor(copilotClickMonitor)
+            self.copilotClickMonitor = nil
+        }
+    }
+
+    private func scheduleCopilotProgressCheck(after delay: UInt64) {
+        guard isCopilotActive, !isCopilotChecking, copilotState != .complete else { return }
+        copilotProgressTask?.cancel()
+        isCopilotChecking = true
+        copilotState = .waitingForChange
+        errorMessage = nil
+        HighlightOverlayPresenter.shared.hide()
+        let baseline = attachment
+        let goal = copilotGoal
+        let previousInstruction = latestInstruction
+        copilotProgressTask = Task { [weak self] in
+            guard let self, let goal else { return }
+            defer {
+                self.isCopilotChecking = false
+                self.copilotProgressTask = nil
+            }
+            do {
+                if delay > 0 { try await Task.sleep(nanoseconds: delay) }
+                let outcome = try await StableScreenCaptureService.capture(after: baseline)
+                try Task.checkCancellation()
+                guard self.isCopilotActive else { return }
+                switch outcome {
+                case .timedOut:
+                    self.copilotState = .timedOut
+                    self.showLiveHighlight()
+                case .stable(let newAttachment):
+                    await self.evaluateCopilotProgress(
+                        attachment: newAttachment,
+                        goal: goal,
+                        previousInstruction: previousInstruction
+                    )
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self.copilotState = .timedOut
+#if DEBUG
+                self.errorMessage =
+                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+#else
+                self.errorMessage = "画面を確認できませんでした。「再確認」を押してください。"
+#endif
+            }
+        }
+    }
+
+    private func evaluateCopilotProgress(
+        attachment newAttachment: ScreenshotAttachment,
+        goal: String,
+        previousInstruction: String
+    ) async {
+        guard let client else { return }
+        copilotState = .evaluating
+        let snapshotTask = VisionObservationCaptureService.captureTask(
+            preferredPID: preferredTargetPID,
+            attachment: newAttachment
+        )
+        let snapshot = await snapshotTask.value
+        guard !Task.isCancelled, isCopilotActive else {
+            try? FileManager.default.removeItem(at: newAttachment.url)
+            return
+        }
+        let previousAttachment = attachment
+        let previousCandidates = candidates
+        let previousDiagnostics = candidateDiagnostics
+        do {
+            let response = try await client.understand(
+                attachment: newAttachment,
+                question: nil,
+                turns: [],
+                candidates: snapshot.axCandidates,
+                candidateDiagnostics: snapshot.diagnostics,
+                guidanceContext: ScreenGuidanceContext(
+                    goal: goal,
+                    previousInstruction: previousInstruction
+                ),
+                language: outputLanguage
+            )
+            try Task.checkCancellation()
+            guard isCopilotActive, response.captureID == newAttachment.id else {
+                try? FileManager.default.removeItem(at: newAttachment.url)
+                return
+            }
+            guard response.result.mode != .observation else {
+                throw ProviderError.decoding(
+                    "Challenge 3 progress turn returned observation mode."
+                )
+            }
+            if let targetID = response.result.targetCandidateID {
+                guard snapshot.axCandidates.contains(where: {
+                    $0.id == targetID && $0.rect != nil
+                }) else {
+                    throw ProviderError.decoding(
+                        "Challenge 3 progress selected an unusable candidate."
+                    )
+                }
+            }
+            attachment = newAttachment
+            candidates = snapshot.axCandidates
+            candidateDiagnostics = snapshot.diagnostics
+            candidatesReady = true
+            try apply(response, candidates: snapshot.axCandidates)
+            if previousAttachment.id != newAttachment.id {
+                try? FileManager.default.removeItem(at: previousAttachment.url)
+            }
+            switch response.result.mode {
+            case .answer:
+                copilotState = .complete
+                removeCopilotClickMonitor()
+                HighlightOverlayPresenter.shared.hide()
+            case .guide:
+                copilotState = .idle
+                installCopilotClickMonitor()
+            case .clarification:
+                copilotState = .clarification
+                removeCopilotClickMonitor()
+                HighlightOverlayPresenter.shared.hide()
+            case .observation:
+                break
+            }
+        } catch {
+            if attachment.id == newAttachment.id {
+                attachment = previousAttachment
+                candidates = previousCandidates
+                candidateDiagnostics = previousDiagnostics
+            }
+            try? FileManager.default.removeItem(at: newAttachment.url)
+            copilotState = .timedOut
+#if DEBUG
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+#else
+            errorMessage = "次の案内を確認できませんでした。「再確認」を押してください。"
+#endif
+        }
+    }
+
+    private func apply(
+        _ response: ScreenUnderstandingResponse,
+        candidates fixedCandidates: [VisionObservation.Candidate]
+    ) throws {
+        metadata = response.metadata
+        if let targetID = response.result.targetCandidateID {
+            guard let candidate = fixedCandidates.first(where: { $0.id == targetID }),
+                  let rect = candidate.rect else {
+                throw ProviderError.decoding(
+                    "Challenge 3 selected a candidate without a usable capture rectangle."
+                )
+            }
+            selectedCandidate = candidate
+            screenshotHighlight = rect
+            if isCopilotActive { showLiveHighlight() }
+        } else {
+            selectedCandidate = nil
+            screenshotHighlight = nil
+            if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
+        }
+        turns.append(Challenge3VisionDisplayTurn(
+            role: .assistant,
+            text: response.result.message,
+            mode: response.result.mode,
+            uncertainties: response.result.uncertainties
+        ))
     }
 
     private func showLiveHighlight() {

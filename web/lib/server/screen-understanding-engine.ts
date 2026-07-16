@@ -35,6 +35,7 @@ export type ScreenUnderstandingEngineInput = {
   question?: string;
   turns: ScreenUnderstandingTurn[];
   candidates: ScreenUnderstandingCandidate[];
+  guidance?: { goal: string; previousInstruction: string };
   language: "japanese" | "english";
 };
 
@@ -145,7 +146,9 @@ function containsInternalVocabulary(result: ScreenUnderstandingResult): boolean 
 function requestBody(input: ScreenUnderstandingEngineInput): Record<string, unknown> {
   const languageName = input.language === "japanese" ? "Japanese" : "English";
   const question = input.question?.trim();
-  const task = question
+  const task = input.guidance
+    ? `Continue one human-guided task using this newly captured screen. The user has acted since the previous capture. Goal: ${input.guidance.goal}\nPrevious instruction: ${input.guidance.previousInstruction}\nFirst decide from the new screenshot whether the goal's requested information is now visible. If it is, use answer mode and state the requested result without a target. Otherwise use guide mode for exactly one next action and return the matching supplied target ID when available. Do not repeat the previous instruction when the screenshot shows it has already been completed.`
+    : question
     ? `Answer the user's latest question about the captured screen. If the user asks how to reach something or what to do next, use guide mode and give the clearest next action supported by the screenshot. Return a supplied target ID when one matches; otherwise keep the useful verbal guidance and return a null target. A missing target must never suppress or weaken the verbal guidance.\nLatest question: ${question}`
     : "Give the initial screen observation. Identify the application or service when visible, the page's purpose, and the most important current state in 1-3 concise sentences. Use observation mode and return a null target.";
   const history = formatHistory(input.turns);

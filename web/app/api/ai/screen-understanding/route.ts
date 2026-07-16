@@ -37,6 +37,10 @@ type ScreenUnderstandingRequestBody = {
       candidate_count?: number;
       truncated_reason?: string;
     };
+    guidance?: {
+      goal?: string;
+      previous_instruction?: string;
+    };
     candidates?: Array<{
       id?: string;
       source?: string;
@@ -77,6 +81,12 @@ export async function POST(request: Request): Promise<Response> {
       states: candidate.states ?? [],
     })) satisfies ScreenUnderstandingCandidate[];
     const language = body.preferences!.output_language as "japanese" | "english";
+    const guidance = body.input!.guidance
+      ? {
+          goal: body.input!.guidance.goal!,
+          previousInstruction: body.input!.guidance.previous_instruction!,
+        }
+      : undefined;
 
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
@@ -92,6 +102,7 @@ export async function POST(request: Request): Promise<Response> {
       candidate_diagnostics: body.input!.candidate_diagnostics ?? null,
       turn_count: turns.length,
       has_question: Boolean(question),
+      is_guidance_progress: Boolean(guidance),
       api: "responses",
       image_detail: SCREEN_UNDERSTANDING_IMAGE_DETAIL,
       reasoning_effort: SCREEN_UNDERSTANDING_REASONING_EFFORT,
@@ -105,6 +116,7 @@ export async function POST(request: Request): Promise<Response> {
         question,
         turns,
         candidates,
+        guidance,
         language,
       });
       const latencyMs = Date.now() - started;
@@ -216,6 +228,25 @@ function validateBody(
   }
   if (body.input?.question && body.input.question.length > MAX_TURN_CHARS) {
     return errorResponse(400, "BAD_REQUEST", "input.question is too long.", requestId);
+  }
+  const guidance = body.input?.guidance;
+  if (guidance && body.input?.question) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "input.guidance and input.question are mutually exclusive.",
+      requestId,
+    );
+  }
+  if (guidance && (
+    typeof guidance.goal !== "string"
+    || guidance.goal.trim().length === 0
+    || guidance.goal.length > MAX_TURN_CHARS
+    || typeof guidance.previous_instruction !== "string"
+    || guidance.previous_instruction.trim().length === 0
+    || guidance.previous_instruction.length > MAX_TURN_CHARS
+  )) {
+    return errorResponse(400, "BAD_REQUEST", "input.guidance is invalid.", requestId);
   }
   const turns = body.input?.turns ?? [];
   if (

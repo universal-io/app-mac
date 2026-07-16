@@ -168,6 +168,44 @@ describe("Challenge 3 screen understanding engine", () => {
     );
   });
 
+  test("recomputes one next step from a new capture while preserving only the goal", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(providerResponse({
+      mode: "guide",
+      message: "「ユーザーの環境の詳細」を選択してください。",
+      observations: [],
+      uncertainties: [],
+      targetCandidateId: "ax:environment-detail",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runScreenUnderstanding({
+      imageDataURL: "data:image/png;base64,new-screen",
+      turns: [],
+      candidates: [{
+        id: "ax:environment-detail",
+        source: "ax",
+        role: "link",
+        label: "ユーザーの環境の詳細",
+        parentLabel: "テクノロジー",
+        states: [],
+      }],
+      guidance: {
+        goal: "デバイス別のアクセス状況を確認したい",
+        previousInstruction: "テクノロジーを開いてください。",
+      },
+      language: "japanese",
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string) as {
+      input: Array<{ content: Array<{ type: string; text?: string }> }>;
+    };
+    const task = body.input[1].content[0].text ?? "";
+    expect(task).toContain("newly captured screen");
+    expect(task).toContain("デバイス別のアクセス状況を確認したい");
+    expect(task).toContain("テクノロジーを開いてください。");
+    expect(task).toContain("Do not repeat the previous instruction");
+  });
+
   test("rejects a model-selected candidate outside the supplied AX set", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(providerResponse({
       mode: "guide",

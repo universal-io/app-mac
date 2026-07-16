@@ -26,6 +26,22 @@ enum ScreenshotCaptureError: LocalizedError {
 }
 
 struct ScreenshotCaptureService {
+    func captureMatchingScope(of attachment: ScreenshotAttachment) async throws -> ScreenshotAttachment {
+        let displayID = Self.displayID(containing: attachment.captureRect)
+        guard attachment.captureScope == .region,
+              let globalRect = attachment.captureRect else {
+            return try await captureFullScreen(displayID: displayID)
+        }
+        let bounds = CGDisplayBounds(displayID)
+        let localRect = CGRect(
+            x: globalRect.minX - bounds.minX,
+            y: bounds.maxY - globalRect.maxY,
+            width: globalRect.width,
+            height: globalRect.height
+        )
+        return try await captureRegion(localRect, displayID: displayID)
+    }
+
     /// Capture the whole screen the user is looking at — the "just summon it"
     /// path of the North Star flow: the model sees exactly what the user sees.
     /// Universal I/O's own windows are excluded from the captured display so
@@ -109,6 +125,20 @@ struct ScreenshotCaptureService {
             contentFilter: filter, configuration: configuration
         )
         return (image, CGSize(width: display.width, height: display.height), display.displayID)
+    }
+
+    private static func displayID(containing rect: CGRect?) -> CGDirectDisplayID {
+        guard let rect else { return CGMainDisplayID() }
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success else {
+            return CGMainDisplayID()
+        }
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &displays, &count) == .success else {
+            return CGMainDisplayID()
+        }
+        return displays.first { CGDisplayBounds($0).contains(center) } ?? CGMainDisplayID()
     }
 
     private static func writeAttachment(
@@ -207,6 +237,97 @@ struct ScreenshotCaptureService {
               let representation = image.representations.first
         else { return nil }
         return (representation.pixelsWide, representation.pixelsHigh)
+    }
+}
+
+enum StableScreenCaptureOutcome {
+    case stable(ScreenshotAttachment)
+    case timedOut
+}
+
+enum StableScreenCaptureService {
+    private static let sampleDelayNanoseconds: UInt64 = 350_000_000
+    private static let maxAttempts = 8
+    private static let changeThreshold = 0.015
+    private static let stableThreshold = 0.003
+    private static let comparisonSide = 48
+
+    static func capture(after baseline: ScreenshotAttachment) async throws -> StableScreenCaptureOutcome {
+        let captureService = ScreenshotCaptureService()
+        var latestCapture: ScreenshotAttachment?
+        var changeDetected = false
+        defer {
+            if let latestCapture { remove(latestCapture) }
+        }
+
+        for attempt in 0..<maxAttempts {
+            let current = try await captureService.captureMatchingScope(of: baseline)
+            if Task.isCancelled {
+                remove(current)
+                throw CancellationError()
+            }
+
+            if !changeDetected {
+                let difference = await differenceRatio(baseline.url, current.url)
+                if difference >= changeThreshold {
+                    changeDetected = true
+                    latestCapture = current
+                } else {
+                    remove(current)
+                }
+            } else if let previous = latestCapture {
+                let difference = await differenceRatio(previous.url, current.url)
+                if difference <= stableThreshold {
+                    remove(previous)
+                    return .stable(current)
+                }
+                remove(previous)
+                latestCapture = current
+            }
+
+            if attempt < maxAttempts - 1 {
+                try await Task.sleep(nanoseconds: sampleDelayNanoseconds)
+            }
+        }
+
+        return .timedOut
+    }
+
+    private static func differenceRatio(_ lhs: URL, _ rhs: URL) async -> Double {
+        await Task.detached(priority: .utility) {
+            guard let left = grayscalePixels(at: lhs),
+                  let right = grayscalePixels(at: rhs),
+                  left.count == right.count,
+                  !left.isEmpty else { return 1 }
+            let total = zip(left, right).reduce(0) {
+                $0 + abs(Int($1.0) - Int($1.1))
+            }
+            return Double(total) / Double(left.count * 255)
+        }.value
+    }
+
+    private static func grayscalePixels(at url: URL) -> [UInt8]? {
+        guard let data = try? Data(contentsOf: url),
+              let source = NSBitmapImageRep(data: data),
+              let image = source.cgImage,
+              let context = CGContext(
+                data: nil,
+                width: comparisonSide,
+                height: comparisonSide,
+                bitsPerComponent: 8,
+                bytesPerRow: comparisonSide,
+                space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGImageAlphaInfo.none.rawValue
+              ) else { return nil }
+        context.interpolationQuality = .low
+        context.draw(image, in: CGRect(x: 0, y: 0, width: comparisonSide, height: comparisonSide))
+        guard let buffer = context.data else { return nil }
+        let pointer = buffer.bindMemory(to: UInt8.self, capacity: comparisonSide * comparisonSide)
+        return Array(UnsafeBufferPointer(start: pointer, count: comparisonSide * comparisonSide))
+    }
+
+    private static func remove(_ attachment: ScreenshotAttachment) {
+        try? FileManager.default.removeItem(at: attachment.url)
     }
 }
 

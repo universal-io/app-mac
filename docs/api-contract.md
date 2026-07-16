@@ -519,6 +519,10 @@ user-visible read/action mode and no secondary model route.
       "visited_nodes": 631,
       "candidate_count": 1,
       "truncated_reason": "deadline"
+    },
+    "guidance": {
+      "goal": "デバイス別のアクセス状況を確認したい",
+      "previous_instruction": "テクノロジーを開いてください。"
     }
   },
   "preferences": { "output_language": "japanese" },
@@ -531,6 +535,10 @@ user-visible read/action mode and no secondary model route.
 - Every turn remains bound to the same immutable capture until the user explicitly recaptures.
 - `question` is omitted for the initial observation. It is required by the
   client for follow-up turns.
+- `guidance` is used only after a human action produces a new stable capture. It is
+  mutually exclusive with `question` and carries only the fixed goal and previous
+  instruction. The model returns `answer` when the requested result is visible,
+  otherwise one `guide` action for the new capture.
 - `turns` contains at most 20 text-only turns about that capture. The same screenshot
   is sent on every request, so model-side conversation state is not authoritative.
 - `candidate_diagnostics` is optional and must match the candidate count. Truncation

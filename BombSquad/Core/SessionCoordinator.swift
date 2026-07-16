@@ -441,6 +441,7 @@ final class SessionCoordinator {
             )
             let session = Challenge3VisionSession(
                 attachment: attachment,
+                preferredTargetPID: summonTargetApp?.processIdentifier,
                 candidateCaptureTask: candidateCaptureTask,
                 onRequestModeTransition: { [weak self] target, reason in
                     self?.transitionChallenge3(to: target, reason: reason)

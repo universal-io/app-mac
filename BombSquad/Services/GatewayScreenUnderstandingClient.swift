@@ -11,6 +11,15 @@ struct ScreenUnderstandingTurn: Equatable {
     let text: String
 }
 
+struct ScreenGuidanceContext: Equatable {
+    let goal: String
+    let previousInstruction: String
+
+    var wirePayload: [String: Any] {
+        ["goal": goal, "previous_instruction": previousInstruction]
+    }
+}
+
 struct ScreenUnderstandingResult: Equatable {
     enum Mode: String {
         case observation
@@ -65,6 +74,7 @@ struct GatewayScreenUnderstandingClient {
         turns: [ScreenUnderstandingTurn],
         candidates: [VisionObservation.Candidate] = [],
         candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
+        guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> ScreenUnderstandingResponse {
         let encoded = try Self.encodedImage(at: attachment.url)
@@ -77,6 +87,9 @@ struct GatewayScreenUnderstandingClient {
         ]
         if let candidateDiagnostics {
             input["candidate_diagnostics"] = candidateDiagnostics.wirePayload
+        }
+        if let guidanceContext {
+            input["guidance"] = guidanceContext.wirePayload
         }
         if let question = question?.trimmingCharacters(in: .whitespacesAndNewlines),
            !question.isEmpty {
