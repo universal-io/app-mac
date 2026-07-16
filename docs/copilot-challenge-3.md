@@ -330,6 +330,19 @@ Copilot（後続段階）
   `UniversalIO-Challenge3-Replays`へ直近20件保存する。ReleaseとSupabase usageには画像・会話・候補本文を
   保存しない。これで⑤の失敗ターンを同じ入力から剖検できる。3MB超のJPEG化、20ターン上限、Chrome
   cold start時のAX候補変動は現時点で挙動を変えず、media type・エラー・AX診断をreplayとtraceで観測する。
+- 次回セッション開始点（2026-07-17）: branchは`experiment/copilot-challenge-3`、実装基準は
+  `701f19f`。まず新規実装を増やさず、署名付きDebugアプリで次を順に実画面確認する。
+  (1) Spot Visionで案内文が維持され、スクリーンショット内の赤枠が対象矩形へ収まる、
+  (2) 「案内を開始」後に右下帯と実画面の永続赤枠が出る、(3) 対象をクリックすると新しい安定captureと
+  AX候補へ更新され、同じ指示を繰り返さず次の一手または目的の答えを返す。失敗時は開発UIの
+  target app/window、`collection_root`、`capture_scope`、打切理由を記録し、Consoleに出る
+  `UniversalIO-Challenge3-Replays`のrequest/image/responseを剖検する。⑤と⑦の実画面証拠が揃うまで
+  ⑥のDOM等を追加せず、原因をcandidate選択、AX欠落、scope制約、進捗判断へ分類する。
+- ローカル起動の署名ルール（2026-07-17）: `CODE_SIGNING_ALLOWED=NO`はコンパイル検証専用で、生成物を
+  実画面テストに起動しない。未署名またはad-hoc署名の`/tmp`ビルドは、システム設定で許可済みの
+  Apple Development署名版とmacOS TCC上で別主体になり、3権限が未許可に見える。実画面テストは通常の
+  Xcode DerivedDataへApple Development署名でDebug buildし、その同じappを起動する。許可済みトグルを
+  毎回OFF/ONし直す運用にはしない。画面収録を初回許可した場合だけ、macOS要件に従って再起動する。
 
 - **仮説**: 1枚の固定画像・同時点のAX候補・会話履歴を単一VLMへ渡せば、モード切替や役職分割なしで
   Spot Visionの回答と画面内案内が成立し、その1ターンを再帰化してCopilotへ発展できる。
