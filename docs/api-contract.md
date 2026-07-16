@@ -518,7 +518,13 @@ user-visible read/action mode and no secondary model route.
       "elapsed_ms": 184,
       "visited_nodes": 631,
       "candidate_count": 1,
-      "truncated_reason": "deadline"
+      "truncated_reason": "deadline",
+      "target_app_name": "Google Chrome",
+      "target_bundle_id": "com.google.Chrome",
+      "target_window_present": true,
+      "target_window_title": "Analytics",
+      "collection_root": "focused_window",
+      "capture_scope": "display"
     },
     "guidance": {
       "goal": "デバイス別のアクセス状況を確認したい",
@@ -544,6 +550,11 @@ user-visible read/action mode and no secondary model route.
 - `candidate_diagnostics` is optional and must match the candidate count. Truncation
   reasons are `no_target_app`, `unknown_capture_rect`, `permission_denied`,
   `node_limit`, `candidate_limit`, `deadline`, or `not_configured`.
+- Candidate collection covers the frontmost application's focused AX window, falling
+  back to that application's AX root. It does not imply that every window visible in a
+  display capture was scanned. `collection_root`, target app/window fields, and
+  `capture_scope` make that boundary explicit. `target_window_title` is sent only by
+  Debug clients; Release usage does not retain it.
 
 ### Success Response
 

@@ -36,6 +36,12 @@ type ScreenUnderstandingRequestBody = {
       visited_nodes?: number;
       candidate_count?: number;
       truncated_reason?: string;
+      target_app_name?: string;
+      target_bundle_id?: string;
+      target_window_present?: boolean;
+      target_window_title?: string;
+      collection_root?: string;
+      capture_scope?: string;
     };
     guidance?: {
       goal?: string;
@@ -291,6 +297,8 @@ function validateBody(
     "deadline",
     "not_configured",
   ]);
+  const allowedCollectionRoots = new Set(["none", "focused_window", "application"]);
+  const allowedCaptureScopes = new Set(["display", "region", "unknown"]);
   if (diagnostics && (
     !Number.isInteger(diagnostics.elapsed_ms)
     || diagnostics.elapsed_ms! < 0
@@ -304,6 +312,21 @@ function validateBody(
     || diagnostics.candidate_count !== candidates.length
     || (diagnostics.truncated_reason !== undefined
       && !allowedTruncationReasons.has(diagnostics.truncated_reason))
+    || (diagnostics.target_app_name !== undefined
+      && (typeof diagnostics.target_app_name !== "string"
+        || diagnostics.target_app_name.length > 256))
+    || (diagnostics.target_bundle_id !== undefined
+      && (typeof diagnostics.target_bundle_id !== "string"
+        || diagnostics.target_bundle_id.length > 256))
+    || (diagnostics.target_window_present !== undefined
+      && typeof diagnostics.target_window_present !== "boolean")
+    || (diagnostics.target_window_title !== undefined
+      && (typeof diagnostics.target_window_title !== "string"
+        || diagnostics.target_window_title.length > 512))
+    || (diagnostics.collection_root !== undefined
+      && !allowedCollectionRoots.has(diagnostics.collection_root))
+    || (diagnostics.capture_scope !== undefined
+      && !allowedCaptureScopes.has(diagnostics.capture_scope))
   )) {
     return errorResponse(
       400,

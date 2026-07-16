@@ -111,22 +111,24 @@ describe("Challenge 3 screen understanding engine", () => {
     })).rejects.toThrow("did not match the Challenge 3 schema");
   });
 
-  test("rejects internal implementation vocabulary in user-visible output", async () => {
+  test("does not reject legitimate screen vocabulary with internal-looking words", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(providerResponse({
-      mode: "clarification",
-      message: "現在の候補IDには対応する操作対象がありません。",
-      observations: [],
-      uncertainties: ["AX候補が不足しています。"],
+      mode: "answer",
+      message: "The candidate is using Dynamics AX and inspecting the DOM panel.",
+      observations: ["A recruitment candidate record is open."],
+      uncertainties: [],
       targetCandidateId: null,
     })));
 
-    await expect(runScreenUnderstanding({
+    const output = await runScreenUnderstanding({
       imageDataURL: "data:image/png;base64,abc",
-      question: "次は何をしたらいいですか？",
+      question: "What is shown on this screen?",
       turns: [],
       candidates: [],
-      language: "japanese",
-    })).rejects.toThrow("internal implementation vocabulary");
+      language: "english",
+    });
+
+    expect(output.result.message).toContain("Dynamics AX");
   });
 
   test("uses the same screenshot and fixed candidates for action guidance", async () => {

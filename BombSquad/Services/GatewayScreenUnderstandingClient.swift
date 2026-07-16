@@ -96,15 +96,44 @@ struct GatewayScreenUnderstandingClient {
             input["question"] = question
         }
 
-        let data = try await client.postJSON(
-            "ai/screen-understanding",
-            body: GatewayClient.envelope(
-                operation: "screen_understanding",
-                input: input,
-                language: language
-            )
+        let body = GatewayClient.envelope(
+            operation: "screen_understanding",
+            input: input,
+            language: language
         )
-        return try Self.decode(data, expectedCaptureID: attachment.id)
+        let requestID = body["request_id"] as? String ?? UUID().uuidString
+#if DEBUG
+        let replayRequest = Self.replayRequestData(body: body, mediaType: encoded.mediaType)
+#endif
+        var responseData: Data?
+        do {
+            let data = try await client.postJSON("ai/screen-understanding", body: body)
+            responseData = data
+            let response = try Self.decode(data, expectedCaptureID: attachment.id)
+#if DEBUG
+            await Challenge3ReplayStore.shared.record(
+                requestID: requestID,
+                request: replayRequest,
+                image: encoded.data,
+                mediaType: encoded.mediaType,
+                response: data,
+                error: nil
+            )
+#endif
+            return response
+        } catch {
+#if DEBUG
+            await Challenge3ReplayStore.shared.record(
+                requestID: requestID,
+                request: replayRequest,
+                image: encoded.data,
+                mediaType: encoded.mediaType,
+                response: responseData,
+                error: String(describing: error)
+            )
+#endif
+            throw error
+        }
     }
 
     private static func encodedImage(at url: URL) throws -> (data: Data, mediaType: String) {
@@ -123,6 +152,20 @@ struct GatewayScreenUnderstandingClient {
         }
         return (jpeg, "image/jpeg")
     }
+
+#if DEBUG
+    private static func replayRequestData(body: [String: Any], mediaType: String) -> Data? {
+        var replayBody = body
+        if var input = replayBody["input"] as? [String: Any] {
+            input["image_base64"] = mediaType == "image/jpeg" ? "@image.jpg" : "@image.png"
+            replayBody["input"] = input
+        }
+        return try? JSONSerialization.data(
+            withJSONObject: replayBody,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+    }
+#endif
 
     private static func decode(
         _ data: Data,
@@ -191,3 +234,69 @@ struct GatewayScreenUnderstandingClient {
     }
 
 }
+
+#if DEBUG
+private actor Challenge3ReplayStore {
+    static let shared = Challenge3ReplayStore()
+
+    private let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("UniversalIO-Challenge3-Replays", isDirectory: true)
+    private let maximumBundles = 20
+
+    func record(
+        requestID: String,
+        request: Data?,
+        image: Data,
+        mediaType: String,
+        response: Data?,
+        error: String?
+    ) {
+        do {
+            try FileManager.default.createDirectory(
+                at: root,
+                withIntermediateDirectories: true
+            )
+            let bundle = root.appendingPathComponent(requestID, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: bundle,
+                withIntermediateDirectories: true
+            )
+            if let request {
+                try request.write(to: bundle.appendingPathComponent("request.json"), options: .atomic)
+            }
+            let imageName = mediaType == "image/jpeg" ? "image.jpg" : "image.png"
+            try image.write(to: bundle.appendingPathComponent(imageName), options: .atomic)
+            if let response {
+                try response.write(to: bundle.appendingPathComponent("response.json"), options: .atomic)
+            }
+            if let error {
+                try Data(error.utf8).write(
+                    to: bundle.appendingPathComponent("error.txt"),
+                    options: .atomic
+                )
+            }
+            prune()
+            NSLog("[Challenge3] replay bundle: %@", bundle.path)
+        } catch {
+            NSLog("[Challenge3] replay bundle write failed: %@", String(describing: error))
+        }
+    }
+
+    private func prune() {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+        guard let bundles = try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        let newestFirst = bundles.sorted {
+            let lhs = try? $0.resourceValues(forKeys: keys).contentModificationDate
+            let rhs = try? $1.resourceValues(forKeys: keys).contentModificationDate
+            return (lhs ?? .distantPast) > (rhs ?? .distantPast)
+        }
+        for expired in newestFirst.dropFirst(maximumBundles) {
+            try? FileManager.default.removeItem(at: expired)
+        }
+    }
+}
+#endif

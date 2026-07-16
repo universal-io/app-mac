@@ -111,11 +111,6 @@ export async function runScreenUnderstanding(
   if (!isScreenUnderstandingResult(parsed)) {
     throw new ProviderCallError("GPT-5.6 Luna output did not match the Challenge 3 schema.");
   }
-  if (containsInternalVocabulary(parsed)) {
-    throw new ProviderCallError(
-      "GPT-5.6 Luna returned internal implementation vocabulary in user-visible output.",
-    );
-  }
   const allowedIDs = new Set(input.candidates.map((candidate) => candidate.id));
   if (parsed.targetCandidateId !== null && !allowedIDs.has(parsed.targetCandidateId)) {
     throw new ProviderCallError("GPT-5.6 Luna selected an unknown candidate ID.");
@@ -129,18 +124,6 @@ export async function runScreenUnderstanding(
     inputTokens: root.usage?.input_tokens ?? 0,
     outputTokens: root.usage?.output_tokens ?? 0,
   };
-}
-
-function containsInternalVocabulary(result: ScreenUnderstandingResult): boolean {
-  const visibleText = [result.message, ...result.uncertainties].join("\n");
-  return [
-    /\bAX\b/i,
-    /\bDOM\b/i,
-    /\bcandidate(?:\s*ID|Id)?\b/i,
-    /targetCandidateId/i,
-    /候補ID/,
-    /モデルルーティング/,
-  ].some((pattern) => pattern.test(visibleText));
 }
 
 function requestBody(input: ScreenUnderstandingEngineInput): Record<string, unknown> {

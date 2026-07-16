@@ -11,6 +11,11 @@ enum VisionObservationCaptureService {
         let visitedNodes: Int
         let candidateCount: Int
         let truncatedReason: String?
+        var targetAppName: String? = nil
+        var targetBundleID: String? = nil
+        var targetWindowTitle: String? = nil
+        var collectionRoot: String = "none"
+        var captureScope: String = "unknown"
 
         var wirePayload: [String: Any] {
             var payload: [String: Any] = [
@@ -19,6 +24,14 @@ enum VisionObservationCaptureService {
                 "candidate_count": candidateCount,
             ]
             if let truncatedReason { payload["truncated_reason"] = truncatedReason }
+            if let targetAppName { payload["target_app_name"] = targetAppName }
+            if let targetBundleID { payload["target_bundle_id"] = targetBundleID }
+            payload["target_window_present"] = targetWindowTitle != nil
+            payload["collection_root"] = collectionRoot
+            payload["capture_scope"] = captureScope
+#if DEBUG
+            if let targetWindowTitle { payload["target_window_title"] = targetWindowTitle }
+#endif
             return payload
         }
     }
@@ -73,7 +86,8 @@ enum VisionObservationCaptureService {
                         elapsedMs: 0,
                         visitedNodes: 0,
                         candidateCount: 0,
-                        truncatedReason: "no_target_app"
+                        truncatedReason: "no_target_app",
+                        captureScope: attachment.captureScope.rawValue
                     )
                 )
             }
@@ -91,6 +105,7 @@ enum VisionObservationCaptureService {
             var candidates: [VisionObservation.Candidate] = []
             var visitedNodes = 0
             var truncatedReason: String?
+            var collectionRoot = "none"
             if mayReadAX {
                 let appElement = AXUIElementCreateApplication(pid)
                 AXUIElementSetMessagingTimeout(appElement, Budget.axMessagingTimeout)
@@ -101,6 +116,7 @@ enum VisionObservationCaptureService {
                 )
                 let window = copyElement(appElement, kAXFocusedWindowAttribute)
                 windowTitle = window.flatMap { copyString($0, kAXTitleAttribute) }
+                collectionRoot = window == nil ? "application" : "focused_window"
                 if let captureRect = attachment.captureRect,
                    captureRect.width > 0, captureRect.height > 0 {
                     let result = collectCandidates(
@@ -130,7 +146,12 @@ enum VisionObservationCaptureService {
                     elapsedMs: Int(Date().timeIntervalSince(started) * 1_000),
                     visitedNodes: visitedNodes,
                     candidateCount: candidates.count,
-                    truncatedReason: truncatedReason
+                    truncatedReason: truncatedReason,
+                    targetAppName: appName,
+                    targetBundleID: bundleID,
+                    targetWindowTitle: windowTitle,
+                    collectionRoot: collectionRoot,
+                    captureScope: attachment.captureScope.rawValue
                 )
             )
         }
@@ -143,7 +164,7 @@ enum VisionObservationCaptureService {
         let deadline = Date().addingTimeInterval(Budget.deadline)
         var visited = 0
         var candidates: [VisionObservation.Candidate] = []
-        var stack: [(element: AXUIElement, parentLabel: String?, actionRole: String?)] = [
+        var stack: [(element: AXUIElement, parentLabel: String?, unlabeledActionRole: String?)] = [
             (root, nil, nil),
         ]
 
@@ -170,7 +191,7 @@ enum VisionObservationCaptureService {
             let isSecure = subrole == "AXSecureTextField"
             let elementLabel = isSecure ? nil : label(for: item.element, role: role)
             let directActionRole = candidateRoles.contains(role) ? role : nil
-            let inheritedActionRole = role == "AXStaticText" ? item.actionRole : nil
+            let inheritedActionRole = role == "AXStaticText" ? item.unlabeledActionRole : nil
             if let candidateRole = directActionRole ?? inheritedActionRole,
                let elementLabel,
                let frame = copyFrame(item.element),
@@ -187,10 +208,15 @@ enum VisionObservationCaptureService {
             }
 
             let nearestParentLabel = elementLabel ?? item.parentLabel
-            let nearestActionRole = directActionRole ?? item.actionRole
+            let nearestUnlabeledActionRole: String?
+            if let directActionRole {
+                nearestUnlabeledActionRole = elementLabel == nil ? directActionRole : nil
+            } else {
+                nearestUnlabeledActionRole = item.unlabeledActionRole
+            }
             if let children = copyChildren(item.element) {
                 for child in children.reversed() {
-                    stack.append((child, nearestParentLabel, nearestActionRole))
+                    stack.append((child, nearestParentLabel, nearestUnlabeledActionRole))
                 }
             }
         }

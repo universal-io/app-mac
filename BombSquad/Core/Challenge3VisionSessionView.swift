@@ -38,7 +38,16 @@ struct Challenge3VisionSessionView: View {
             return session.candidatesReady ? "AX \(session.candidates.count)" : "AX …"
         }
         let completion = diagnostics.truncatedReason ?? "complete"
-        return "AX \(diagnostics.candidateCount) · \(diagnostics.elapsedMs)ms · \(completion)"
+        return "AX \(diagnostics.candidateCount) · \(diagnostics.elapsedMs)ms · \(diagnostics.collectionRoot) · \(completion)"
+    }
+
+    private var axStatusHelp: String {
+        guard let diagnostics = session.candidateDiagnostics else {
+            return "AX候補を取得しています"
+        }
+        let app = diagnostics.targetAppName ?? "対象アプリなし"
+        let window = diagnostics.targetWindowTitle ?? "focused windowなし"
+        return "収集対象: \(app) / \(window)\nAX root: \(diagnostics.collectionRoot)\nCapture: \(diagnostics.captureScope)"
     }
 
     var body: some View {
@@ -100,7 +109,7 @@ struct Challenge3VisionSessionView: View {
                 Text(axStatus)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
-                    .help("AX候補数・取得時間・打切理由")
+                    .help(axStatusHelp)
                 Text(session.attachment.id.uuidString.prefix(8))
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)

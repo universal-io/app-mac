@@ -1,6 +1,6 @@
 # 画面コパイロット 第3次挑戦 — 設計空間の全列挙と判断
 
-作成: 2026-07-15 ／ 最終更新: 2026-07-16 ／ ステータス: **挑戦3 実装中**
+作成: 2026-07-15 ／ 最終更新: 2026-07-17 ／ ステータス: **挑戦3 実装中**
 本書は Navigator/Copilot（視覚コパイロット機能）の**新しい正本**。前身の
 navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md（v4精度計画）は
 本書に総括を引き継いで old/ へ移す。
@@ -312,6 +312,24 @@ Copilot（後続段階）
   実画面へ永続表示、`answer`なら完了、`clarification`なら自動反復停止、変化/安定を確認できなければ
   fail-loudで手動「再確認」を残す。旧captureの候補は新画像へ持ち越さない。web test 72件、対象lint、
   TypeScript、Next production build、macOS Debug/Release buildが成功。実画面クリック反復は未検証。
+- 外部レビュー照合と計測保全（2026-07-17）: レビュー対象snapshot以降に⑦の右下帯、実画面の永続赤枠、
+  クリック後の安定capture反復までコード接続済みであるため、現在地は「④完了・⑤途中」ではなく、
+  **⑤の実画面計測と⑦の実画面検証が未完**と訂正する。レビューで判明した計測阻害要因は先に修正する。
+  全display captureに対してAXはfrontmost appのfocused window（無ければapplication root）だけを探索する
+  制約を、対象app/window・AX root・capture scopeとして診断とusageへ明示した。これにより候補欠落を
+  モデル選択ミス、AXツリー品質、収集scope制約へ分類する。ラベル付き操作親の子StaticTextを重複候補化
+  していた継承も止め、ラベルなし操作親の代理ラベルに限った。`candidate`、`AX`、`DOM`という単語だけで
+  正当な英語回答を拒否するGatewayフィルタは、採用管理、Dynamics AX、開発者ツールで誤爆するため削除。
+  user-visibleに内部実装を出さない責務はpromptとRelease UI境界で維持する。
+- 未知candidate IDの扱い（2026-07-17）: 検証期はGatewayでターン全体をfail-loudのまま拒否する。
+  `null`へ補正して文章だけ採用すると、モデルが出力契約を破った事実を成功ターンに見せるためである。
+  「候補が存在しないときも文章案内を維持する」は、モデルが自ら`target_candidate_id: null`を返す場合の
+  契約であり、存在しないIDを返した場合とは区別する。製品期に部分成功UXへ変えるかは実測後に判断する。
+- replay保全（2026-07-17）: Debugビルドだけ、実際に送信した再エンコード後の画像、base64を画像ファイル
+  参照へ置換したrequest JSON、生responseまたはerrorをOS一時ディレクトリ
+  `UniversalIO-Challenge3-Replays`へ直近20件保存する。ReleaseとSupabase usageには画像・会話・候補本文を
+  保存しない。これで⑤の失敗ターンを同じ入力から剖検できる。3MB超のJPEG化、20ターン上限、Chrome
+  cold start時のAX候補変動は現時点で挙動を変えず、media type・エラー・AX診断をreplayとtraceで観測する。
 
 - **仮説**: 1枚の固定画像・同時点のAX候補・会話履歴を単一VLMへ渡せば、モード切替や役職分割なしで
   Spot Visionの回答と画面内案内が成立し、その1ターンを再帰化してCopilotへ発展できる。
