@@ -105,15 +105,21 @@ struct ZoomableScreenshotView: View {
     }
 
     private func viewRect(for normalized: CGRect, layout: Layout) -> CGRect {
-        let origin = CGPoint(
-            x: layout.center.x - layout.displaySize.width / 2,
-            y: layout.center.y - layout.displaySize.height / 2
-        )
+        let imageBounds = imageRect(for: layout)
         return CGRect(
-            x: origin.x + normalized.minX * layout.displaySize.width,
-            y: origin.y + normalized.minY * layout.displaySize.height,
+            x: imageBounds.minX + normalized.minX * layout.displaySize.width,
+            y: imageBounds.minY + normalized.minY * layout.displaySize.height,
             width: normalized.width * layout.displaySize.width,
             height: normalized.height * layout.displaySize.height
+        )
+    }
+
+    private func imageRect(for layout: Layout) -> CGRect {
+        CGRect(
+            x: layout.center.x - layout.displaySize.width / 2,
+            y: layout.center.y - layout.displaySize.height / 2,
+            width: layout.displaySize.width,
+            height: layout.displaySize.height
         )
     }
 
@@ -248,22 +254,20 @@ struct ZoomableScreenshotView: View {
     @ViewBuilder
     private func highlightOverlay(layout: Layout) -> some View {
         if let highlight {
-            // Inflate generously: model boxes are often a little off, and a
-            // ring that surrounds the true target with room to spare reads as
-            // "here" even when the center is imperfect. Same red as the
-            // user's own annotations so the panel speaks one visual language.
-            let padded = highlight.insetBy(
-                dx: -max(highlight.width * 0.3, 0.015),
-                dy: -max(highlight.height * 0.45, 0.015)
-            )
-            let rect = viewRect(for: padded, layout: layout)
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.red, lineWidth: 3)
-                .shadow(color: .red.opacity(0.6), radius: 6)
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
-                .allowsHitTesting(false)
-                .transition(.opacity.combined(with: .scale(scale: 1.35)))
+            let target = viewRect(for: highlight, layout: layout)
+            let safeImageBounds = imageRect(for: layout).insetBy(dx: 7, dy: 7)
+            let rect = target
+                .insetBy(dx: -6, dy: -4)
+                .intersection(safeImageBounds)
+            if !rect.isNull, rect.width > 0, rect.height > 0 {
+                RoundedRectangle(cornerRadius: min(8, rect.height / 4))
+                    .strokeBorder(Color.red, lineWidth: 3)
+                    .shadow(color: .red.opacity(0.55), radius: 4)
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
+                    .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .scale(scale: 1.15)))
+            }
         }
     }
 }

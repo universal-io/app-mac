@@ -274,6 +274,12 @@ Copilot（後続段階）
   開発UIとusage metadataへ記録する。DOMとCopilotの再capture反復は未接続。
 - Spot Vision統合のコード検証: web test 70件、対象lint、TypeScript、Next production build、
   macOS Debug `CODE_SIGNING_ALLOWED=NO`が成功。固定画像＋AXによる実画面回答・赤枠は未検証。
+- Spot Vision実画面スモーク（2026-07-16）: GA4国別画面からデバイス別分析を質問し、
+  `snapshot_vlm / gpt-5.6-luna`が4,849 msで正しい案内と`ax:144 / ユーザーの環境の詳細`を返した。
+  AXは250候補・574 ms・`candidate_limit`で、candidate選択とスクリーンショット自動拡大は成立。
+  赤枠が対象より大きく画像左端へはみ出した原因は、rendererがAX矩形を横30%・縦45%膨張させ、
+  画像境界へclampしていなかったこと。表示paddingを左右6 pt・上下4 ptへ固定し、画像内の安全領域へ
+  clampするよう修正した。修正後の赤枠サイズは実画面再確認待ち。
 
 - **仮説**: 1枚の固定画像・同時点のAX候補・会話履歴を単一VLMへ渡せば、モード切替や役職分割なしで
   Spot Visionの回答と画面内案内が成立し、その1ターンを再帰化してCopilotへ発展できる。
