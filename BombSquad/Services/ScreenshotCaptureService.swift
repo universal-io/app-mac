@@ -248,9 +248,16 @@ enum StableScreenCaptureOutcome {
 enum StableScreenCaptureService {
     private static let sampleDelayNanoseconds: UInt64 = 350_000_000
     private static let maxAttempts = 8
-    private static let changeThreshold = 0.015
+    /// Change is judged per block, not on the whole-screen mean: a submenu
+    /// expanding changes <0.5% of a large display, which a global mean can
+    /// never separate from noise (measured on the GA4 sidebar click: global
+    /// mean 0.002 vs the old 0.015 gate — 7.5x too small — while its blockMax
+    /// is ~0.085). The JPEG/scaling noise floor measured 0.0015, so 0.05
+    /// keeps a wide margin on both sides.
+    private static let changeBlockThreshold = 0.05
     private static let stableThreshold = 0.003
     private static let comparisonSide = 48
+    private static let blockGrid = 12
 
     /// `requireChange: false` skips the change gate and adopts the first
     /// stable capture. The manual "再確認" path needs this: the 48×48 mean
@@ -276,18 +283,18 @@ enum StableScreenCaptureService {
             }
 
             if !changeDetected {
-                let difference = await differenceRatio(baseline.url, current.url)
-                log(attempt: attempt, phase: "change", difference: difference)
-                if difference >= changeThreshold {
+                let difference = await differences(baseline.url, current.url)
+                log(attempt: attempt, phase: "change", difference: difference.blockMax)
+                if difference.blockMax >= changeBlockThreshold {
                     changeDetected = true
                     latestCapture = current
                 } else {
                     remove(current)
                 }
             } else if let previous = latestCapture {
-                let difference = await differenceRatio(previous.url, current.url)
-                log(attempt: attempt, phase: "stability", difference: difference)
-                if difference <= stableThreshold {
+                let difference = await differences(previous.url, current.url)
+                log(attempt: attempt, phase: "stability", difference: difference.mean)
+                if difference.mean <= stableThreshold {
                     remove(previous)
                     latestCapture = nil
                     return .stable(current)
@@ -321,16 +328,41 @@ enum StableScreenCaptureService {
 #endif
     }
 
-    private static func differenceRatio(_ lhs: URL, _ rhs: URL) async -> Double {
+    /// `mean` is the whole-image average difference (used for stability);
+    /// `blockMax` is the strongest per-block average difference (used for
+    /// change detection, so small localized UI changes are not diluted).
+    private static func differences(
+        _ lhs: URL, _ rhs: URL
+    ) async -> (mean: Double, blockMax: Double) {
         await Task.detached(priority: .utility) {
             guard let left = grayscalePixels(at: lhs),
                   let right = grayscalePixels(at: rhs),
                   left.count == right.count,
-                  !left.isEmpty else { return 1 }
-            let total = zip(left, right).reduce(0) {
-                $0 + abs(Int($1.0) - Int($1.1))
+                  !left.isEmpty else { return (1, 1) }
+            let side = comparisonSide
+            let block = side / blockGrid
+            var total = 0
+            var blockMax = 0.0
+            for blockY in 0..<blockGrid {
+                for blockX in 0..<blockGrid {
+                    var blockTotal = 0
+                    for y in (blockY * block)..<((blockY + 1) * block) {
+                        for x in (blockX * block)..<((blockX + 1) * block) {
+                            let index = y * side + x
+                            blockTotal += abs(Int(left[index]) - Int(right[index]))
+                        }
+                    }
+                    total += blockTotal
+                    blockMax = max(
+                        blockMax,
+                        Double(blockTotal) / Double(block * block * 255)
+                    )
+                }
             }
-            return Double(total) / Double(left.count * 255)
+            return (
+                Double(total) / Double(side * side * 255),
+                blockMax
+            )
         }.value
     }
 
