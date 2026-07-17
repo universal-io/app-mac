@@ -252,10 +252,18 @@ enum StableScreenCaptureService {
     private static let stableThreshold = 0.003
     private static let comparisonSide = 48
 
-    static func capture(after baseline: ScreenshotAttachment) async throws -> StableScreenCaptureOutcome {
+    /// `requireChange: false` skips the change gate and adopts the first
+    /// stable capture. The manual "再確認" path needs this: the 48×48 mean
+    /// difference cannot see small UI changes (dropdowns, checkboxes), so a
+    /// user-asserted progress check must not be blocked by the same gate
+    /// that already failed to detect the change.
+    static func capture(
+        after baseline: ScreenshotAttachment,
+        requireChange: Bool = true
+    ) async throws -> StableScreenCaptureOutcome {
         let captureService = ScreenshotCaptureService()
         var latestCapture: ScreenshotAttachment?
-        var changeDetected = false
+        var changeDetected = !requireChange
         defer {
             if let latestCapture { remove(latestCapture) }
         }
@@ -269,6 +277,7 @@ enum StableScreenCaptureService {
 
             if !changeDetected {
                 let difference = await differenceRatio(baseline.url, current.url)
+                log(attempt: attempt, phase: "change", difference: difference)
                 if difference >= changeThreshold {
                     changeDetected = true
                     latestCapture = current
@@ -277,11 +286,16 @@ enum StableScreenCaptureService {
                 }
             } else if let previous = latestCapture {
                 let difference = await differenceRatio(previous.url, current.url)
+                log(attempt: attempt, phase: "stability", difference: difference)
                 if difference <= stableThreshold {
                     remove(previous)
+                    latestCapture = nil
                     return .stable(current)
                 }
                 remove(previous)
+                latestCapture = current
+            } else {
+                log(attempt: attempt, phase: "first_sample", difference: nil)
                 latestCapture = current
             }
 
@@ -290,7 +304,21 @@ enum StableScreenCaptureService {
             }
         }
 
+        log(attempt: maxAttempts, phase: "timed_out", difference: nil)
         return .timedOut
+    }
+
+    private static func log(attempt: Int, phase: String, difference: Double?) {
+#if DEBUG
+        if let difference {
+            NSLog(
+                "[Challenge3] stable-capture attempt=%d phase=%@ diff=%.4f",
+                attempt, phase, difference
+            )
+        } else {
+            NSLog("[Challenge3] stable-capture attempt=%d phase=%@", attempt, phase)
+        }
+#endif
     }
 
     private static func differenceRatio(_ lhs: URL, _ rhs: URL) async -> Double {

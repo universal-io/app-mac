@@ -444,7 +444,7 @@ final class SessionCoordinator {
                 preferredTargetPID: summonTargetApp?.processIdentifier,
                 candidateCaptureTask: candidateCaptureTask,
                 onRequestModeTransition: { [weak self] target, reason in
-                    self?.transitionChallenge3(to: target, reason: reason)
+                    self?.transitionChallenge3(to: target, reason: reason) ?? false
                 },
                 onRequestPanelClose: { [weak self] in
                     self?.close(reason: "challenge3VisionRequestedClose")
@@ -466,14 +466,14 @@ final class SessionCoordinator {
         }
     }
 
-    private func transitionChallenge3(to target: AppMode, reason: String) {
-        guard challenge3VisionSession != nil else { return }
+    private func transitionChallenge3(to target: AppMode, reason: String) -> Bool {
+        guard challenge3VisionSession != nil else { return false }
         if target == .copilot, stateMachine.mode == .vision {
             guard stateMachine.transition(to: .navigator, reason: "challenge3GuideReady") else {
-                return
+                return false
             }
         }
-        _ = stateMachine.transition(to: target, reason: reason)
+        return stateMachine.transition(to: target, reason: reason)
     }
 
     private func captureAttachment(

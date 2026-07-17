@@ -8,6 +8,10 @@ enum Challenge3CopilotState: Equatable {
     case timedOut
     case complete
     case clarification
+    /// Deterministic stop valve: the guide loop has no model-independent
+    /// halt condition, so a runaway back-and-forth would keep billing until
+    /// the user quits. Terminal like `.complete`.
+    case stepLimit
 }
 
 struct Challenge3VisionDisplayTurn: Identifiable, Equatable {
@@ -40,15 +44,18 @@ final class Challenge3VisionSession: ObservableObject {
     @Published var isRecording = false
     @Published var isTranscribing = false
 
+    private static let maxGuideSteps = 15
+
     private let client: GatewayScreenUnderstandingClient?
     private let outputLanguage: OutputLanguage
     private let preferredTargetPID: pid_t?
     private let candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>
     private let onRequestPanelClose: () -> Void
-    private let onRequestModeTransition: (AppMode, String) -> Void
+    private let onRequestModeTransition: (AppMode, String) -> Bool
     private var requestTask: Task<Void, Never>?
     private var copilotProgressTask: Task<Void, Never>?
     private var copilotClickMonitor: Any?
+    private var copilotStepCount = 0
     private var hasStarted = false
 
     init(
@@ -56,7 +63,7 @@ final class Challenge3VisionSession: ObservableObject {
         preferredTargetPID: pid_t? = nil,
         candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>? = nil,
         client: GatewayScreenUnderstandingClient? = GatewayScreenUnderstandingClient.make(),
-        onRequestModeTransition: @escaping (AppMode, String) -> Void = { _, _ in },
+        onRequestModeTransition: @escaping (AppMode, String) -> Bool = { _, _ in true },
         onRequestPanelClose: @escaping () -> Void = {}
     ) {
         self.attachment = attachment
@@ -140,12 +147,20 @@ final class Challenge3VisionSession: ObservableObject {
         guard canStartCopilot,
               let goal = turns.last(where: { $0.role == .user })?.text else { return }
         copilotGoal = goal
+        copilotStepCount = 0
         isCopilotActive = true
         copilotState = .idle
         focusedField = nil
+        guard onRequestModeTransition(.copilot, "challenge3CopilotStarted") else {
+            // Roll back so a refused transition cannot leave the strip UI
+            // stranded inside the centered panel with a live click monitor.
+            isCopilotActive = false
+            copilotGoal = nil
+            focusedField = .navigator
+            return
+        }
         showLiveHighlight()
         installCopilotClickMonitor()
-        onRequestModeTransition(.copilot, "challenge3CopilotStarted")
     }
 
     func stopCopilot() {
@@ -156,7 +171,10 @@ final class Challenge3VisionSession: ObservableObject {
         isCopilotChecking = false
         removeCopilotClickMonitor()
         HighlightOverlayPresenter.shared.hide()
-        onRequestModeTransition(.navigator, "challenge3CopilotStopped")
+        focusedField = .navigator
+        if !onRequestModeTransition(.navigator, "challenge3CopilotStopped") {
+            onRequestPanelClose()
+        }
     }
 
     func tearDown() {
@@ -169,7 +187,10 @@ final class Challenge3VisionSession: ObservableObject {
     }
 
     func requestCopilotProgressCheck() {
-        scheduleCopilotProgressCheck(after: 0)
+        // The user is asserting progress happened; do not re-run the change
+        // gate that already failed to see it (small UI deltas fall below the
+        // 48×48 mean-difference threshold). Stability check only.
+        scheduleCopilotProgressCheck(after: 0, requireChange: false)
     }
 
     private var wireTurns: [ScreenUnderstandingTurn] {
@@ -241,7 +262,7 @@ final class Challenge3VisionSession: ObservableObject {
         copilotClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) {
             [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.scheduleCopilotProgressCheck(after: 700_000_000)
+                self?.scheduleCopilotProgressCheck(after: 700_000_000, requireChange: true)
             }
         }
     }
@@ -253,8 +274,9 @@ final class Challenge3VisionSession: ObservableObject {
         }
     }
 
-    private func scheduleCopilotProgressCheck(after delay: UInt64) {
-        guard isCopilotActive, !isCopilotChecking, copilotState != .complete else { return }
+    private func scheduleCopilotProgressCheck(after delay: UInt64, requireChange: Bool) {
+        guard isCopilotActive, !isCopilotChecking,
+              copilotState != .complete, copilotState != .stepLimit else { return }
         copilotProgressTask?.cancel()
         isCopilotChecking = true
         copilotState = .waitingForChange
@@ -271,7 +293,10 @@ final class Challenge3VisionSession: ObservableObject {
             }
             do {
                 if delay > 0 { try await Task.sleep(nanoseconds: delay) }
-                let outcome = try await StableScreenCaptureService.capture(after: baseline)
+                let outcome = try await StableScreenCaptureService.capture(
+                    after: baseline,
+                    requireChange: requireChange
+                )
                 try Task.checkCancellation()
                 guard self.isCopilotActive else { return }
                 switch outcome {
@@ -364,8 +389,15 @@ final class Challenge3VisionSession: ObservableObject {
                 removeCopilotClickMonitor()
                 HighlightOverlayPresenter.shared.hide()
             case .guide:
-                copilotState = .idle
-                installCopilotClickMonitor()
+                copilotStepCount += 1
+                if copilotStepCount >= Self.maxGuideSteps {
+                    copilotState = .stepLimit
+                    removeCopilotClickMonitor()
+                    HighlightOverlayPresenter.shared.hide()
+                } else {
+                    copilotState = .idle
+                    installCopilotClickMonitor()
+                }
             case .clarification:
                 copilotState = .clarification
                 removeCopilotClickMonitor()

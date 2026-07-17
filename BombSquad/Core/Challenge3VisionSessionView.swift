@@ -281,7 +281,7 @@ private struct Challenge3CopilotStripView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if session.copilotState != .complete {
+                if session.copilotState != .complete, session.copilotState != .stepLimit {
                     Button {
                         session.requestCopilotProgressCheck()
                     } label: {
@@ -299,7 +299,12 @@ private struct Challenge3CopilotStripView: View {
     private var statusText: String {
         switch session.copilotState {
         case .idle:
-            return "赤い枠の場所をクリックしてください。画面変化を自動で確認します"
+            // A guide turn may legitimately return no target (candidate
+            // missing from AX); never point the user at a red frame that
+            // does not exist.
+            return session.selectedCandidate != nil
+                ? "赤い枠の場所をクリックしてください。画面変化を自動で確認します"
+                : "案内に従って操作してください。操作後の画面を自動で確認します"
         case .waitingForChange:
             return "クリック後の画面変化と安定を待っています…"
         case .evaluating:
@@ -310,6 +315,8 @@ private struct Challenge3CopilotStripView: View {
             return "目的の情報を確認しました"
         case .clarification:
             return "次の操作を特定できませんでした。画面を確認して再試行してください"
+        case .stepLimit:
+            return "案内の回数が上限に達しました。目的を絞ってもう一度質問してください"
         }
     }
 
@@ -317,7 +324,7 @@ private struct Challenge3CopilotStripView: View {
         switch session.copilotState {
         case .complete:
             return "checkmark.circle.fill"
-        case .timedOut, .clarification:
+        case .timedOut, .clarification, .stepLimit:
             return "exclamationmark.circle"
         default:
             return "cursorarrow.click.2"
