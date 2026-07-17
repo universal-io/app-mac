@@ -444,6 +444,14 @@ Copilot（後続段階）
     そのまま接続（G4）。
   - **実装時期**: 挑戦3の⑧golden path完了後の次フェーズ。golden pathの失敗実測が「どのツールの
     どの操作で汎用が落ちるか」を教えるので、最初に書くスキルの中身は実測から決める。
+- 間欠no_target_appの剖検と修正（2026-07-18）: 「たまにAX候補が出ない」事象。replay: 直近20件中
+  1件がcands=0・root=none・no_target_app。原因はターゲットアプリ解決が「ライブfrontmost（非自分）→
+  summon時のpreferredPID→諦め」の順で、パネル/選択オーバーレイがfocusを持った瞬間かつsummonTargetApp
+  （2ジェスチャ前の値で古い）が不適の時に候補ゼロになっていた。**実際に撮った画面の最前面アプリ**を
+  CGWindowListのz-order（layer=0・非自分・regular）から取るフォールバックを追加し、解決順を
+  「ライブfrontmost→CGWindowList最前面→preferredPID」へ。画面に実アプリのウィンドウがある限り
+  no_target_appは起きない。この間欠失敗はgolden path計測で「AX欠落（棄却条件b）」に化けて死因判定を
+  汚すため、⑧開始前に潰した。macOS Debug build成功。
 - センサー多層化の位置づけ（2026-07-17、オーナー決定）: AX欠落時のフォールバック梯子
   （AX → OCR → 低信頼bbox）は**チューニングの範囲であり、全体完成後に忘れず取り組む課題**として
   バックログへ確定（下表）。挑戦3の残り区間はまずAXを着実にする。あわせて方針を明文化:

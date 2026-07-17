@@ -84,10 +84,17 @@ enum VisionObservationCaptureService {
         attachment: ScreenshotAttachment
     ) -> Task<Snapshot, Never> {
         let ownPID = ProcessInfo.processInfo.processIdentifier
+        // Resolution order, most to least reliable for "the app the user is
+        // looking at": the live frontmost app; the frontmost on-screen real
+        // window's owner (catches the moment our own panel/overlay holds
+        // focus — the previous cause of intermittent no_target_app); and
+        // finally the summon-time PID, which is two gestures stale.
         let frontmost = NSWorkspace.shared.frontmostApplication
         let app: NSRunningApplication?
         if let frontmost, frontmost.processIdentifier != ownPID {
             app = frontmost
+        } else if let onScreen = frontmostRegularApp(excluding: ownPID) {
+            app = onScreen
         } else if let preferredPID, preferredPID != ownPID {
             app = NSRunningApplication(processIdentifier: preferredPID)
         } else {
@@ -211,6 +218,27 @@ enum VisionObservationCaptureService {
                 )
             )
         }
+    }
+
+    /// The owner of the frontmost real on-screen window that is not us.
+    /// CGWindowList returns windows front-to-back, so the first layer-0
+    /// window belonging to a regular app other than ourselves is the app
+    /// the user is actually looking at — independent of who currently holds
+    /// keyboard focus (our panel may).
+    private static func frontmostRegularApp(excluding ownPID: pid_t) -> NSRunningApplication? {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID)
+            as? [[String: Any]] else { return nil }
+        for window in windows {
+            guard
+                let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
+                let pid = window[kCGWindowOwnerPID as String] as? pid_t, pid != ownPID,
+                let app = NSRunningApplication(processIdentifier: pid),
+                app.activationPolicy == .regular
+            else { continue }
+            return app
+        }
+        return nil
     }
 
     private static func collectCandidates(
