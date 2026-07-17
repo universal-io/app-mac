@@ -16,6 +16,8 @@ enum VisionObservationCaptureService {
         var targetWindowTitle: String? = nil
         var collectionRoot: String = "none"
         var captureScope: String = "unknown"
+        var collectionPasses: Int = 0
+        var webAreaPresent: Bool = false
 
         var wirePayload: [String: Any] {
             var payload: [String: Any] = [
@@ -29,6 +31,8 @@ enum VisionObservationCaptureService {
             payload["target_window_present"] = targetWindowTitle != nil
             payload["collection_root"] = collectionRoot
             payload["capture_scope"] = captureScope
+            payload["collection_passes"] = collectionPasses
+            payload["web_area_present"] = webAreaPresent
 #if DEBUG
             if let targetWindowTitle { payload["target_window_title"] = targetWindowTitle }
 #endif
@@ -46,6 +50,7 @@ enum VisionObservationCaptureService {
         let candidates: [VisionObservation.Candidate]
         let visitedNodes: Int
         let truncatedReason: String?
+        let sawWebArea: Bool
     }
 
     private enum Budget {
@@ -53,6 +58,17 @@ enum VisionObservationCaptureService {
         static let maxCandidates = 500
         static let deadline: TimeInterval = 1.0
         static let axMessagingTimeout: Float = 0.1
+        /// Chromium builds its web-content AX tree lazily: only after
+        /// AXEnhancedUserInterface is set AND an AX client keeps querying
+        /// (measured on Chrome 150: 99 shallow nodes → web area appears
+        /// within ~1s of sustained queries, then grows over further passes).
+        /// A single 1s pass therefore misses browser content entirely.
+        static let maxPasses = 5
+        static let totalDeadline: TimeInterval = 5.0
+        static let passWaitNanoseconds: UInt64 = 500_000_000
+        /// A later pass replaces the previous one when the tree is still
+        /// materializing; 25% node growth distinguishes that from jitter.
+        static let growthFactor = 1.25
     }
 
     private static let candidateRoles: Set<String> = [
@@ -106,12 +122,23 @@ enum VisionObservationCaptureService {
             var visitedNodes = 0
             var truncatedReason: String?
             var collectionRoot = "none"
+            var collectionPasses = 0
+            var webAreaPresent = false
             if mayReadAX {
                 let appElement = AXUIElementCreateApplication(pid)
                 AXUIElementSetMessagingTimeout(appElement, Budget.axMessagingTimeout)
+                // Electron exposes its web tree after AXManualAccessibility;
+                // Chromium browsers ignore that attribute and instead need
+                // AXEnhancedUserInterface plus sustained querying (see
+                // Budget.maxPasses). Setting both is harmless elsewhere.
                 AXUIElementSetAttributeValue(
                     appElement,
                     "AXManualAccessibility" as CFString,
+                    kCFBooleanTrue
+                )
+                AXUIElementSetAttributeValue(
+                    appElement,
+                    "AXEnhancedUserInterface" as CFString,
                     kCFBooleanTrue
                 )
                 let window = copyElement(appElement, kAXFocusedWindowAttribute)
@@ -119,13 +146,40 @@ enum VisionObservationCaptureService {
                 collectionRoot = window == nil ? "application" : "focused_window"
                 if let captureRect = attachment.captureRect,
                    captureRect.width > 0, captureRect.height > 0 {
-                    let result = collectCandidates(
-                        from: window ?? appElement,
-                        captureRect: captureRect
-                    )
-                    candidates = result.candidates
-                    visitedNodes = result.visitedNodes
-                    truncatedReason = result.truncatedReason
+                    let overallDeadline = started.addingTimeInterval(Budget.totalDeadline)
+                    var previousVisited = 0
+                    while collectionPasses < Budget.maxPasses {
+                        collectionPasses += 1
+                        let result = collectCandidates(
+                            from: window ?? appElement,
+                            captureRect: captureRect
+                        )
+                        webAreaPresent = webAreaPresent || result.sawWebArea
+                        if result.candidates.count >= candidates.count {
+                            candidates = result.candidates
+                            visitedNodes = result.visitedNodes
+                            truncatedReason = result.truncatedReason
+                        }
+#if DEBUG
+                        NSLog(
+                            "[Challenge3] ax-collect pass=%d visited=%d candidates=%d webArea=%d reason=%@",
+                            collectionPasses, result.visitedNodes, result.candidates.count,
+                            result.sawWebArea ? 1 : 0, result.truncatedReason ?? "complete"
+                        )
+#endif
+                        // Retry while the lazily built web tree is still
+                        // materializing: no web area yet on the first pass
+                        // (cold browser), or the node count is still growing.
+                        let coldWebContent = !result.sawWebArea && collectionPasses == 1
+                        let stillGrowing = result.sawWebArea
+                            && Double(result.visitedNodes)
+                                > Double(previousVisited) * Budget.growthFactor
+                        previousVisited = result.visitedNodes
+                        guard collectionPasses < Budget.maxPasses,
+                              Date() < overallDeadline,
+                              coldWebContent || stillGrowing else { break }
+                        try? await Task.sleep(nanoseconds: Budget.passWaitNanoseconds)
+                    }
                 } else {
                     truncatedReason = "unknown_capture_rect"
                 }
@@ -151,7 +205,9 @@ enum VisionObservationCaptureService {
                     targetBundleID: bundleID,
                     targetWindowTitle: windowTitle,
                     collectionRoot: collectionRoot,
-                    captureScope: attachment.captureScope.rawValue
+                    captureScope: attachment.captureScope.rawValue,
+                    collectionPasses: collectionPasses,
+                    webAreaPresent: webAreaPresent
                 )
             )
         }
@@ -169,6 +225,7 @@ enum VisionObservationCaptureService {
         ]
 
         var truncatedReason: String?
+        var sawWebArea = false
 
         while !stack.isEmpty {
             if visited >= Budget.maxNodes {
@@ -187,6 +244,7 @@ enum VisionObservationCaptureService {
             visited += 1
 
             let role = copyString(item.element, kAXRoleAttribute) ?? ""
+            if role == "AXWebArea" { sawWebArea = true }
             let subrole = copyString(item.element, kAXSubroleAttribute) ?? ""
             let isSecure = subrole == "AXSecureTextField"
             let elementLabel = isSecure ? nil : label(for: item.element, role: role)
@@ -223,7 +281,8 @@ enum VisionObservationCaptureService {
         return CollectionResult(
             candidates: candidates,
             visitedNodes: visited,
-            truncatedReason: truncatedReason
+            truncatedReason: truncatedReason,
+            sawWebArea: sawWebArea
         )
     }
 

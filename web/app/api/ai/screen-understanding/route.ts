@@ -42,6 +42,8 @@ type ScreenUnderstandingRequestBody = {
       target_window_title?: string;
       collection_root?: string;
       capture_scope?: string;
+      collection_passes?: number;
+      web_area_present?: boolean;
     };
     guidance?: {
       goal?: string;
@@ -327,6 +329,12 @@ function validateBody(
       && !allowedCollectionRoots.has(diagnostics.collection_root))
     || (diagnostics.capture_scope !== undefined
       && !allowedCaptureScopes.has(diagnostics.capture_scope))
+    || (diagnostics.collection_passes !== undefined
+      && (!Number.isInteger(diagnostics.collection_passes)
+        || diagnostics.collection_passes! < 0
+        || diagnostics.collection_passes! > 10))
+    || (diagnostics.web_area_present !== undefined
+      && typeof diagnostics.web_area_present !== "boolean")
   )) {
     return errorResponse(
       400,

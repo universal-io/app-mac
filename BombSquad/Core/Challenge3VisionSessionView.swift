@@ -47,7 +47,7 @@ struct Challenge3VisionSessionView: View {
         }
         let app = diagnostics.targetAppName ?? "対象アプリなし"
         let window = diagnostics.targetWindowTitle ?? "focused windowなし"
-        return "収集対象: \(app) / \(window)\nAX root: \(diagnostics.collectionRoot)\nCapture: \(diagnostics.captureScope)"
+        return "収集対象: \(app) / \(window)\nAX root: \(diagnostics.collectionRoot)\nCapture: \(diagnostics.captureScope)\nPasses: \(diagnostics.collectionPasses) / WebArea: \(diagnostics.webAreaPresent ? "あり" : "なし")"
     }
 
     var body: some View {

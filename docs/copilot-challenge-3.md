@@ -356,6 +356,25 @@ Copilot（後続段階）
   （存在しない赤枠への誘導を排除。AX候補欠落計測で必ず発生する状態）。(5) コパイロット開始/終了は
   モード遷移の成否を確認し、開始失敗時は状態を巻き戻し、終了失敗時はパネルを閉じる（帯UIが中央
   パネルへ残留する宙ぶらりん防止）。20ターン上限・無関係クリックでの一時消灯は据え置き（観測対象）。
+- Chrome web AX消失の剖検と修正（2026-07-17、⑤の最初の実画面計測）: GA4で「赤枠と案内開始が
+  一切出なくなった」事象を計測した。replayの実証拠: AX候補66件はすべてChromeのブラウザUI
+  （ツールバー・ブックマーク・タブ）で、GA4ページ内要素は0件。visited=99・39ms・complete、
+  focused_window収集 — つまりモデルやプロンプトの劣化ではなく、**ChromeがWebコンテンツのAXツリー
+  自体を公開していなかった**。7/16に250〜500件取れていたのは当時Chromeのaccessibilityが外部要因で
+  有効だったため（Chromiumは近年、無活動でrenderer accessibilityを自動無効化する）。実機実験
+  （Chrome 150）: AXManualAccessibilityはChrome本体では-25205（unsupported、Electron専用）。
+  AXEnhancedUserInterfaceの設定＋**AXクエリの継続**で約1秒後にAXWebAreaが出現し、以後パスごとに
+  ツリーが成長する（99→273→921ノード、揺らぎあり）。単発1秒収集では原理的に間に合わない。
+  なおAXEnhancedUserInterface属性の有無はブラウザ判定に使えない（Finderにも列挙される）。
+  修正: 収集開始時にAXManualAccessibilityとAXEnhancedUserInterfaceの両方を設定し、収集を
+  複数パス化（最大5パス・全体5秒・パス間500ms。初回パスでWebArea不在なら再試行、WebAreaありで
+  ノード数が25%以上成長中なら再試行、最多候補のパスを採用）。診断へ`collection_passes`と
+  `web_area_present`を追加しGateway検証・Debug UI・Consoleログ（`[Challenge3] ax-collect`）へ
+  記録。ネイティブアプリのコストは+約0.5秒×1回で有界。副作用の注記: AXEnhancedUserInterfaceは
+  ウィンドウマネージャ系ツールで既知の副作用があるが、当該Macでは既にtrueが観測されており新規の
+  変化ではない。web test 72件、TypeScript、macOS Debug buildで検証。実画面での候補recall回復は
+  再確認待ち。この事象は「AX候補はChrome再起動・自動無効化でいつでも消える」ことを実証したため、
+  ブラウザでのrecall安定化（DOM/OCRの精度レイヤー）の優先度判断材料として⑧の計測に含める。
 
 - **仮説**: 1枚の固定画像・同時点のAX候補・会話履歴を単一VLMへ渡せば、モード切替や役職分割なしで
   Spot Visionの回答と画面内案内が成立し、その1ターンを再帰化してCopilotへ発展できる。
