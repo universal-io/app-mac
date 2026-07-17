@@ -240,16 +240,18 @@ struct ScreenshotCaptureService {
     }
 }
 
-enum StableScreenCaptureOutcome {
-    /// A settled capture to evaluate. `changeObserved: false` means the
-    /// screen looked identical to the baseline for the whole watch window —
-    /// the capture is still returned and still evaluated: the user's action
-    /// is direct evidence and pixel differencing has no veto over it
-    /// (change detection only *times* the shot, it never cancels it).
-    case stable(ScreenshotAttachment, changeObserved: Bool)
-    /// Only when the screen kept changing and never settled (animation,
-    /// video): there is no clean shot to hand to the model.
-    case timedOut
+/// A progress capture is always produced — the user's action is direct
+/// evidence and pixel differencing has no veto over it. Differencing only
+/// *times* the shot (shoot once the change settles) and annotates it.
+struct StableScreenCaptureResult {
+    let attachment: ScreenshotAttachment
+    /// False: the screen looked identical to the baseline for the whole
+    /// watch window despite the user's action — shown to the user as an
+    /// honest note alongside the (likely repeated) guidance.
+    let changeObserved: Bool
+    /// False: the screen was still changing when the window closed
+    /// (animation, slow load); the freshest frame was adopted anyway.
+    let settled: Bool
 }
 
 enum StableScreenCaptureService {
@@ -266,22 +268,23 @@ enum StableScreenCaptureService {
     private static let comparisonSide = 48
     private static let blockGrid = 12
 
-    /// Watches for the click's effect and returns a settled capture.
-    /// The change phase only decides *when* to shoot, never *whether*: if no
-    /// change is seen within the window, the latest capture is returned with
-    /// `changeObserved: false` and is evaluated anyway — a detected user
-    /// action is never dismissed because pixels moved too little.
+    /// Watches for the click's effect and returns the best capture the
+    /// window allows: settled-after-change when possible, the identical
+    /// screen when nothing changed, the freshest frame when the screen never
+    /// stopped moving. It always returns a capture — shooting too much is
+    /// acceptable, not shooting is not.
     /// `waitForChange: false` (manual 再確認) skips the change phase.
     static func capture(
         after baseline: ScreenshotAttachment,
         waitForChange: Bool = true
-    ) async throws -> StableScreenCaptureOutcome {
+    ) async throws -> StableScreenCaptureResult {
         let captureService = ScreenshotCaptureService()
         var latestCapture: ScreenshotAttachment?
         var changeDetected = !waitForChange
         var observedChange = false
+        var succeeded = false
         defer {
-            if let latestCapture { remove(latestCapture) }
+            if !succeeded, let latestCapture { remove(latestCapture) }
         }
 
         for attempt in 0..<maxAttempts {
@@ -299,24 +302,32 @@ enum StableScreenCaptureService {
                     observedChange = true
                     latestCapture = current
                 } else if attempt == maxAttempts - 1 {
-                    // No visible change in the whole window. The screen is by
-                    // definition settled; hand the model this capture rather
+                    // No visible change in the whole window: the screen is by
+                    // definition settled. Hand the model this capture rather
                     // than overruling the user's action.
                     log(attempt: attempt, phase: "no_change_adopt", difference: nil)
-                    return .stable(current, changeObserved: false)
+                    succeeded = true
+                    return StableScreenCaptureResult(
+                        attachment: current,
+                        changeObserved: false,
+                        settled: true
+                    )
                 } else {
                     remove(current)
                 }
             } else if let previous = latestCapture {
                 let difference = await differences(previous.url, current.url)
                 log(attempt: attempt, phase: "stability", difference: difference.mean)
-                if difference.mean <= stableThreshold {
-                    remove(previous)
-                    latestCapture = nil
-                    return .stable(current, changeObserved: observedChange)
-                }
                 remove(previous)
                 latestCapture = current
+                if difference.mean <= stableThreshold {
+                    succeeded = true
+                    return StableScreenCaptureResult(
+                        attachment: current,
+                        changeObserved: observedChange,
+                        settled: true
+                    )
+                }
             } else {
                 log(attempt: attempt, phase: "first_sample", difference: nil)
                 latestCapture = current
@@ -327,8 +338,24 @@ enum StableScreenCaptureService {
             }
         }
 
-        log(attempt: maxAttempts, phase: "never_settled", difference: nil)
-        return .timedOut
+        // The screen never stopped moving inside the window. Adopt the
+        // freshest frame anyway; a mid-load shot at worst repeats guidance.
+        log(attempt: maxAttempts, phase: "unsettled_adopt", difference: nil)
+        if let latestCapture {
+            succeeded = true
+            return StableScreenCaptureResult(
+                attachment: latestCapture,
+                changeObserved: observedChange,
+                settled: false
+            )
+        }
+        let final = try await captureService.captureMatchingScope(of: baseline)
+        succeeded = true
+        return StableScreenCaptureResult(
+            attachment: final,
+            changeObserved: observedChange,
+            settled: false
+        )
     }
 
     private static func log(attempt: Int, phase: String, difference: Double?) {

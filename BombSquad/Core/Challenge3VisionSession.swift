@@ -38,6 +38,10 @@ final class Challenge3VisionSession: ObservableObject {
     @Published private(set) var copilotGoal: String?
     @Published private(set) var isCopilotChecking = false
     @Published private(set) var copilotState: Challenge3CopilotState = .idle
+    /// True while the latest progress turn was evaluated from a capture in
+    /// which no screen change was visible despite the user's action — shown
+    /// as an honest note next to the (likely repeated) guidance.
+    @Published private(set) var copilotSawNoChange = false
     @Published var input = ""
     @Published var errorMessage: String?
     @Published var focusedField: FocusField? = .navigator
@@ -150,6 +154,7 @@ final class Challenge3VisionSession: ObservableObject {
         copilotStepCount = 0
         isCopilotActive = true
         copilotState = .idle
+        copilotSawNoChange = false
         focusedField = nil
         guard onRequestModeTransition(.copilot, "challenge3CopilotStarted") else {
             // Roll back so a refused transition cannot leave the strip UI
@@ -279,6 +284,7 @@ final class Challenge3VisionSession: ObservableObject {
         copilotProgressTask?.cancel()
         isCopilotChecking = true
         copilotState = .waitingForChange
+        copilotSawNoChange = false
         errorMessage = nil
         HighlightOverlayPresenter.shared.hide()
         let baseline = attachment
@@ -292,29 +298,27 @@ final class Challenge3VisionSession: ObservableObject {
             }
             do {
                 if delay > 0 { try await Task.sleep(nanoseconds: delay) }
-                let outcome = try await StableScreenCaptureService.capture(
+                let capture = try await StableScreenCaptureService.capture(
                     after: baseline,
                     waitForChange: waitForChange
                 )
                 try Task.checkCancellation()
-                guard self.isCopilotActive else { return }
-                switch outcome {
-                case .timedOut:
-                    self.copilotState = .timedOut
-                    self.showLiveHighlight()
-                case .stable(let newAttachment, let changeObserved):
-#if DEBUG
-                    NSLog(
-                        "[Challenge3] progress capture adopted changeObserved=%d",
-                        changeObserved ? 1 : 0
-                    )
-#endif
-                    await self.evaluateCopilotProgress(
-                        attachment: newAttachment,
-                        goal: goal,
-                        previousInstruction: previousInstruction
-                    )
+                guard self.isCopilotActive else {
+                    try? FileManager.default.removeItem(at: capture.attachment.url)
+                    return
                 }
+#if DEBUG
+                NSLog(
+                    "[Challenge3] progress capture adopted changeObserved=%d settled=%d",
+                    capture.changeObserved ? 1 : 0, capture.settled ? 1 : 0
+                )
+#endif
+                self.copilotSawNoChange = !capture.changeObserved && waitForChange
+                await self.evaluateCopilotProgress(
+                    attachment: capture.attachment,
+                    goal: goal,
+                    previousInstruction: previousInstruction
+                )
             } catch is CancellationError {
                 return
             } catch {

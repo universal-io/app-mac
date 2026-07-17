@@ -270,6 +270,15 @@ private struct Challenge3CopilotStripView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .textSelection(.enabled)
 
+            if session.copilotSawNoChange {
+                Label(
+                    "操作は検知しましたが、画面に変化は見えませんでした",
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+
             HStack(spacing: 8) {
                 if session.isCopilotChecking {
                     ProgressView().controlSize(.small)
@@ -310,7 +319,7 @@ private struct Challenge3CopilotStripView: View {
         case .evaluating:
             return "新しい画面から次の案内を確認しています…"
         case .timedOut:
-            return "画面の動きが止まりません。表示が落ち着いてから「再確認」を押してください"
+            return "画面を撮影できませんでした。「再確認」を押してください"
         case .complete:
             return "目的の情報を確認しました"
         case .clarification:
