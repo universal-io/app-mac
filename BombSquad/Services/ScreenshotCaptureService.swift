@@ -241,7 +241,14 @@ struct ScreenshotCaptureService {
 }
 
 enum StableScreenCaptureOutcome {
-    case stable(ScreenshotAttachment)
+    /// A settled capture to evaluate. `changeObserved: false` means the
+    /// screen looked identical to the baseline for the whole watch window —
+    /// the capture is still returned and still evaluated: the user's action
+    /// is direct evidence and pixel differencing has no veto over it
+    /// (change detection only *times* the shot, it never cancels it).
+    case stable(ScreenshotAttachment, changeObserved: Bool)
+    /// Only when the screen kept changing and never settled (animation,
+    /// video): there is no clean shot to hand to the model.
     case timedOut
 }
 
@@ -259,18 +266,20 @@ enum StableScreenCaptureService {
     private static let comparisonSide = 48
     private static let blockGrid = 12
 
-    /// `requireChange: false` skips the change gate and adopts the first
-    /// stable capture. The manual "再確認" path needs this: the 48×48 mean
-    /// difference cannot see small UI changes (dropdowns, checkboxes), so a
-    /// user-asserted progress check must not be blocked by the same gate
-    /// that already failed to detect the change.
+    /// Watches for the click's effect and returns a settled capture.
+    /// The change phase only decides *when* to shoot, never *whether*: if no
+    /// change is seen within the window, the latest capture is returned with
+    /// `changeObserved: false` and is evaluated anyway — a detected user
+    /// action is never dismissed because pixels moved too little.
+    /// `waitForChange: false` (manual 再確認) skips the change phase.
     static func capture(
         after baseline: ScreenshotAttachment,
-        requireChange: Bool = true
+        waitForChange: Bool = true
     ) async throws -> StableScreenCaptureOutcome {
         let captureService = ScreenshotCaptureService()
         var latestCapture: ScreenshotAttachment?
-        var changeDetected = !requireChange
+        var changeDetected = !waitForChange
+        var observedChange = false
         defer {
             if let latestCapture { remove(latestCapture) }
         }
@@ -287,7 +296,14 @@ enum StableScreenCaptureService {
                 log(attempt: attempt, phase: "change", difference: difference.blockMax)
                 if difference.blockMax >= changeBlockThreshold {
                     changeDetected = true
+                    observedChange = true
                     latestCapture = current
+                } else if attempt == maxAttempts - 1 {
+                    // No visible change in the whole window. The screen is by
+                    // definition settled; hand the model this capture rather
+                    // than overruling the user's action.
+                    log(attempt: attempt, phase: "no_change_adopt", difference: nil)
+                    return .stable(current, changeObserved: false)
                 } else {
                     remove(current)
                 }
@@ -297,7 +313,7 @@ enum StableScreenCaptureService {
                 if difference.mean <= stableThreshold {
                     remove(previous)
                     latestCapture = nil
-                    return .stable(current)
+                    return .stable(current, changeObserved: observedChange)
                 }
                 remove(previous)
                 latestCapture = current
@@ -311,7 +327,7 @@ enum StableScreenCaptureService {
             }
         }
 
-        log(attempt: maxAttempts, phase: "timed_out", difference: nil)
+        log(attempt: maxAttempts, phase: "never_settled", difference: nil)
         return .timedOut
     }
 

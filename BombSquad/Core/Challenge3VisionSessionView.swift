@@ -310,7 +310,7 @@ private struct Challenge3CopilotStripView: View {
         case .evaluating:
             return "新しい画面から次の案内を確認しています…"
         case .timedOut:
-            return "画面変化を確認できませんでした。反映後に再確認してください"
+            return "画面の動きが止まりません。表示が落ち着いてから「再確認」を押してください"
         case .complete:
             return "目的の情報を確認しました"
         case .clarification:

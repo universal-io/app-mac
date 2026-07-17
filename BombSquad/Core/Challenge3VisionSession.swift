@@ -187,10 +187,9 @@ final class Challenge3VisionSession: ObservableObject {
     }
 
     func requestCopilotProgressCheck() {
-        // The user is asserting progress happened; do not re-run the change
-        // gate that already failed to see it (small UI deltas fall below the
-        // 48×48 mean-difference threshold). Stability check only.
-        scheduleCopilotProgressCheck(after: 0, requireChange: false)
+        // The user is asserting progress happened; skip the change watch and
+        // go straight to a stability-timed capture.
+        scheduleCopilotProgressCheck(after: 0, waitForChange: false)
     }
 
     private var wireTurns: [ScreenUnderstandingTurn] {
@@ -262,7 +261,7 @@ final class Challenge3VisionSession: ObservableObject {
         copilotClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) {
             [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.scheduleCopilotProgressCheck(after: 700_000_000, requireChange: true)
+                self?.scheduleCopilotProgressCheck(after: 700_000_000, waitForChange: true)
             }
         }
     }
@@ -274,7 +273,7 @@ final class Challenge3VisionSession: ObservableObject {
         }
     }
 
-    private func scheduleCopilotProgressCheck(after delay: UInt64, requireChange: Bool) {
+    private func scheduleCopilotProgressCheck(after delay: UInt64, waitForChange: Bool) {
         guard isCopilotActive, !isCopilotChecking,
               copilotState != .complete, copilotState != .stepLimit else { return }
         copilotProgressTask?.cancel()
@@ -295,7 +294,7 @@ final class Challenge3VisionSession: ObservableObject {
                 if delay > 0 { try await Task.sleep(nanoseconds: delay) }
                 let outcome = try await StableScreenCaptureService.capture(
                     after: baseline,
-                    requireChange: requireChange
+                    waitForChange: waitForChange
                 )
                 try Task.checkCancellation()
                 guard self.isCopilotActive else { return }
@@ -303,7 +302,13 @@ final class Challenge3VisionSession: ObservableObject {
                 case .timedOut:
                     self.copilotState = .timedOut
                     self.showLiveHighlight()
-                case .stable(let newAttachment):
+                case .stable(let newAttachment, let changeObserved):
+#if DEBUG
+                    NSLog(
+                        "[Challenge3] progress capture adopted changeObserved=%d",
+                        changeObserved ? 1 : 0
+                    )
+#endif
                     await self.evaluateCopilotProgress(
                         attachment: newAttachment,
                         goal: goal,
