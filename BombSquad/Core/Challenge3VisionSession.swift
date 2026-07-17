@@ -168,6 +168,8 @@ final class Challenge3VisionSession: ObservableObject {
         installCopilotClickMonitor()
     }
 
+    /// Ending the copilot ends the session: the goal was either reached or
+    /// abandoned, so the strip just disappears — no return to the big panel.
     func stopCopilot() {
         guard isCopilotActive else { return }
         isCopilotActive = false
@@ -176,10 +178,7 @@ final class Challenge3VisionSession: ObservableObject {
         isCopilotChecking = false
         removeCopilotClickMonitor()
         HighlightOverlayPresenter.shared.hide()
-        focusedField = .navigator
-        if !onRequestModeTransition(.navigator, "challenge3CopilotStopped") {
-            onRequestPanelClose()
-        }
+        onRequestPanelClose()
     }
 
     func tearDown() {
