@@ -452,6 +452,14 @@ Copilot（後続段階）
   同時に、SCK撮影失敗→`screencapture -i`フォールバック時にエラー内容を捨てていた観測性の穴を
   塞ぎ、display ID・選択outcome・生エラーをNSLogへ記録（`[Challenge3] SCK capture failed`）。
   オレンジ通知の再発時はConsoleで原因を即特定できる。SCK失敗自体の原因は未特定（ログが無かった）。
+- マルチディスプレイ全域点検（2026-07-18）: 2〜3枚・縦置き・任意配置を前提に座標系を全点検。
+  設計は「CG global（capture・AX・実画面ハイライト入力）とCocoa global（ウィンドウ配置）の
+  2空間に収束し、変換は主ディスプレイ基準の1式のみ」で健全 — 実画面ハイライトのCG→Cocoa変換、
+  AX矩形の正規化、region往復、displayID解決（中心点探索）、パネル/帯のカーソル画面配置は
+  全て配置・向きに依存しない。発見・修正した欠陥は2件とも同型: `NSWindow(contentRect:...screen:)`へ
+  グローバル座標を渡す誤用（選択オーバーレイ＝修正済み、撮影キュー＝今回修正）。加えて
+  「要求displayIDが見つからず別ディスプレイを撮る」SCKフォールバックをログで可視化
+  （`[Challenge3] capture display fallback`。ディスプレイ引抜き時等。サイレント禁止原則）。
 - 間欠no_target_appの剖検と修正（2026-07-18）: 「たまにAX候補が出ない」事象。replay: 直近20件中
   1件がcands=0・root=none・no_target_app。原因はターゲットアプリ解決が「ライブfrontmost（非自分）→
   summon時のpreferredPID→諦め」の順で、パネル/選択オーバーレイがfocusを持った瞬間かつsummonTargetApp

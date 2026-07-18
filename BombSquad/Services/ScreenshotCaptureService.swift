@@ -97,6 +97,14 @@ struct ScreenshotCaptureService {
         else {
             throw ScreenshotCaptureError.noCaptureTarget
         }
+        if let displayID, display.displayID != displayID {
+            // Capturing a different display than requested (display unplugged
+            // or SCK enumeration mismatch) must never be silent.
+            NSLog(
+                "[Challenge3] capture display fallback: requested=%u using=%u",
+                displayID, display.displayID
+            )
+        }
 
         let ownProcessID = ProcessInfo.processInfo.processIdentifier
         let ownApplications = content.applications.filter {
@@ -449,8 +457,11 @@ final class ScreenshotCaptureCuePresenter {
     private func show() {
         hide()
         windows = NSScreen.screens.map { screen in
+            // contentRect is relative to `screen`'s lower-left corner when a
+            // screen is passed — a global frame would double the display's
+            // arrangement offset on secondary displays.
             let window = NSWindow(
-                contentRect: screen.frame,
+                contentRect: NSRect(origin: .zero, size: screen.frame.size),
                 styleMask: [.borderless],
                 backing: .buffered,
                 defer: false,
