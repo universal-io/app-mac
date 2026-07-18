@@ -407,9 +407,13 @@ final class Challenge3VisionSession: ObservableObject {
                     installCopilotClickMonitor()
                 }
             case .clarification:
+                // Clarification is now also a decision point ("this needs
+                // sign-in — continue?"), not only a dead end. Keep watching
+                // for clicks so that if the user decides to proceed by
+                // acting, the copilot follows; apply() already set/cleared
+                // the highlight based on whether a target was returned.
                 copilotState = .clarification
-                removeCopilotClickMonitor()
-                HighlightOverlayPresenter.shared.hide()
+                installCopilotClickMonitor()
             case .observation:
                 break
             }

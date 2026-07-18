@@ -323,7 +323,7 @@ private struct Challenge3CopilotStripView: View {
         case .complete:
             return "目的の情報を確認しました"
         case .clarification:
-            return "次の操作を特定できませんでした。画面を確認して再試行してください"
+            return "案内をご確認ください。進める場合はそのまま操作すると続きます"
         case .stepLimit:
             return "案内の回数が上限に達しました。目的を絞ってもう一度質問してください"
         }
