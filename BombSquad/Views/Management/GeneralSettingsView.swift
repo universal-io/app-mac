@@ -131,7 +131,7 @@ struct GeneralSettingsView: View {
                 configRow("Supabase URL", entry: config.supabaseURL)
                 configRow("Supabase anon key", entry: config.supabaseAnonKey)
 
-                Text("値の読み取り順は `BombSquad.local.plist` → `ProcessInfo.environment` → `Info.plist` です。通常はリポジトリ直下の `BombSquad.local.plist` を使います。")
+                Text("Supabase設定は `BombSquad.local.plist` → 環境変数 → `Info.plist` の順で読み込みます。Gatewayは通常のBombSquad SchemeとReleaseでは本番を使います。専用の `BombSquad Local Gateway` Schemeだけが開発URLを使い、本番へ自動切替しません。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -85,7 +85,6 @@ struct Challenge3VisionSessionView: View {
 #endif
             GatewayOverrideBadge()
             Spacer()
-            FoundationManagementMenu()
         }
         .background(WindowDragHandle())
     }

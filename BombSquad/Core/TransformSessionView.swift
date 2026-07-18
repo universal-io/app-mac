@@ -87,7 +87,6 @@ struct TransformSessionView: View {
                 Label("読み取り結果", systemImage: "doc.text.magnifyingglass")
                     .font(.headline)
                 Spacer()
-                FoundationManagementMenu()
                 if session.result != nil {
                     Button(action: session.copyInterpretation) {
                         Label("コピー", systemImage: "doc.on.clipboard.fill")

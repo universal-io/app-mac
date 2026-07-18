@@ -3,14 +3,14 @@ import SwiftUI
 /// Compact warning shown when development overrides the production Gateway.
 struct GatewayOverrideBadge: View {
     var body: some View {
-        if BombSquadConfig.isUsingOverriddenGateway() {
+        if let plan = BombSquadConfig.gatewayRoutePlan(), plan.usesDevelopmentOverride {
             Text("開発GW")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(Color.orange, in: Capsule())
-                .help("開発Gatewayに接続中: \(BombSquadConfig.resolvedAPIBaseURL() ?? "?")")
+                .help("明示的なlocalモード: \(plan.preferredURL.absoluteString)\n本番への自動切替なし")
         }
     }
 }

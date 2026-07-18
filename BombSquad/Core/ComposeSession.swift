@@ -165,19 +165,10 @@ final class ComposeSession: ObservableObject {
         }
     }
 
-    func deployHistoryEntry(_ entry: HistoryEntry) {
-        _ = deploy(
-            text: entry.finalText,
-            historyInput: HistoryEntryInput(
-                mode: .compose,
-                sourceText: entry.finalText,
-                finalText: entry.finalText,
-                modelID: entry.modelID,
-                modelName: entry.modelName,
-                outputLanguage: entry.outputLanguage,
-                action: .sent
-            )
-        )
+    func restoreHistoryEntry(_ entry: HistoryEntry) {
+        // Input history is a drafting aid, not a send shortcut. Restoring an
+        // entry must leave the user in control of review and deployment.
+        adoptSuggestedDraft(entry.finalText)
     }
 
     func adoptSuggestedDraft(_ text: String) {
@@ -280,7 +271,10 @@ final class ComposeSession: ObservableObject {
             revisedDraft = reviewed.revisedText
             reviewedDraft = input
             reviewedLanguage = language
-            focusedField = .revision
+            // A review is advisory: completing it must not silently change
+            // what Enter will deploy. The revision becomes active only after
+            // the user explicitly toggles or clicks into that editor.
+            focusedField = .draft
         } catch is CancellationError {
             return
         } catch {

@@ -33,17 +33,6 @@ BUILD_DIR="$PROJECT_ROOT/build"
 ARCHIVE_PATH="$BUILD_DIR/${SCHEME}.xcarchive"
 EXPORT_DIR="$BUILD_DIR/export"
 DIST_DIR="$PROJECT_ROOT/dist"
-LOCAL_PLIST="$PROJECT_ROOT/BombSquad.local.plist"
-LOCAL_PLIST_BACKUP="$BUILD_DIR/BombSquad.local.plist.bak"
-
-# Always restore the developer's local.plist (localhost gateway), even on error.
-restore_local_plist() {
-  if [[ -f "$LOCAL_PLIST_BACKUP" ]]; then
-    cp "$LOCAL_PLIST_BACKUP" "$LOCAL_PLIST"
-    echo "-> restored BombSquad.local.plist (dev localhost)"
-  fi
-}
-trap restore_local_plist EXIT
 
 echo "== preflight =="
 security find-identity -v -p codesigning | grep -q "Developer ID Application" \
@@ -66,16 +55,6 @@ else
 fi
 
 mkdir -p "$BUILD_DIR" "$DIST_DIR"
-
-# 1. Point the distribution build at the production gateway. local.plist is
-#    bundled and read first, so blank its API base URL to fall back to
-#    Info.plist's https://api.universal-io.com. Supabase URL/anon key stay
-#    (public client key, identical in production).
-if [[ -f "$LOCAL_PLIST" ]]; then
-  cp "$LOCAL_PLIST" "$LOCAL_PLIST_BACKUP"
-  /usr/libexec/PlistBuddy -c "Set :BOMB_SQUAD_API_BASE_URL ''" "$LOCAL_PLIST"
-  echo "-> blanked BOMB_SQUAD_API_BASE_URL for release (prod fallback)"
-fi
 
 echo "== xcodegen generate =="
 xcodegen generate

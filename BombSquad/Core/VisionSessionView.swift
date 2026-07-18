@@ -96,7 +96,6 @@ struct VisionSessionView: View {
             }
             GatewayOverrideBadge()
             Spacer()
-            FoundationManagementMenu()
         }
         .background(WindowDragHandle())
     }
@@ -438,7 +437,6 @@ private struct CoreCopilotStripView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                FoundationManagementMenu()
                 Button {
                     session.requestPanelClose()
                 } label: {

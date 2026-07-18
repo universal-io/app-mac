@@ -40,14 +40,20 @@ struct GatewayAPI {
 
     /// Usable only when the gateway URL is configured and a user is signed in.
     static func make() -> GatewayAPI? {
-        let config = BombSquadConfig.snapshot()
+        // A hosted XCTest process still constructs the SwiftUI App and its
+        // shared auth model before tests begin. Never let that incidental
+        // initialization contact a real gateway; transport tests inject their
+        // own GatewayAPI and URLSession explicitly.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+            return nil
+        }
+
+        let routePlan = BombSquadConfig.gatewayRoutePlan()
         guard
-            let raw = config.apiBaseURL.value?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !raw.isEmpty,
-            let url = URL(string: raw),
+            let routePlan,
             BombSquadAuthClient.shared.currentSession() != nil
         else { return nil }
-        return GatewayAPI(baseURL: url)
+        return GatewayAPI(baseURL: routePlan.preferredURL)
     }
 
     /// `BOMB_SQUAD_API_BASE_URL` may or may not include the `/api` base path.
@@ -93,6 +99,13 @@ struct GatewayAPI {
             let code = errorObject["code"] as? String
         else {
             let body = String(data: data, encoding: .utf8) ?? ""
+            if body.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased().hasPrefix("<!doctype html") {
+                let message = status == 404
+                    ? "必要なGateway APIが本番環境に配備されていません（HTTP 404）。"
+                    : "Gatewayから想定外のHTML応答が返されました（HTTP \(status)）。"
+                return ProviderError.gateway(message: message)
+            }
             return ProviderError.http(status: status, body: String(body.prefix(500)))
         }
 

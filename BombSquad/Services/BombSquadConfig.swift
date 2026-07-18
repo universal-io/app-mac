@@ -37,15 +37,22 @@ enum BombSquadConfig {
         }
     }
 
+    /// Gateway routing decided at launch. Production is the unconditional
+    /// default; a development endpoint requires an explicit Debug-only mode.
+    struct GatewayRoutePlan: Equatable {
+        let preferredURL: URL
+        let usesDevelopmentOverride: Bool
+    }
+
     static let apiBaseURLKey = "BOMB_SQUAD_API_BASE_URL"
+    static let gatewayModeKey = "BOMB_SQUAD_GATEWAY_MODE"
     static let supabaseURLKey = "BOMB_SQUAD_SUPABASE_URL"
     static let supabaseAnonKey = "BOMB_SQUAD_SUPABASE_ANON_KEY"
 
-    /// The gateway base URL actually in effect after the local → env → Info
-    /// resolution. nil only if even the Info.plist default is missing.
+    /// The selected gateway URL. Debug and Release both use production unless
+    /// Debug was launched with BOMB_SQUAD_GATEWAY_MODE=local.
     static func resolvedAPIBaseURL(bundle: Bundle = .main) -> String? {
-        let entry = snapshot(bundle: bundle).apiBaseURL
-        return entry.isConfigured ? entry.value : nil
+        gatewayRoutePlan(bundle: bundle)?.preferredURL.absoluteString
     }
 
     /// The production default baked into Info.plist (never overridden).
@@ -55,27 +62,84 @@ enum BombSquadConfig {
         return (value?.isEmpty == false) ? value : nil
     }
 
-    /// True when a local.plist / env override points the app somewhere other
-    /// than the Info.plist production default. Surfaced in the UI so a leftover
-    /// dev override (e.g. localhost) can never silently stand in for production
-    /// — the recurring failure mode where the app quietly talks to a local
-    /// gateway instead of Vercel.
+    /// True in Debug whenever a development gateway differs from production.
     static func isUsingOverriddenGateway(bundle: Bundle = .main) -> Bool {
-        guard let resolved = resolvedAPIBaseURL(bundle: bundle) else { return false }
-        guard let production = productionAPIBaseURL(bundle: bundle) else { return false }
-        return normalizedURL(resolved) != normalizedURL(production)
+        gatewayRoutePlan(bundle: bundle)?.usesDevelopmentOverride == true
     }
 
-    private static func normalizedURL(_ url: String) -> String {
-        url.trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            .lowercased()
+    static func gatewayRoutePlan(
+        bundle: Bundle = .main,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> GatewayRoutePlan? {
+        let localConfig = localConfigValues(bundle: bundle)
+        let developmentValue = firstConfiguredValue(
+            environment[apiBaseURLKey],
+            localConfig[apiBaseURLKey]
+        )
+        return makeGatewayRoutePlan(
+            developmentValue: developmentValue,
+            productionValue: productionAPIBaseURL(bundle: bundle),
+            developmentModeRequested: environment[gatewayModeKey]?.lowercased() == "local",
+            allowsDevelopmentOverride: allowsDevelopmentGatewayOverride
+        )
+    }
+
+    /// Pure routing policy kept testable. A localhost value left behind in the
+    /// gitignored plist is inert unless the process explicitly opts into local
+    /// mode. Explicit local mode fails closed instead of leaking into production.
+    static func makeGatewayRoutePlan(
+        developmentValue: String?,
+        productionValue: String?,
+        developmentModeRequested: Bool,
+        allowsDevelopmentOverride: Bool
+    ) -> GatewayRoutePlan? {
+        if allowsDevelopmentOverride, developmentModeRequested {
+            guard let developmentURL = configuredURL(developmentValue) else { return nil }
+            return GatewayRoutePlan(preferredURL: developmentURL, usesDevelopmentOverride: true)
+        }
+        return configuredURL(productionValue).map {
+            GatewayRoutePlan(preferredURL: $0, usesDevelopmentOverride: false)
+        }
+    }
+
+    private static var allowsDevelopmentGatewayOverride: Bool {
+#if DEBUG
+        true
+#else
+        false
+#endif
+    }
+
+    private static func configuredURL(_ value: String?) -> URL? {
+        guard let value = firstConfiguredValue(value) else { return nil }
+        guard
+            let url = URL(string: value),
+            let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https",
+            url.host != nil
+        else { return nil }
+        return url
+    }
+
+    private static func firstConfiguredValue(_ values: String?...) -> String? {
+        values.lazy.compactMap { value -> String? in
+            guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+                return nil
+            }
+            return trimmed
+        }.first
     }
 
     static func snapshot(bundle: Bundle = .main, environment: [String: String] = ProcessInfo.processInfo.environment) -> Snapshot {
         let localConfig = localConfigValues(bundle: bundle)
+        let routePlan = makeGatewayRoutePlan(
+            developmentValue: firstConfiguredValue(environment[apiBaseURLKey], localConfig[apiBaseURLKey]),
+            productionValue: productionAPIBaseURL(bundle: bundle),
+            developmentModeRequested: environment[gatewayModeKey]?.lowercased() == "local",
+            allowsDevelopmentOverride: allowsDevelopmentGatewayOverride
+        )
         return Snapshot(
-            apiBaseURL: entry(for: apiBaseURLKey, localConfig: localConfig, bundle: bundle, environment: environment),
+            apiBaseURL: Entry(key: apiBaseURLKey, value: routePlan?.preferredURL.absoluteString),
             supabaseURL: entry(for: supabaseURLKey, localConfig: localConfig, bundle: bundle, environment: environment),
             supabaseAnonKey: entry(for: supabaseAnonKey, localConfig: localConfig, bundle: bundle, environment: environment)
         )

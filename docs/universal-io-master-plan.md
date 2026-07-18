@@ -1,7 +1,6 @@
 # Universal I/O (I//O) マスタープラン
 
-最終更新: 2026-07-14（vendor/product・tenant・user をVision専用ではなく全surface共通の
-Context解決軸として定義。M4 の実装集中は維持）
+最終更新: 2026-07-18（GatewayをDebug・Releaseとも本番既定、明示localモードだけ開発URLへ固定）
 ステータス: 承認済み（オーナー承認済みの製品方針。実装はマイルストーン M1 から開始）
 
 このドキュメントは、Bomb Squad から **Universal I/O**（ロゴ: **I//O**）への製品転換の正本である。
@@ -550,8 +549,8 @@ M3 の Gateway 移行時にサーバー側へ移す。
     ルート移動はせずこのまま採用（オーナー決定：実機確認済みの経路を変えるリスクを避ける）。
   - macOS クライアントの本番向き先は設定済み: [`project.yml`](../project.yml) の Info.plist に
     `BOMB_SQUAD_API_BASE_URL: https://api.universal-io.com` を既定値として追加
-    （[`BombSquadConfig`](../BombSquad/Services/BombSquadConfig.swift) の読み込み順は
-    `BombSquad.local.plist`（開発者のlocalhost）→ Info.plist の順なので、開発中は影響なし）。
+    （Debug・Releaseとも通常はInfo.plist本番だけを使う。Debugを
+    専用`BombSquad Local Gateway` Schemeで明示起動した場合だけ開発URLを使い、本番へfallbackしない）。
   - **詰まった問題と原因（解決済み）**: Vercel で「Root Directory=web」を設定しても
     `Error: No Output Directory named "public" found` が繰り返し発生した。原因は
     **`feature/universal-io-m4` ブランチの内容が一度も GitHub へ push されていなかったこと**。
@@ -590,10 +589,12 @@ M3 の Gateway 移行時にサーバー側へ移す。
        secret を発行してから Vercel の環境変数へ追加する。価格は Standard ¥1,980 / Pro ¥4,980。
        `bs_entitlements.plan` の CHECK 制約に `standard` を追加するマイグレーションが必要
        （現状 `free/pro/team/enterprise` のみ）。
-  - **リリース前に忘れてはいけないこと**: `BombSquad.local.plist` はアプリバンドルに同梱され
-    最優先で読まれるため、配布ビルドを作る前に同ファイルの `BOMB_SQUAD_API_BASE_URL` を空にし、
-    Info.plist の本番既定へ確実にフォールバックさせること（README の「セットアップ」節に
-    注意書き済み）。
+  - **Gateway経路の最終安全策（2026-07-18、local-first方針を廃止）**:
+    `BombSquad.local.plist` はSupabase認証設定のためバンドルを続けるが、localhost URLが存在するだけでは
+    Gateway経路を変えない。Debug・Releaseとも通常はInfo.plistの本番既定だけを使う。ローカル開発は
+    専用`BombSquad Local Gateway` Scheme（内部mode=`local`）で明示起動した場合だけ有効で、
+    停止・設定不足でも本番へ
+    fallbackしない。リリース前のplist編集、人間の戻し忘れ、ローカルプロセスの生死に依存しない。
 
 - **M3-C（実装中、`feature/universal-io`、2026-07-02 着手）**: パネル UI 刷新。
   デザイン原則 3.5 を全面適用する。フェーズ分割:
@@ -601,6 +602,11 @@ M3 の Gateway 移行時にサーバー側へ移す。
     空 → 原文 → 結果の 3 状態）に再構成。出力言語プルダウンをパネルから撤去し
     設定へ移動＋UserDefaults 永続化（「セッションごとに日本語へ戻る」既知課題も解消）。
     diff を結果表示の中心に昇格。右Shift 1回のフォーカス切替は上下（原文↔結果）として維持。
+    レビューは参考表示なので、完了時に結果欄へ自動フォーカスせず原文とEnterの採用対象を維持する。
+    結果の採用は右Shift1回または結果欄クリックによる明示操作だけで行う。
+    レビュー面はレビュー開始まで生成せず、エラー／運用通知は入力面より上の全体領域に置く。
+    入力履歴は初期状態で折りたたみ、選択時は即送信せず原文欄へ復元する。一時パネルから管理画面への
+    メニューは置かず、管理導線はメニューバーへ一本化する。
   - **C2 ストリーミング**: Gateway `/api/ai/review` に SSE を追加（`stream: true`）。
     revised_text の増分を `delta` イベント、最後に `result`（全体 JSON + quota）。
     macOS 側は `GatewayReviewClient` にストリーミング経路、結果エディタへトークン単位で反映。
@@ -629,8 +635,8 @@ M3 の Gateway 移行時にサーバー側へ移す。
   Gateway は**別 Vercel プロジェクト**に分離し `api.universal-io.com` サブドメインへ
   （GitHub 連携 = app-mac リポジトリ、Root Directory=`web`）。apex を 2 プロジェクトに
   当てられないためサブドメイン分離が必須。クライアントの本番向き先デフォルトは
-  Info.plist に `https://api.universal-io.com` を設定済み（開発は local.plist の
-  localhost が優先。`GatewayAPI.endpoint` が `/api` 有無を吸収）。メールは
+  Info.plist に `https://api.universal-io.com` を設定済み（Debug・Releaseとも通常は本番固定。
+  明示localモードだけ開発URLを使い自動fallbackしない。`GatewayAPI.endpoint` が `/api` 有無を吸収）。メールは
   Cloudflare + Resend 予定。
 
 **目的**: ビジネス成立の土台。API キーのクライアント撤去、メータリング、Stripe サブスク、

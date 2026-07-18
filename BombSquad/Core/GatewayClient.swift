@@ -186,12 +186,12 @@ struct GatewayClient {
         return root
     }
 
-    private func send(_ request: URLRequest) async throws -> Data {
+    func send(_ request: URLRequest) async throws -> Data {
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
+            throw Self.transportError(error)
         }
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.http(status: -1, body: "no HTTP response")
@@ -200,6 +200,10 @@ struct GatewayClient {
             throw GatewayAPI.error(status: http.statusCode, data: data)
         }
         return data
+    }
+
+    private static func transportError(_ error: Error) -> Error {
+        ProviderError.http(status: -1, body: error.localizedDescription)
     }
 
     private func captureOperationalNotice(from data: Data) async {
@@ -227,7 +231,7 @@ struct GatewayClient {
         do {
             (bytes, response) = try await session.bytes(for: request)
         } catch {
-            throw ProviderError.http(status: -1, body: error.localizedDescription)
+            throw Self.transportError(error)
         }
 
         guard let http = response as? HTTPURLResponse else {

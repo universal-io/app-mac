@@ -344,6 +344,40 @@ Copilot（後続段階）
   完了ゲートとして未了**——UI整理と並行または後に実施し、20〜30ケースで誤ハイライト0・誤advance 0・
   stale採用0を判定する。失敗時はConsoleの`[Challenge3]`ログとOS一時ディレクトリ
   `UniversalIO-Challenge3-Replays`（request/image/response）で層を剖検する。
+- 入力パネル点検・Gateway経路の第1段階修正（2026-07-18、同日中に下記最終方針で廃止）:
+  音声文字起こし停止の直接原因は、
+  gitignoreされた`BombSquad.local.plist`の`127.0.0.1:3001`が常に本番より先に選ばれ、ローカルGatewayが
+  停止しても単一URLのtransportが本番を再試行しないことだった。再発の力学は、(1) Supabase認証設定を
+  安定読込するためlocal plist全体をbundleした、(2) release.shが配布時だけGateway値を空にし終了時に
+  localhostを意図的に復元した、(3) 「fallback」が値の欠落時だけを意味し接続不能時を扱わなかった、
+  (4) gitignoreファイルの変更はreview/historyに出ない、の組合せ。恒久策として、Releaseはlocal/envの
+  Gateway値をコンパイル境界で無視してInfo.plist本番へ固定、Debugはloopback local-firstを維持し、
+  接続不能・名前解決失敗だけ同一requestを本番へ1回再送する。HTTP応答・timeout・remote stagingは
+  productionへ流さない。release.shのplist変更・復元を削除し、経路ポリシーとmultipart ASRを含む
+  transport再送をunit testで固定した。これはNavigatorエンジンの新規実装ではなく全surface共通transportの
+  障害修正であり、⑧の凍結境界は変更しない。
+- Gateway経路の最終方針・本番既定へ単純化（2026-07-18、オーナー決定）: 日常利用でローカルGatewayを
+  使わないにもかかわらず、gitignore plistのlocalhost値だけでDebugがlocal-firstになる構造そのものを
+  廃止した。通常起動はDebug・ReleaseともInfo.plistの本番Gateway一択。ローカルはDebugプロセスへ
+  専用`BombSquad Local Gateway` Scheme（内部で`BOMB_SQUAD_GATEWAY_MODE=local`）を選んだ場合だけ有効で、
+  URL不足・接続失敗・HTTPエラーのいずれも
+  本番へfallbackせずfail-loudにする。これにより、古いplist、ローカル停止、別アプリの同ポート利用が
+  日常利用へ影響せず、localテストが本番へ流れることもない。local-first transport再送コードと
+  `LOCAL_GATEWAY_UNAVAILABLE`を削除し、残存localhostが通常Debugで不活性、明示localだけ有効、Releaseは
+  modeも無視、local設定不足はfail-closed、404 HTMLは生ソースでなく配備不一致メッセージになることを
+  unit testで固定した。前項のlocal-first記録は経緯としてのみ保持し、現行仕様へ復活させない。
+- 入力パネル点検・レビュー後フォーカスの回帰修正（2026-07-18）: 正しい挙動は、レビューを参考表示
+  しても原文欄とEnterの採用対象を維持し、右Shift1回または結果欄クリックで明示した場合だけ結果を
+  採用すること。旧`ReviewViewModel`はレビュー完了時にフォーカスを変更していなかったが、基盤再構築
+  `726dc86`で新`ComposeSession`へ`focusedField = .revision`が根拠なく追加され、Phase 3の忠実移植原則に
+  反していた。完了時を`.draft`に固定し、README・master plan・GP-03とunit testを同じ契約へ揃えた。
+  今後は「結果を表示する状態遷移」と「ユーザーが採用対象を切り替える操作」を結合しない。
+- 入力パネル点検・初期面の整理（2026-07-18）: 空の初期面にレビュー枠と送信履歴本文を常時出す構成を
+  廃止。レビュー面はレビュー開始時に初めて表示し、エラー／運用通知はレビュー面内から入力面より上の
+  全体領域へ移した。「最近の送信」は折りたたみ済みの「入力履歴」へ変更し、選択は外部への即送信でなく
+  原文欄への復元とした。2026-07-13移植時に全surfaceへ追加された共有管理メニューは、後続オーナー判断で
+  動線ごと削除し、管理画面の入口をメニューバーへ一本化。foundation rebuildの完了記録にも撤回注記を
+  追加し、過去のパリティ項目から再導入されないようにした。
 - ローカル起動の署名ルール（2026-07-17）: `CODE_SIGNING_ALLOWED=NO`はコンパイル検証専用で、生成物を
   実画面テストに起動しない。未署名またはad-hoc署名の`/tmp`ビルドは、システム設定で許可済みの
   Apple Development署名版とmacOS TCC上で別主体になり、3権限が未許可に見える。実画面テストは通常の

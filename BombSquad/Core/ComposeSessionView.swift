@@ -24,6 +24,7 @@ struct ComposeSessionView: View {
     @ObservedObject var session: ComposeSession
     @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
     @State private var showHelp = false
+    @State private var isInputHistoryExpanded = false
 
     private var focusedField: Binding<FocusField?> {
         Binding(get: { session.focusedField }, set: { session.focusedField = $0 })
@@ -35,10 +36,15 @@ struct ComposeSessionView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            globalMessages
+
             draftPane
                 .frame(maxHeight: hasResultSurface ? 190 : .infinity)
-            resultPane
-                .frame(maxHeight: .infinity)
+
+            if hasResultSurface {
+                resultPane
+                    .frame(maxHeight: .infinity)
+            }
         }
         .animation(.spring(duration: 0.35), value: hasResultSurface)
         .frame(minWidth: 620, minHeight: 640)
@@ -50,11 +56,6 @@ struct ComposeSessionView: View {
 
     private var draftPane: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Spacer()
-                FoundationManagementMenu()
-            }
-
             if let context = session.situationalContext, !session.isContextExcluded {
                 FoundationContextChip(context: context, onExclude: session.excludeContext)
             }
@@ -125,8 +126,31 @@ struct ComposeSessionView: View {
                 .disabled(!session.canDeployDraft)
                 .buttonStyle(.borderedProminent)
             }
+
+            if session.isEmptyDraft, !session.recentHistoryEntries.isEmpty {
+                inputHistory
+            }
         }
         .padding()
+    }
+
+    @ViewBuilder
+    private var globalMessages: some View {
+        if session.errorMessage != nil || noticeCenter.current != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                if let error = session.errorMessage {
+                    ErrorBanner(message: error)
+                }
+                if let notice = noticeCenter.current {
+                    OperationalNoticeBanner(
+                        message: notice.message,
+                        onDismiss: noticeCenter.dismiss
+                    )
+                }
+            }
+            .padding(.horizontal)
+            .padding(.top)
+        }
     }
 
     private var resultPane: some View {
@@ -145,16 +169,6 @@ struct ComposeSessionView: View {
             }
             .background(WindowDragHandle())
 
-            if let error = session.errorMessage {
-                ErrorBanner(message: error)
-            }
-            if let notice = noticeCenter.current {
-                OperationalNoticeBanner(
-                    message: notice.message,
-                    onDismiss: noticeCenter.dismiss
-                )
-            }
-
             if let result = session.result {
                 reviewedResult(result)
             } else if let streaming = session.streamingRevision, !streaming.isEmpty {
@@ -167,14 +181,6 @@ struct ComposeSessionView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(16)
                 .background(EditorFocusBackground(isFocused: false))
-            } else if session.isEmptyDraft, !session.recentHistoryEntries.isEmpty {
-                recentHistory
-            } else {
-                Text("レビュー結果がここに表示されます")
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(16)
-                    .background(EditorFocusBackground(isFocused: false))
             }
         }
         .padding()
@@ -248,61 +254,52 @@ struct ComposeSessionView: View {
         }
     }
 
-    private var recentHistory: some View {
+    private var inputHistory: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("最近の送信").font(.subheadline.weight(.semibold))
-            ForEach(session.recentHistoryEntries) { entry in
-                Button {
-                    session.deployHistoryEntry(entry)
-                } label: {
-                    HStack {
-                        Text(entry.finalText)
-                            .lineLimit(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: "paperplane")
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(8)
-                    .contentShape(Rectangle())
+            Button {
+                isInputHistoryExpanded.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    Text("入力履歴")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: isInputHistoryExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isInputHistoryExpanded ? "入力履歴を閉じる" : "入力履歴を開く")
+
+            if isInputHistoryExpanded {
+                ForEach(session.recentHistoryEntries) { entry in
+                    Button {
+                        session.restoreHistoryEntry(entry)
+                        isInputHistoryExpanded = false
+                    } label: {
+                        HStack {
+                            Text(entry.finalText)
+                                .lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "arrow.up.left")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("原文欄に入力します")
+                }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private func shortcut(_ key: String, _ action: String) -> some View {
         HStack(spacing: 8) {
             Text(key).font(.caption.monospaced()).frame(width: 96, alignment: .leading)
             Text(action).font(.caption)
-        }
-    }
-}
-
-struct FoundationManagementMenu: View {
-    var body: some View {
-        Menu {
-            managementButton(.account)
-            managementButton(.settings)
-            managementButton(.history)
-            managementButton(.memory)
-            managementButton(.pricing)
-        } label: {
-            Image(systemName: "ellipsis.circle")
-                .font(.system(size: 16, weight: .medium))
-        }
-        .menuStyle(.borderlessButton)
-        .help("アカウント / 設定 / 履歴を開く")
-        .accessibilityLabel("管理メニュー")
-    }
-
-    @ViewBuilder
-    private func managementButton(_ section: ManagementSection) -> some View {
-        Button {
-            ManagementNavigator.shared.section = section
-            AppCommandCenter.shared.requestShowManagement()
-        } label: {
-            Label(section.title, systemImage: section.systemImage)
         }
     }
 }

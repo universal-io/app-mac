@@ -30,7 +30,7 @@ AI レビューを通してから本番（ライブ）へ「デプロイ」す�
 macOS の画面構成方針:
 - 普段はメニューバーに常駐し、常設の大きな管理ウィンドウは出しっぱなしにしない。
 - 右Shift 2回で出る入力補助は、軽い一時パネルとして扱う。
-- アカウント、設定、履歴、料金プランは、メニューバーまたは入力補助パネル内の操作から必要な時だけ開く通常ウィンドウに分ける。
+- アカウント、設定、履歴、料金プランは、メニューバーから必要な時だけ開く通常ウィンドウに分ける。一時パネル内には管理画面への動線を置かない。
 - 入力補助のたびに管理ウィンドウへ勝手にフォーカスを移さない。
 - Google 認証やメールリンク認証の途中だけは、ブラウザやメールへ移動してもログイン画面を閉じない。
 
@@ -46,8 +46,8 @@ macOS の画面構成方針:
 
 フロー（M3-C で Spotlight 型の縦1カラム・3状態 = 空→原文→結果 に刷新）:
 1. 任意のアプリのフォームにフォーカス → **右Shift2回** でパネルが画面中央に出現（入力欄に自動フォーカス）
-2. 入力（手入力／ペースト／**右Shift長押しで音声**）。空の状態では下部に**最近の送信履歴5件**が出て、クリックするとその文面をそのまま送信できる。モデル・出力言語の選択は設定（管理ウィンドウ）へ移動済み
-3. 「レビュー」で ①誤字脱字 ②失礼・攻撃的 ③分かりにくさ の3観点を評価（結果右上に使用モデルと処理時間 ms）。クラウド経由（I//O Cloud）の場合、修正文は**トークン単位でストリーミング表示**される
+2. 入力（手入力／ペースト／**右Shift長押しで音声**）。空の状態では下部に折りたたまれた**入力履歴（最大5件）**が出て、展開して選ぶと原文欄へ文面が入る（即送信はしない）。モデル・出力言語の選択は設定（管理ウィンドウ）へ移動済み
+3. レビュー未開始時は入力面だけを表示。「レビュー」を実行して初めてレビュー面を開き、①誤字脱字 ②失礼・攻撃的 ③分かりにくさ の3観点を評価する（結果右上に使用モデルと処理時間 ms）。クラウド経由（I//O Cloud）の場合、修正文は**トークン単位でストリーミング表示**される。レビューは参考表示であり、完了してもフォーカスと Enter の採用対象は**原文のまま**。レビュー結果を使う場合だけ、ジェスチャキー1回または結果欄のクリックで明示的に切り替える
 4. 送信:
    - **原文側の「送信」（紙飛行機）** = レビューを使わず原文のまま
    - **結果側の「送信」（紙飛行機）** = レビュー結果（編集可）
@@ -170,31 +170,35 @@ xcodegen generate
 open BombSquad.xcodeproj
 
 # もしくは CLI でビルド
-xcodebuild -project BombSquad.xcodeproj -scheme BombSquad -configuration Debug build
+xcodebuild -project BombSquad.xcodeproj -scheme BombSquad -configuration Debug \
+  -derivedDataPath /tmp/universal-io-build CODE_SIGNING_ALLOWED=NO build
+
+# unit testを含む未署名コンパイル検証（秘密鍵を使わない）
+xcodebuild build-for-testing -project BombSquad.xcodeproj -scheme BombSquad \
+  -configuration Debug -derivedDataPath /tmp/universal-io-tests CODE_SIGNING_ALLOWED=NO
 ```
 
-ローカル認証設定は、リポジトリ直下の `BombSquad.local.plist` から読み込む。
-読み取り順は `BombSquad.local.plist` → Xcode Scheme の環境変数 →
-`Info.plist`。
+ローカル認証設定（Supabase URL / anon key）は、リポジトリ直下の
+`BombSquad.local.plist` から読み込む。読み取り順は `BombSquad.local.plist` →
+Xcode Scheme の環境変数 → `Info.plist`。
 
-Gateway の向き先（`BOMB_SQUAD_API_BASE_URL`）は Info.plist に本番の
-`https://api.universal-io.com` を既定値として持つ。開発者は `BombSquad.local.plist`
-に `http://localhost:3000/api` を入れることでローカル Gateway を優先できる
-（この行を空にすると本番へフォールバック）。エンドポイント構築は base URL の
-`/api` 有無を吸収する（[`GatewayAPI.endpoint`](BombSquad/Services/GatewayAPI.swift)）。
+Gateway の向き先は Info.plist の `https://api.universal-io.com` が唯一の既定値。
+**通常起動はDebug・Releaseとも常に本番**を使い、`BombSquad.local.plist`や環境変数にlocalhost URLが
+残っていても無視する。plistの空欄化・コメントアウト・復元作業は不要。
 
-> ⚠️ 向き先の可視化（戻し忘れ対策）: Info.plist の本番既定**以外**を向いている間は、
-> パネル上部にオレンジの警告バー（現在の向き先 URL 付き）が出る
+ローカルGatewayをテストする場合だけ、Xcodeで専用の**`BombSquad Local Gateway` Scheme**を選ぶ。
+このSchemeだけがDebugプロセスへ`BOMB_SQUAD_GATEWAY_MODE=local`を設定する。この時のURLは環境変数
+`BOMB_SQUAD_API_BASE_URL`、なければ`BombSquad.local.plist`から読む。localモードは本番へ
+自動fallbackしないため、ローカル停止・設定不足はその場で失敗し、テストリクエストが本番へ流れない。
+Releaseはmode指定も開発URLも常に無視する。
+
+エンドポイント構築は base URL の `/api` 有無を吸収する
+（[`GatewayAPI.endpoint`](BombSquad/Services/GatewayAPI.swift)）。
+
+> 専用`BombSquad Local Gateway` Schemeの間だけ、パネル上部にオレンジの警告バー
+> （現在の向き先URL付き）が出る
 > （[`BombSquadConfig.isUsingOverriddenGateway`](BombSquad/Services/BombSquadConfig.swift)）。
-> ローカル Gateway 開発の設定を残したまま「本番のつもりでローカルを見る／ローカルが
-> たまたま動いていて本番の不調に気づかない」という再発しやすい事故を防ぐための安全策。
-> 普段（本番）は無表示。ローカル開発が終わったら `BOMB_SQUAD_API_BASE_URL` を空に戻す。
-
-> ⚠️ リリース注意: `BombSquad.local.plist` はアプリバンドルに同梱され最優先で
-> 読まれる（[`BombSquadConfig`](BombSquad/Services/BombSquadConfig.swift)）。
-> 配布ビルドを作る前に、この plist の `BOMB_SQUAD_API_BASE_URL` を空にして
-> Info.plist の本番既定へ確実にフォールバックさせること（Supabase の値は本番も
-> 同一なので残してよい）。
+> 通常のDebugとReleaseでは警告バーもローカル経路も存在しない。
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -206,7 +210,7 @@ Gateway の向き先（`BOMB_SQUAD_API_BASE_URL`）は Info.plist に本番の
   <key>BOMB_SQUAD_SUPABASE_ANON_KEY</key>
   <string>YOUR_SUPABASE_ANON_KEY</string>
   <key>BOMB_SQUAD_API_BASE_URL</key>
-  <string></string>
+  <string>http://localhost:3000</string>
 </dict>
 </plist>
 ```
@@ -275,9 +279,9 @@ App Store を通さず、公証済み DMG を Web から直接配布する。202
 - **ダウンロード導線**: 製品サイト（別リポジトリ `web-product`）のヒーロー主ボタンが
   `https://dl.universal-io.com/Universal-IO.dmg` を指す。latest 固定名なので、バージョンを
   上げてもボタンのリンクは不変（release.sh が毎回 latest を上書きする）。
-- **配布ビルドの向き先**: release.sh がビルド中だけ `BombSquad.local.plist` の
-  `BOMB_SQUAD_API_BASE_URL` を空にし、Info.plist の本番 `https://api.universal-io.com` へ
-  フォールバックさせる。ビルド後に local.plist は自動復元される。
+- **配布ビルドの向き先**: Releaseコードは `BombSquad.local.plist` と環境変数の Gateway 値を
+  構造的に無視し、Info.plist の本番 `https://api.universal-io.com` だけを使う。release.sh は
+  gitignoreされたplistを変更・復元しない。
 
 ## Known issues（凍結中の残タスク）
 
