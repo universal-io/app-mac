@@ -26,24 +26,8 @@ final class ScreenshotSelectionOverlay {
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
 
-            // With a non-nil `screen:`, AppKit interprets contentRect as
-            // RELATIVE to that screen's lower-left corner. Passing the global
-            // screen.frame here double-offset the overlay by the display's
-            // arrangement origin — invisible on the primary display (origin
-            // 0,0), badly shifted on any secondary display.
-            let window = SelectionOverlayWindow(
-                contentRect: NSRect(origin: .zero, size: screen.frame.size),
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false,
-                screen: screen
-            )
-            window.backgroundColor = .clear
-            window.isOpaque = false
-            window.hasShadow = false
-            window.level = .screenSaver
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-            window.isReleasedWhenClosed = false
+            let window = KeyableOverlayWindow(clickThrough: false)
+            window.cover(screen)
 
             let view = SelectionOverlayView(frame: NSRect(origin: .zero, size: screen.frame.size))
             view.onOutcome = { [weak self] outcome in
@@ -70,11 +54,6 @@ final class ScreenshotSelectionOverlay {
         self.continuation = nil
         continuation.resume(returning: outcome)
     }
-}
-
-private final class SelectionOverlayWindow: NSWindow {
-    // Borderless windows refuse key status by default; Enter/Esc need it.
-    override var canBecomeKey: Bool { true }
 }
 
 private final class SelectionOverlayView: NSView {

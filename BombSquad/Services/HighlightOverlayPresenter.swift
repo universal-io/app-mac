@@ -39,18 +39,8 @@ final class HighlightOverlayPresenter {
         // the stroke and glow.
         let frame = cocoaTarget.insetBy(dx: -padding, dy: -padding)
 
-        let window = NSWindow(
-            contentRect: frame,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.backgroundColor = .clear
-        window.isOpaque = false
-        window.hasShadow = false
-        window.ignoresMouseEvents = true
-        window.level = .screenSaver
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        let window = OverlayWindow(clickThrough: true)
+        window.place(globalFrame: frame)
         window.contentView = HighlightRingView(frame: NSRect(origin: .zero, size: frame.size))
         window.alphaValue = 0
         window.orderFrontRegardless()

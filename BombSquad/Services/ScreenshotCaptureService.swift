@@ -457,22 +457,8 @@ final class ScreenshotCaptureCuePresenter {
     private func show() {
         hide()
         windows = NSScreen.screens.map { screen in
-            // contentRect is relative to `screen`'s lower-left corner when a
-            // screen is passed — a global frame would double the display's
-            // arrangement offset on secondary displays.
-            let window = NSWindow(
-                contentRect: NSRect(origin: .zero, size: screen.frame.size),
-                styleMask: [.borderless],
-                backing: .buffered,
-                defer: false,
-                screen: screen
-            )
-            window.backgroundColor = .clear
-            window.isOpaque = false
-            window.hasShadow = false
-            window.ignoresMouseEvents = true
-            window.level = .screenSaver
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+            let window = OverlayWindow(clickThrough: true)
+            window.cover(screen)
             window.contentView = ScreenshotCaptureCueView(frame: NSRect(origin: .zero, size: screen.frame.size))
             window.orderFrontRegardless()
             return window
