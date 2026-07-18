@@ -444,6 +444,14 @@ Copilot（後続段階）
     そのまま接続（G4）。
   - **実装時期**: 挑戦3の⑧golden path完了後の次フェーズ。golden pathの失敗実測が「どのツールの
     どの操作で汎用が落ちるか」を教えるので、最初に書くスキルの中身は実測から決める。
+- 2枚目ディスプレイの選択オーバーレイずれ（2026-07-18）: 外部ディスプレイでオーバーレイが大きく
+  右（+わずかに上下）へずれ、約10%しか画面内に残らない事象。原因は
+  `NSWindow(contentRect:...screen:)`が**contentRectを渡したscreenの左下基準の相対座標**として
+  解釈する仕様に対し、グローバル座標のscreen.frameを渡していたため、ディスプレイ配置オフセットが
+  二重加算されていた（メインはorigin 0,0で偶然無害）。origin .zeroの相対指定へ修正。
+  同時に、SCK撮影失敗→`screencapture -i`フォールバック時にエラー内容を捨てていた観測性の穴を
+  塞ぎ、display ID・選択outcome・生エラーをNSLogへ記録（`[Challenge3] SCK capture failed`）。
+  オレンジ通知の再発時はConsoleで原因を即特定できる。SCK失敗自体の原因は未特定（ログが無かった）。
 - 間欠no_target_appの剖検と修正（2026-07-18）: 「たまにAX候補が出ない」事象。replay: 直近20件中
   1件がcands=0・root=none・no_target_app。原因はターゲットアプリ解決が「ライブfrontmost（非自分）→
   summon時のpreferredPID→諦め」の順で、パネル/選択オーバーレイがfocusを持った瞬間かつsummonTargetApp

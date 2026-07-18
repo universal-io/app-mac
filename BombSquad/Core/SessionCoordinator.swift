@@ -496,6 +496,12 @@ final class SessionCoordinator {
         } catch ScreenshotCaptureError.cancelled {
             throw ScreenshotCaptureError.cancelled
         } catch {
+            NSLog(
+                "[Challenge3] SCK capture failed (display=%@ outcome=%@): %@",
+                displayID.map(String.init) ?? "nil",
+                String(describing: outcome),
+                String(describing: error)
+            )
             OperationalNoticeCenter.shared.publish(
                 code: "CAPTURE_FALLBACK",
                 message: "ScreenCaptureKitで撮影できなかったため、macOS標準のスクリーンショット撮影に切り替えました。"
