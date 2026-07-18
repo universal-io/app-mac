@@ -5,7 +5,7 @@ import Foundation
 /// optional navigator hand-off"; draft-carrying actions are a forward-looking
 /// hook for reply/fill assistance that exists in code before that UX is fully
 /// adopted in the panel.
-struct VisionSuggestedAction: Identifiable, Codable, Hashable {
+struct TransformSuggestedAction: Identifiable, Codable, Hashable {
     enum Kind: String, Codable {
         case reply
         case fillForm = "fill_form"
@@ -41,7 +41,7 @@ struct VisionSuggestedAction: Identifiable, Codable, Hashable {
 
 /// "See → understand → respond": what is happening on screen, what it says,
 /// what is being asked of the user, and prepared actions to approve.
-struct VisionInterpretationResult: Codable, Hashable {
+struct TransformInterpretationResult: Codable, Hashable {
     var modelID: String?
     /// 1-2 sentence summary of what is happening on this screen.
     let situation: String
@@ -49,7 +49,7 @@ struct VisionInterpretationResult: Codable, Hashable {
     let extracted: String
     /// What the user is being asked to do (requests, deadlines, facts).
     let asks: [String]
-    let suggestedActions: [VisionSuggestedAction]
+    let suggestedActions: [TransformSuggestedAction]
 
     enum CodingKeys: String, CodingKey {
         case modelID = "model_id"
@@ -79,7 +79,7 @@ struct VisionInterpretationResult: Codable, Hashable {
     /// Tolerant decoding: models occasionally rename keys or return the
     /// legacy shape (summary / visible_text / interpretation), especially on
     /// the fallback model. Map whatever arrived onto the current schema.
-    static func decodeFlexible(from data: Data) throws -> VisionInterpretationResult {
+    static func decodeFlexible(from data: Data) throws -> TransformInterpretationResult {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderError.decoding("vision result is not a JSON object")
         }
@@ -92,7 +92,7 @@ struct VisionInterpretationResult: Codable, Hashable {
                 .joined(separator: "\n")
         }
 
-        return VisionInterpretationResult(
+        return TransformInterpretationResult(
             modelID: stringValue(object, keys: ["model_id", "modelID"]),
             situation: situation,
             extracted: extracted,
@@ -101,7 +101,7 @@ struct VisionInterpretationResult: Codable, Hashable {
         )
     }
 
-    private static func actionsValue(_ object: [String: Any]) -> [VisionSuggestedAction] {
+    private static func actionsValue(_ object: [String: Any]) -> [TransformSuggestedAction] {
         guard let raw = object["suggested_actions"] ?? object["suggestedActions"] ?? object["actions"] else {
             return []
         }
@@ -110,9 +110,9 @@ struct VisionInterpretationResult: Codable, Hashable {
             return items.compactMap { item in
                 guard let title = stringValue(item, keys: ["title", "name"]), !title.isEmpty else { return nil }
                 let kindRaw = stringValue(item, keys: ["kind", "type"]) ?? ""
-                return VisionSuggestedAction(
+                return TransformSuggestedAction(
                     title: title,
-                    kind: VisionSuggestedAction.Kind(rawValue: kindRaw) ?? .infoOnly,
+                    kind: TransformSuggestedAction.Kind(rawValue: kindRaw) ?? .infoOnly,
                     draft: stringValue(item, keys: ["draft", "text", "body"]) ?? ""
                 )
             }
@@ -123,7 +123,7 @@ struct VisionInterpretationResult: Codable, Hashable {
             return strings
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
-                .map { VisionSuggestedAction(title: $0, kind: .infoOnly, draft: "") }
+                .map { TransformSuggestedAction(title: $0, kind: .infoOnly, draft: "") }
         }
         return []
     }

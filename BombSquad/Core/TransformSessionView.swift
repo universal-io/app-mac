@@ -99,7 +99,6 @@ struct TransformSessionView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
-                GatewayOverrideBadge()
             }
             .background(WindowDragHandle())
 
@@ -114,7 +113,7 @@ struct TransformSessionView: View {
             }
 
             if let result = session.result {
-                VisionInterpretationView(
+                TransformInterpretationView(
                     result: result,
                     isTransform: true,
                     onApprove: session.approveSuggestedAction,

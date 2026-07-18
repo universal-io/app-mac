@@ -19,7 +19,7 @@ Database naming rule:
 - Bomb Squad-owned tables use the `bs_` prefix.
 - Existing tables from other projects are left untouched.
 
-## Current Migration Files（本番適用済み: 0001〜0006）
+## Current Migration Files
 
 - `supabase/migrations/0001_bs_core_schema.sql` — コアスキーマ:
   `bs_tenants` / `bs_profiles` / `bs_tenant_members` / `bs_entitlements` /
@@ -27,16 +27,11 @@ Database naming rule:
   ユーザーブートストラップ RPC、既存 `auth.users` のバックフィル。
 - `supabase/migrations/0002_bs_memory_cards.sql` — `bs_memory_cards`
   （メモリ同期。tombstone 付き、user スコープ RLS。M3-B）。
-- `supabase/migrations/0003_bs_harness_packs.sql` — `bs_harness_packs`
-  （Navigator のデータ駆動ツールハーネス。service-role のみ読み取り）。
 - `supabase/migrations/0004_plan_catalog.sql` — **`bs_plans`（プラン→クォータ/機能の唯一の正本）**。
   `bs_entitlements.plan` を FK 化、`monthly_review_limit` を NULL 可（NULL = プラン値に従う）に変更、
   `bs_provision_user()` 再定義。**ベータ方針（2026-07-08）: free=500件/月、他プランは無制限・
   機能ゲート無し。プラン変更はこのテーブルの行を編集する（env・コードにコピーを持たない）**。
-- `supabase/migrations/0005_navigator_runs.sql` — **本番適用済み（2026-07-14）**。
-  Navigator v4の24時間一時Run状態。service-roleだけが使用し、画像・OCR・会話・Task本文は保存しない。
-- `supabase/migrations/0006_harness_pack_versions.sql` — **本番適用済み（2026-07-14）**。
-  Capability Packの版・有効版制約とGA4 Pack v1（安定recipe/step ID＋国・地域経路postcondition）。
+- `supabase/migrations/0005_remove_unused_tables.sql` — 使用を終了した旧画面案内テーブルを削除。
 
 ## Secrets Needed Later
 
@@ -46,9 +41,9 @@ These values should be prepared before client or gateway implementation starts.
 
 - `BOMB_SQUAD_SUPABASE_URL`
 - `BOMB_SQUAD_SUPABASE_ANON_KEY`
-- `BOMB_SQUAD_API_BASE_URL`
+- Product Gateway URLは`project.yml`のInfo.plist定義に固定し、ローカル設定へ置かない。
 
-Current runtime resolution order:
+Supabase client configuration resolution order:
 
 1. Repository-local `BombSquad.local.plist`
 2. Xcode Scheme environment variables
@@ -61,7 +56,7 @@ Recommended local file for macOS development:
 
 - `/Users/kaya.matsumoto/projects/universal-io/app-mac/BombSquad.local.plist`
 
-Optional fallback path when launching the built app outside the repo:
+Optional Supabase configuration path when launching the built app outside the repo:
 
 - `~/Library/Application Support/BombSquad/local-config.plist`
 
@@ -73,11 +68,6 @@ Optional fallback path when launching the built app outside the repo:
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`（Navigator v4専用、32 byte以上。既存keyとの共用禁止）
-
-Navigator v4を検証する時は、Gateway環境へ署名鍵を設定・再deployし、最後に
-`BOMB_SQUAD_NAVIGATE_V4_ENABLED=true`を設定する。この順序を逆にするとRunは開始せず、clientは
-`STATE_FALLBACK`警告を表示してv3へ継続する。新規サービス契約は不要。
 
 ### For billing and AI gateway
 

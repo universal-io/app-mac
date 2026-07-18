@@ -212,7 +212,7 @@ export async function effectiveMonthlyLimit(
     return entitlement.monthly_review_limit;
   }
   const plan = await getPlanConfig(entitlement.plan);
-  return plan ? plan.monthlyUsageLimit : null;
+  return plan.monthlyUsageLimit;
 }
 
 /** Builds the quota envelope for a given usage count and resolved limit
@@ -232,8 +232,8 @@ export function quotaInfo(
 }
 
 /**
- * Counts successful usage events of EVERY operation (review, navigate,
- * vision, transcribe, distill…) for the tenant in the current UTC month.
+ * Counts successful usage events of every AI operation for the tenant in the
+ * current UTC month.
  * One request = one unit: screenshots and dictation consume resources the
  * same way reviews do, and a single number keeps the mental model simple.
  */

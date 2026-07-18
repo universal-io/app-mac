@@ -1,6 +1,5 @@
-// Whisper proxy for the AI gateway. Port of the macOS GroqTranscriber
-// (BombSquad/Services/GroqTranscriber.swift) including its hallucination
-// filter; keep the two in sync until the BYOK fallback path is removed.
+// Whisper proxy for the production AI gateway, including its hallucination
+// filter.
 //
 // Availability principle (owner decision, 2026-07-03): a provider-side
 // failure (outage, provider rate limit, misconfigured operator quota) must

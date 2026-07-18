@@ -165,7 +165,6 @@ struct ComposeSessionView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                 }
-                GatewayOverrideBadge()
             }
             .background(WindowDragHandle())
 

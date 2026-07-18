@@ -1,7 +1,4 @@
-// Plan -> feature flags (docs/foundation-redesign-plan.md §5-c). The plan ×
-// feature matrix lives in the plan catalog (bs_plans.features), so both the
-// future server-side gates (operation checks in the AI routes) and
-// GET /api/account read from that one source via plans.ts.
+// Plan -> feature flags. The matrix lives only in bs_plans.features.
 //
 // Enforcement is NOT wired yet — no AI endpoint consults this. Clients may
 // use the `features` list from /api/account for display gating only
@@ -9,13 +6,12 @@
 
 import { getPlanConfig } from "@/lib/server/plans";
 
-/** Feature identifiers, matching the five product modes plus pack tiers. */
+/** Feature identifiers exposed by the current product. */
 export const ALL_FEATURES = [
   "compose",
   "transform",
-  "navigator",
+  "vision",
   "copilot",
-  "packs_standard",
 ] as const;
 
 export type Feature = (typeof ALL_FEATURES)[number];
@@ -23,16 +19,12 @@ export type Feature = (typeof ALL_FEATURES)[number];
 /**
  * Features available to a plan, read from the catalog (bs_plans.features).
  * `["*"]` (the current beta policy for every plan) expands to all features.
- * An unknown plan / config gap also grants everything — display gating must
- * fail open, never hide a feature the user actually has.
- *
- * NOTE: which plan loses copilot, where tenant packs sit, etc. is an OWNER
- * DECISION (foundation-redesign-plan §5-c table is a draft). Today every plan
- * is seeded with ["*"], so this changes nothing user-visible yet.
+ * An unknown plan or unavailable catalog fails the request; no second plan
+ * definition exists in code.
  */
 export async function featuresForPlan(plan: string): Promise<Feature[]> {
   const config = await getPlanConfig(plan);
-  const allowed = config?.features ?? ["*"];
+  const allowed = config.features;
   if (allowed.includes("*")) {
     return [...ALL_FEATURES];
   }

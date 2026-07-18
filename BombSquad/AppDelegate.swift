@@ -30,14 +30,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hosted unit tests load the app executable as their bundle loader.
-        // Do not start permissions, global event taps, sync services, or kill
-        // the developer's already-running copy just to execute tests.
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
-            NSApp.setActivationPolicy(.prohibited)
-            return
-        }
-
         trace("app.didFinishLaunching")
         terminateOtherRunningCopies()
         NSApp.setActivationPolicy(.accessory)

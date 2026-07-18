@@ -9,9 +9,8 @@
 
 ## 0. 背景と目的
 
-2026-07-06、`.env.local` に残った navigate モデルの上書き指定（`gemini-2.5-flash`）で
-アプリが最も苦手なモデルを使い続け、「プロンプト修正が効かない／ロールバックした」ように
-見える事故が起きた。根本原因は **「今どのモデルで動いているか」「どう切り替えるか」が
+環境変数に残ったモデルの上書き指定で想定外のモデルを使い続け、「修正が効かない／
+ロールバックした」ように見える事故が起きた。根本原因は **「今どのモデルで動いているか」「どう切り替えるか」が
 環境変数という見えない場所にしかない** こと。
 
 → 管理者が「実効設定・利用量・登録状況」を1画面で把握でき、将来はモデル選択を
@@ -63,9 +62,8 @@ lib/server/admin.ts
 | 操作 | ベンダー | モデルID | 出所 |
 |---|---|---|---|
 | review（既定） | groq | openai/gpt-oss-120b | env or default |
-| vision | openai | gpt-5.4-mini | … |
-| navigate（後続ターン） | openai | gpt-5.4-mini | … |
-| navigate（初手・高速） | groq | llama-4-scout | … |
+| transform | openai | gpt-5.4-mini | … |
+| vision | openai | gpt-5.6-luna | コード固定 |
 
 - 「出所」列で **env 上書き中か / コード既定か** を明示（上書き中はハイライト）。
   これがあれば今回の事故は一目で気づけた。
@@ -81,7 +79,7 @@ lib/server/admin.ts
 
 ### 3-c. 内訳テーブル
 今月分（`created_at >= currentMonthStartUTC()`）を軸で集計:
-- **operation 別**: review / navigate / vision / transcribe / distill の件数・成功率・平均レイテンシ・トークン合計
+- **operation 別**: review / transform / vision / transcribe / distill の件数・成功率・平均レイテンシ・トークン合計
 - **モデル別**: `model_vendor` + `model_id` ごとの件数（どのモデルがどれだけ使われたか）
 - **日次推移**: 直近30日の日別リクエスト数（棒 or 折れ線。dataviz スキル準拠）
 
@@ -148,7 +146,7 @@ web/
 - **v0（本設計・読み取り専用）**: 実効設定表示 ＋ 利用統計 ＋ 内訳 ＋ 外部リンク。
   ADMIN_EMAILS で認可。今回の事故の再発防止が主目的。
 - **v1（設定の書き込み）**: モデル選択を env から **DB 設定テーブル `bs_app_config`** に昇格。
-  管理画面から navigate/review/vision のモデルを切替（**再デプロイ不要**・変更履歴も残る）。
+  管理画面から review/transform のモデルを切替（**再デプロイ不要**・変更履歴も残る）。
   エンジンの解決順を「DB設定 → env → コード既定」に変更。
   → これが本来の「選択肢をいろいろ選べるようにする」の正しい実装場所。
      現状の env 上書きは「開発者が一時的に試す」用途に留める。

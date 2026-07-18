@@ -1,58 +1,29 @@
-This is the Bomb Squad web surface for Vercel deployment.
+# Universal I/O Web / Production Gateway
 
-## Scope
+このNext.jsアプリは、製品サイト、認証、アカウント、管理画面、本番AI Gatewayを所有します。
 
-- product / landing pages
-- auth entrypoint for email-link and Google login
-- future pricing and billing surface
-- future AI gateway and admin entrypoint
+## Routes
 
-The native macOS app still owns the in-app review flow. This `web/` app owns
-the user-facing account and commercial surface.
+- `/`, `/auth`, `/auth/callback`, `/admin`
+- `/api/account`, `/api/memory/cards`, `/api/admin/overview`
+- `/api/ai/review`
+- `/api/ai/transcribe`
+- `/api/ai/transform`
+- `/api/ai/vision`
+- `/api/ai/memory/distill`
 
-## Getting Started
+AI routeはこの一覧だけです。旧route、評価route、ローカルGateway用routeは置きません。
 
-1. Copy `.env.example` to `.env.local`.
-2. Fill in the public Supabase variables.
-3. Run the development server:
+## Development
 
 ```bash
+npm install
 npm run dev
+npm run lint
+npm run build
 ```
 
-Open `http://localhost:3000`.
+ローカルのNext.jsはWeb/Gateway自体の開発にだけ使用します。macOSアプリはDebugを含め常に
+`https://api.universal-io.com` を参照します。
 
-Production origin is planned as `https://bombsquad.me`.
-
-## Environment Variables
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `NEXT_PUBLIC_BOMB_SQUAD_API_BASE_URL`
-
-Server-only placeholders are already reserved for the later gateway and Stripe work:
-
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `STRIPE_SECRET_KEY`
-- `STRIPE_WEBHOOK_SECRET`
-
-## Current Routes
-
-- `/` product top
-- `/auth` email-link and Google sign-in
-- `/pricing` pricing draft
-- `/auth/callback` auth return route for email link and Google OAuth
-
-## Next Steps
-
-- finish Google OAuth verification against local and production origins
-- add Apple ID
-- add `/api/ai/review`
-- add Stripe checkout and portal
-- add lightweight admin pages
-
-## Deploy
-
-Deploy this directory to Vercel as a separate project root.
+環境変数は `.env.example` を正とし、APIキーとSupabase service roleはサーバー環境にだけ置きます。

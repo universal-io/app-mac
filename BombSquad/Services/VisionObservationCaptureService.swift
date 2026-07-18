@@ -169,7 +169,7 @@ enum VisionObservationCaptureService {
                         }
 #if DEBUG
                         NSLog(
-                            "[Challenge3] ax-collect pass=%d visited=%d candidates=%d webArea=%d reason=%@",
+                            "Vision AX collection pass=%d visited=%d candidates=%d webArea=%d reason=%@",
                             collectionPasses, result.visitedNodes, result.candidates.count,
                             result.sawWebArea ? 1 : 0, result.truncatedReason ?? "complete"
                         )

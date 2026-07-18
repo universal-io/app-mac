@@ -73,11 +73,10 @@ final class OperationalNoticeCenter: ObservableObject {
     }
 }
 
-/// The single gateway transport (foundation rebuild Phase 2,
-/// docs/foundation-rebuild-plan.md). Owns what every feature client used to
-/// copy: availability gating, the request envelope, JSON/multipart sends,
+/// The single gateway transport. Owns availability gating, the request
+/// envelope, JSON/multipart sends,
 /// transport/status/error-contract mapping, and SSE framing. Feature clients
-/// (review/vision/transcribe/account/navigate/memory) are thin wrappers that
+/// (review/transform/vision/transcribe/account/memory) are thin wrappers that
 /// keep only their domain payloads and response decoding.
 struct GatewayClient {
     let api: GatewayAPI

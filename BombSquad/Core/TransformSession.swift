@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 final class TransformSession: ObservableObject {
     @Published private(set) var draft: String
-    @Published private(set) var result: VisionInterpretationResult?
+    @Published private(set) var result: TransformInterpretationResult?
     @Published private(set) var isInterpreting = false
     @Published var errorMessage: String?
     @Published private(set) var lastDurationMs: Int?
@@ -17,7 +17,6 @@ final class TransformSession: ObservableObject {
     let outputLanguage: OutputLanguage
 
     private let deployer: Deployer
-    private let overrideProvider: VisionProvider?
     private var contextCaptureTask: Task<SituationalContext?, Never>?
     private var interpretationTask: Task<Void, Never>?
     private var hasStartedInitialInterpretation = false
@@ -25,13 +24,11 @@ final class TransformSession: ObservableObject {
     init(
         receivedText: String,
         deployer: Deployer = ClipboardDeployer(),
-        contextCaptureTask: Task<SituationalContext?, Never>,
-        provider: VisionProvider? = nil
+        contextCaptureTask: Task<SituationalContext?, Never>
     ) {
         self.draft = receivedText
         self.deployer = deployer
         self.contextCaptureTask = contextCaptureTask
-        self.overrideProvider = provider
         self.outputLanguage = AppSettings.outputLanguage()
 
         Task { [weak self] in
@@ -68,7 +65,7 @@ final class TransformSession: ObservableObject {
         copy(text: result.copyText, historyInput: nil)
     }
 
-    func approveSuggestedAction(_ action: VisionSuggestedAction) {
+    func approveSuggestedAction(_ action: TransformSuggestedAction) {
         guard action.hasDraft else { return }
         copy(
             text: action.draft,
@@ -103,7 +100,10 @@ final class TransformSession: ObservableObject {
         let context = await resolveContext()
         let memory = await resolveMemory(context: context)
         guard !Task.isCancelled else { return }
-        let provider = currentProvider()
+        guard let provider = GatewayTransformClient.make() else {
+            errorMessage = "受信メッセージ整理サービスを利用できません。ログイン状態を確認してください。"
+            return
+        }
 
         do {
             let interpreted = try await provider.interpret(
@@ -115,9 +115,7 @@ final class TransformSession: ObservableObject {
             )
             try Task.checkCancellation()
             lastDurationMs = Int(Date().timeIntervalSince(started) * 1000)
-            lastModelName = provider is GatewayVisionClient
-                ? "I//O Cloud"
-                : "OpenAI · \(interpreted.modelID ?? AppSettings.selectedVisionModelID())"
+            lastModelName = "I//O Cloud · \(interpreted.modelID ?? "unknown")"
             result = interpreted
         } catch is CancellationError {
             return
@@ -144,16 +142,6 @@ final class TransformSession: ObservableObject {
         } catch {
             errorMessage = "コピーに失敗しました: \(error.localizedDescription)"
         }
-    }
-
-    private func currentProvider() -> VisionProvider {
-        if let overrideProvider { return overrideProvider }
-        if let gateway = GatewayVisionClient.make() { return gateway }
-        OperationalNoticeCenter.shared.publish(
-            code: "CLIENT_PROVIDER_FALLBACK",
-            message: "I//O Cloudにアクセスできなかったため、端末のOpenAI Visionで処理します。"
-        )
-        return OpenAIVisionClient()
     }
 
     private func resolveContext() async -> SituationalContext? {

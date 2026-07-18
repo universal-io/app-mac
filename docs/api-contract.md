@@ -1,572 +1,94 @@
-# Bomb Squad API Contract
+# Universal I/O Gateway API契約
 
-This document fixes the first stable contract between Bomb Squad clients and
-the server-side product API.
+最終更新: 2026-07-18 ／ ステータス: 現行
 
-Scope:
+## 共通
 
-- macOS app
-- future iOS app
-- future Android app
-- future web client
-- initial Vercel-hosted AI gateway
+- Base URL: `https://api.universal-io.com/api`
+- 認証: `Authorization: Bearer <Supabase access token>`
+- Content-Type: `application/json`（transcribeのみmultipart）
+- macOSクライアントにローカルGateway、BYOK、別経路への自動フォールバックはない。
+- `request_id` は全AIリクエストで必須。
 
-The purpose of this file is to freeze the names and payload shapes before
-implementation starts, so the client and server can move independently without
-drift.
-
-## Versioning
-
-- Contract version: `v1`
-- Base path: `/api`
-- Implemented routes:
-  - `POST /api/ai/review`
-  - `POST /api/ai/transcribe` (2026-07-02, M3-B)
-  - `POST /api/ai/memory/distill` (2026-07-02, M3-B)
-  - `POST /api/ai/vision` (2026-07-02, M3-B)
-  - `POST /api/ai/screen-understanding` (2026-07-16, Challenge 3 isolated Vision MVP)
-  - `GET/PUT /api/memory/cards` (2026-07-02, M3-B)
-  - `POST /api/ai/navigate` (2026-07-06, Navigator v3 — 契約は下記「Navigate」節)
-  - `GET /api/account` (アカウント要約＋quota)
-  - `GET /api/admin/overview` (admin console v0、`ADMIN_EMAILS` ゲート)
-
-Future routes will reuse the same authentication and envelope conventions:
-
-- `POST /api/ai/transform`
-- `POST /api/ai/analyze-audio`
-
-## Authentication
-
-All product API requests must carry a Supabase access token.
-
-Required header:
-
-```http
-Authorization: Bearer <supabase_access_token>
-```
-
-Optional header:
-
-```http
-X-Bomb-Squad-Request-Id: <uuid-or-client-generated-id>
-```
-
-Rules:
-
-- The gateway verifies the Supabase JWT on every request.
-- The gateway resolves `user_id` from the token, never from client-supplied
-  body data.
-- The client may send a request ID in both header and body. If both are
-  present, they must match.
-
-## Environment Variables
-
-### macOS App
-
-These names are reserved now, even if the first implementation reads them from
-scheme environment variables, a plist, or a local config wrapper.
-
-- `BOMB_SQUAD_API_BASE_URL`
-- `BOMB_SQUAD_SUPABASE_URL`
-- `BOMB_SQUAD_SUPABASE_ANON_KEY`
-
-Notes:
-
-- No server-side secret goes into the app.
-- The app must never contain `SUPABASE_SERVICE_ROLE_KEY`.
-- The app must never contain LLM provider API keys in the production path.
-
-### Web / Vercel
-
-Public client vars:
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `NEXT_PUBLIC_BOMB_SQUAD_API_BASE_URL`
-
-Server-only vars:
-
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `BOMB_SQUAD_DEFAULT_MODEL_VENDOR`
-- `BOMB_SQUAD_DEFAULT_MODEL_ID`
-- `BOMB_SQUAD_VISION_MODEL_ID`
-- `BOMB_SQUAD_NAVIGATE_MODEL_VENDOR`
-- `BOMB_SQUAD_NAVIGATE_MODEL_ID`
-- `BOMB_SQUAD_NAVIGATE_FAST_MODEL_VENDOR`
-- `BOMB_SQUAD_NAVIGATE_FAST_MODEL_ID`
-- `BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_VENDOR`
-- `BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_ID`
-- `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_VENDOR`
-- `BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID`
-- `BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_VENDOR`
-- `BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_ID`
-- `BOMB_SQUAD_NAVIGATE_V4_ENABLED`
-- `BOMB_SQUAD_NAVIGATE_RUN_SIGNING_SECRET`（v4 Run snapshot専用、32 byte以上。provider / Supabase
-  keyとの共用禁止。flag有効時に未設定ならfallbackせず`RUN_SIGNING_UNAVAILABLE`）
-- ~~`BOMB_SQUAD_FREE_MONTHLY_REVIEW_LIMIT`~~ **廃止（2026-07-08）**: free 枠上限は DB の
-  `bs_plans` テーブルが正本（migration 0004。env にコピーを持たない）
-- `OPENAI_API_KEY`
-- `GROQ_API_KEY`
-- `ANTHROPIC_API_KEY`
-- `STRIPE_SECRET_KEY`
-- `STRIPE_WEBHOOK_SECRET`
-- `STRIPE_PRICE_PRO_MONTHLY`
-- `STRIPE_PRICE_TEAM_MONTHLY`
-- `STRIPE_PRICE_ENTERPRISE_MONTHLY`
-
-Rules:
-
-- `SUPABASE_URL` should match `NEXT_PUBLIC_SUPABASE_URL`.
-- `SUPABASE_ANON_KEY` is available to both product site and client auth flows.
-- `SUPABASE_SERVICE_ROLE_KEY` is server-only.
-- Provider keys stay server-only.
-- Planner/Grounder/Verifierの役割別model envが未設定なら、通常Navigateのvendor/modelを継承する。
-
-## API Conventions
-
-### JSON
-
-- Request and response bodies are JSON.
-- Keys use `snake_case`.
-- Unknown response keys should be ignored by clients.
-
-### Idempotency
-
-- `request_id` is required for all AI operations.
-- The gateway uses `tenant_id + request_id` to prevent duplicate usage events.
-- Client retries must reuse the same `request_id`.
-
-### Time
-
-- All timestamps are ISO 8601 UTC strings.
-
-### Recovered errors / fallback notices（2026-07-14）
-
-Fallbackやretryで最終結果を返せても、途中のerrorを成功結果から隠してはならない。該当する
-responseの`meta.notices`へ全件を入れ、clientは通常結果と同時にdismiss可能な警告として表示する。
+共通JSON envelope:
 
 ```json
 {
-  "meta": {
-    "notices": [
-      {
-        "severity": "warning",
-        "code": "MODEL_FALLBACK",
-        "message": "groq / model-a にアクセスできなかったため、openai / model-b で処理しました。"
-      }
-    ]
-  }
-}
-```
-
-- 現行Gateway codeは`MODEL_FALLBACK / ROLE_DEGRADED / PROVIDER_RETRY / DATA_FALLBACK /
-  STATE_FALLBACK`。
-  client内のCloud→BYOK、撮影engine切替は同じUIへ`CLIENT_PROVIDER_FALLBACK /
-  CAPTURE_FALLBACK`として発行する。
-- model/provider fallbackは失敗したrouteと実際に使ったrouteの両方をmessageへ含める。
-- Planner/Grounder/Verifier/Locator等の補助roleだけが失敗し、主結果を返す場合も`ROLE_DEGRADED`を返す。
-- v4 Runを開始できずv3状態管理で回答を継続する場合は`STATE_FALLBACK`で、使えなかった方式と
-  実際に継続した方式を示す。状態更新API自体はfallbackせずfail-closedする。
-- fallback不能なerrorは従来どおり非2xxまたはSSE `error`。raw provider本文やsecretは表示せず、
-  ユーザーが再試行・設定確認できる説明を返す。
-- clientが`notices`を黙って捨てる実装は禁止。usage traceには本文でなくnotice codeを記録する。
-
-## POST /api/ai/review
-
-This is the first route. It covers both current macOS modes:
-
-- outgoing draft review: `mode = compose`
-- received-message restructuring: `mode = transform`
-
-### Request Body
-
-```json
-{
-  "request_id": "8d74bb7a-54aa-4b7b-a947-b68f4a34b5d2",
+  "request_id": "uuid",
   "operation": "review",
-  "mode": "compose",
-  "input": {
-    "draft": "今日の会議なんだけど、先方の対応がかなり雑で困っています。"
-  },
-  "preferences": {
-    "output_language": "japanese",
-    "model_preference": {
-      "vendor": "groq",
-      "model_id": "openai/gpt-oss-120b"
-    }
-  },
-  "client": {
-    "platform": "macos",
-    "app_version": "0.1.0",
-    "build_number": "1",
-    "device_id": "2f7e7e3b-6bdb-49f6-91f0-8f8f9c7d4f0f"
-  }
-}
-```
-
-### Optional Input Extensions (added 2026-07-02, Universal I/O M3)
-
-`input` accepts two optional objects. Both are reference material for the
-prompt; the gateway never persists them.
-
-```json
-{
-  "input": {
-    "draft": "...",
-    "context": {
-      "app_name": "Slack",
-      "window_title": "Threads - Wealth Park",
-      "conversation_excerpt": "（周辺会話の抜粋、最大2500文字目安）"
-    },
-    "memory": {
-      "persona_md": "（ユーザーのスタイルプロファイル Markdown）",
-      "relationship_subject": "Yumi Mukai",
-      "relationship_md": "（相手カード Markdown）"
-    }
-  }
-}
-```
-
-- `input.context`: L1 situational context captured at panel summon time.
-- `input.memory`: persona/relationship cards. These live client-side until the
-  memory sync API ships; clients send the already-selected cards per request.
-- The gateway records only boolean flags (`has_context`, `has_memory`) in
-  usage metadata, never the content.
-
-### Streaming (added 2026-07-02, Universal I/O M3-C)
-
-Set `"stream": true` at the top level of the request body to receive the
-response as Server-Sent Events (`text/event-stream`):
-
-- `event: delta` — `{"text": "..."}`, increments of `revised_text` as the
-  model produces them (the prompt orders `revised_text` first so the
-  deliverable streams immediately)
-- `event: result` — the same JSON as the non-streaming success response
-  (including `quota`); always the last event on success
-- `event: error` — the same JSON as the error contract (auth/quota errors
-  before the stream starts still return plain JSON status responses)
-
-Usage is recorded exactly once per stream, after the provider stream ends.
-
-### Request Fields
-
-- `request_id`: required string
-- `operation`: required string, must be `review` in v1
-- `stream`: optional boolean (SSE response; see Streaming above)
-- `mode`: required string, `compose` or `transform`
-- `input.draft`: required string
-- `preferences.output_language`: required string, `japanese` or `english`
-- `preferences.model_preference.vendor`: optional string
-- `preferences.model_preference.model_id`: optional string
-- `client.platform`: required string, `macos`, `ios`, `android`, or `web`
-- `client.app_version`: required string
-- `client.build_number`: optional string
-- `client.device_id`: optional string
-
-Rules:
-
-- If `mode = transform`, the route is still `/api/ai/review` in v1.
-- `model_preference` is advisory. The gateway may ignore it based on plan,
-  policy, or availability.
-- Empty or whitespace-only `input.draft` is rejected with `BAD_REQUEST`.
-
-### Success Response
-
-```json
-{
-  "request_id": "8d74bb7a-54aa-4b7b-a947-b68f4a34b5d2",
-  "result": {
-    "issues": [
-      {
-        "category": "impoliteness",
-        "severity": "medium",
-        "excerpt": "かなり雑",
-        "explanation": "相手への評価が直接的で、受け手に防御反応を起こしやすい表現です。",
-        "suggestion": "事実ベースの困りごとに言い換えると伝わりやすくなります。"
-      }
-    ],
-    "revised_text": "今日の会議について、先方対応で確認したい点がいくつかありました。",
-    "summary": "表現のトゲを抑えつつ要点を残しました。"
-  },
-  "meta": {
-    "mode": "compose",
-    "output_language": "japanese",
-    "model_vendor": "groq",
-    "model_id": "openai/gpt-oss-120b",
-    "latency_ms": 842
-  },
-  "quota": {
-    "plan": "free",
-    "used": 12,
-    "limit": 500,
-    "remaining": 38,
-    "resets_at": "2026-07-01T00:00:00Z"
-  }
-}
-```
-
-### Success Response Notes
-
-- `result` matches the existing macOS `ReviewResult` shape.
-- `issues[].category` values:
-  - `typo`
-  - `impoliteness`
-  - `unclear`
-- `issues[].severity` values:
-  - `low`
-  - `medium`
-  - `high`
-- `quota` is returned on success so clients can show remaining allowance
-  without a separate request.
-
-## Error Contract
-
-Error responses must follow this shape:
-
-```json
-{
-  "error": {
-    "code": "QUOTA_EXCEEDED",
-    "message": "Free plan monthly review limit reached.",
-    "details": {
-      "plan": "free",
-      "used": 50,
-      "limit": 500,
-      "resets_at": "2026-07-01T00:00:00Z"
-    }
-  },
-  "request_id": "8d74bb7a-54aa-4b7b-a947-b68f4a34b5d2"
-}
-```
-
-### Standard Error Codes
-
-- `BAD_REQUEST`
-  - HTTP 400
-  - Invalid body, missing fields, empty draft
-- `UNAUTHENTICATED`
-  - HTTP 401
-  - Missing or invalid Supabase token
-- `TENANT_ACCESS_DENIED`
-  - HTTP 403
-  - User token valid but tenant access invalid
-- `PAYMENT_REQUIRED`
-  - HTTP 402
-  - Plan or entitlement does not allow requested operation/model
-- `QUOTA_EXCEEDED`
-  - HTTP 429
-  - Free or paid usage cap reached
-- `PROVIDER_ERROR`
-  - HTTP 502
-  - Upstream LLM provider failed
-- `INTERNAL_ERROR`
-  - HTTP 500
-  - Unclassified server failure
-
-Client behavior:
-
-- `UNAUTHENTICATED`: prompt sign-in
-- `TENANT_ACCESS_DENIED`: show account/tenant error
-- `PAYMENT_REQUIRED`: show upgrade/paywall path
-- `QUOTA_EXCEEDED`: show remaining-cycle limit message
-- `PROVIDER_ERROR`: retryable server-side failure message
-
-## Mapping To Existing macOS Models
-
-Current macOS types already match most of the response contract:
-
-- `ReviewResult`
-- `ReviewIssue`
-- `IssueCategory`
-- `Severity`
-- `ReviewMode`
-- `OutputLanguage`
-
-Expected client mapping:
-
-- `response.result` -> `ReviewResult`
-- `response.meta.latency_ms` -> `ReviewViewModel.lastDurationMs`
-- `response.meta.model_vendor + model_id` -> display string
-- `response.quota` -> future account/quota UI
-
-## POST /api/ai/transcribe
-
-Added 2026-07-02 (Universal I/O M3-B). Speech-to-text proxy.
-The gateway owns the provider keys and the hallucination filter.
-
-Updated 2026-07-03（可用性の原則）: primary は Groq `whisper-large-v3`（15秒
-タイムアウト）。プロバイダ障害・レート制限・タイムアウト時は **OpenAI
-`whisper-1` へ自動フォールバック**する（別ベンダーなので Groq 全断でも共倒れ
-しない）。`meta.model_vendor` / `model_id` に実際に使ったエンジンが入り、
-`bs_usage_events` にも記録される。全エンジン失敗時のみ `PROVIDER_ERROR`。
-
-### Request (multipart/form-data)
-
-- `request_id`: required string
-- `platform`: required string, `macos`, `ios`, `android`, or `web`
-- `app_version`: optional string
-- `file`: required audio upload (m4a; max 25MB)
-
-### Success Response
-
-```json
-{
-  "request_id": "...",
-  "result": { "text": "文字起こし結果" },
-  "meta": {
-    "model_vendor": "groq",
-    "model_id": "whisper-large-v3",
-    "duration_seconds": 4.2,
-    "latency_ms": 950
-  }
-}
-```
-
-### Rules
-
-- Entitlement must be active or trialing; there is no hard ASR quota yet.
-  Usage events are recorded (`operation = transcribe`, `unit_type = seconds`,
-  `input_units` = rounded audio duration) so a cap can be enforced later.
-- The audio content is never persisted by the gateway.
-
-## POST /api/ai/memory/distill
-
-Added 2026-07-02 (Universal I/O M3-B). Memory-card LLM calls: persona
-bootstrap (onboarding) and post-deploy distillation. Card storage stays
-client-side until the memory sync API ships; the gateway never persists
-any of this content.
-
-### Request Body
-
-```json
-{
-  "request_id": "...",
-  "operation": "bootstrap",
-  "input": {
-    "samples": "（bootstrap: 過去メッセージのサンプル）",
-    "original": "（distill: ユーザーの下書き）",
-    "suggestion": "（distill: AI 提案文）",
-    "final": "（distill: 実際に送信した文）",
-    "context": { "app_name": "Slack", "window_title": "...", "conversation_excerpt": "..." }
-  },
-  "client": { "platform": "macos", "app_version": "0.1.0" }
-}
-```
-
-- `operation`: required, `bootstrap` or `distill`
-- `bootstrap` requires `input.samples`; `distill` requires
-  `input.original` / `input.suggestion` / `input.final` (`input.context` optional)
-
-### Success Response
-
-- `bootstrap`: `result = { "persona_md": "（スタイルプロファイル Markdown）" }`
-- `distill`: `result = { "persona_note": string | null, "relationship_subject": string | null, "relationship_note": string | null }`
-- `meta`: `operation`, `model_vendor`, `model_id`, `latency_ms`
-
-Usage events: `operation = memory_distill`, `unit_type = call`, token counts
-in `input_units` / `output_units`.
-
-## POST /api/ai/screen-understanding
-
-Added 2026-07-16 for the isolated Challenge 3 Vision-first MVP. This route is
-deliberately independent from `/api/ai/vision`, `/api/ai/navigate`, and every
-v3/v4 Navigator engine.
-
-The active Challenge 3 comparison configuration is fixed in code:
-
-- provider/API: OpenAI Responses API
-- model: `gpt-5.6-luna`
-- image detail: `original`
-- reasoning effort: `none`
-- output budget: 25,000 tokens
-- fallback: none; any provider/model failure returns non-2xx
-
-The Spot Vision panel has one route and one user input. The initial observation sends
-the immutable screenshot while AX collection runs locally in parallel. Every follow-up
-sends that same screenshot, the capture-fixed AX candidates, and conversation history
-to one multimodal call. The model returns an optional supplied candidate ID; there is no
-user-visible read/action mode and no secondary model route.
-
-### Request Body
-
-```json
-{
-  "request_id": "...",
-  "operation": "screen_understanding",
-  "input": {
-    "capture_id": "immutable-client-capture-id",
-    "image_base64": "（base64。最大4M文字）",
-    "media_type": "image/png",
-    "question": "この表は何を示していますか？",
-    "turns": [
-      { "role": "assistant", "text": "Google Analyticsのユーザー属性画面です。" },
-      { "role": "user", "text": "日本について教えてください。" }
-    ],
-    "candidates": [
-      {
-        "id": "ax:42",
-        "source": "ax",
-        "role": "link",
-        "label": "テクノロジー",
-        "parent_label": "ユーザー",
-        "states": []
-      }
-    ],
-    "candidate_diagnostics": {
-      "elapsed_ms": 184,
-      "visited_nodes": 631,
-      "candidate_count": 1,
-      "truncated_reason": "deadline",
-      "target_app_name": "Google Chrome",
-      "target_bundle_id": "com.google.Chrome",
-      "target_window_present": true,
-      "target_window_title": "Analytics",
-      "collection_root": "focused_window",
-      "capture_scope": "display"
-    },
-    "guidance": {
-      "goal": "デバイス別のアクセス状況を確認したい",
-      "previous_instruction": "テクノロジーを開いてください。"
-    }
-  },
+  "input": {},
   "preferences": { "output_language": "japanese" },
   "client": { "platform": "macos", "app_version": "0.1.0" }
 }
 ```
 
-- `capture_id` and `image_base64` are required on every turn. A follow-up accepts at
-  most 500 capture-fixed AX/DOM candidates.
-- Every turn remains bound to the same immutable capture until the user explicitly recaptures.
-- `question` is omitted for the initial observation. It is required by the
-  client for follow-up turns.
-- `guidance` is used only after a human action produces a new stable capture. It is
-  mutually exclusive with `question` and carries only the fixed goal and previous
-  instruction. The model returns `answer` when the requested result is visible,
-  otherwise one `guide` action for the new capture.
-- `turns` contains at most 20 text-only turns about that capture. The same screenshot
-  is sent on every request, so model-side conversation state is not authoritative.
-- `candidate_diagnostics` is optional and must match the candidate count. Truncation
-  reasons are `no_target_app`, `unknown_capture_rect`, `permission_denied`,
-  `node_limit`, `candidate_limit`, `deadline`, or `not_configured`.
-- Candidate collection covers the frontmost application's focused AX window, falling
-  back to that application's AX root. It does not imply that every window visible in a
-  display capture was scanned. `collection_root`, target app/window fields, and
-  `capture_scope` make that boundary explicit. `target_window_title` is sent only by
-  Debug clients; Release usage does not retain it.
-
-### Success Response
+共通エラー:
 
 ```json
 {
-  "request_id": "...",
-  "capture_id": "immutable-client-capture-id",
+  "request_id": "uuid-or-null",
+  "error": { "code": "BAD_REQUEST", "message": "..." }
+}
+```
+
+主なcodeは `BAD_REQUEST`、`UNAUTHENTICATED`、`PAYMENT_REQUIRED`、
+`QUOTA_EXCEEDED`、`RATE_LIMITED`、`PROVIDER_ERROR`、`INTERNAL_ERROR`。
+
+## POST /ai/review
+
+入力文章をレビューする。通常応答はSSEで、`delta`の後に最終`result`を返す。
+
+- `operation`: `review`
+- `input.draft`: 必須
+- `input.context` / `input.memory`: 任意
+- 実装: `web/app/api/ai/review/route.ts`
+- クライアント: `GatewayReviewClient`
+
+## POST /ai/transcribe
+
+音声を文字起こしする。
+
+- multipart fields: `file`, `request_id`, `language`
+- 実装: `web/app/api/ai/transcribe/route.ts`
+- クライアント: `GatewayTranscriber`
+
+## POST /ai/transform
+
+選択された受信文章を整理し、状況・依頼・返信案を返す。
+
+- `operation`: `transform`
+- `input.text`: 必須、最大16,000文字
+- `input.context` / `input.memory`: 任意
+- 実装: `web/app/api/ai/transform/route.ts`
+- クライアント: `GatewayTransformClient`
+
+## POST /ai/vision
+
+固定したスクリーンショットを読み、初期説明、質問回答、次の操作、Copilot進捗を
+同一契約で返す。認知コアは1回のVLM呼び出しで、旧Navigator endpointや別モデルへの
+自動切り替えは行わない。
+
+- `operation`: `vision`
+- `input.capture_id`: 必須
+- `input.image_base64`: 必須、PNG/JPEG
+- `input.question`: 任意
+- `input.turns`: 最大20件
+- `input.candidates`: 同一captureから取得したAX/DOM候補、最大500件
+- `input.guidance`: Copilot進捗時の目的と直前案内。`question`とは排他
+- 実装: `web/app/api/ai/vision/route.ts`
+- クライアント: `GatewayVisionClient`
+
+成功応答:
+
+```json
+{
+  "request_id": "uuid",
+  "capture_id": "uuid",
   "result": {
-    "mode": "observation | answer | guide | clarification",
-    "message": "ユーザーへ表示する短い回答",
-    "observations": ["画面から直接確認できた事実"],
-    "uncertainties": ["画面からは断定できない点"],
+    "mode": "observation",
+    "message": "...",
+    "observations": [],
+    "uncertainties": [],
     "target_candidate_id": null
   },
   "meta": {
@@ -577,442 +99,26 @@ user-visible read/action mode and no secondary model route.
     "image_detail": "original",
     "reasoning_effort": "none",
     "fallback_used": false,
-    "latency_ms": 1234
+    "latency_ms": 0
   }
 }
 ```
 
-`model_id` must be `gpt-5.6-luna`. The client resolves `target_candidate_id`
-only against the candidate set from the same capture;
-unknown IDs and candidates without a usable rectangle are rejected.
+クライアントはcapture ID、モデル設定、`fallback_used == false`を検証し、不一致なら
+結果を採用しない。
 
-The client must treat a mismatched `capture_id`, a route/model mismatch, an unknown
-candidate ID, or `fallback_used != false` as a failed Challenge 3 turn.
-Usage events use `operation = screen_understanding` and retain only request
-metadata, token counts, effective model, and `capture_id`; image/question text
-is not persisted by this route.
+## POST /ai/memory/distill
 
-## POST /api/ai/vision
+送信差分またはユーザー提供サンプルから、保存候補となるスタイル情報を抽出する。
 
-Added 2026-07-02 (Universal I/O M3-B). Interpretation of a screenshot or a
-received message (OpenAI Responses API). Neither source is persisted by the
-gateway.
+- `operation`: `distill` または `bootstrap`
+- 実装: `web/app/api/ai/memory/distill/route.ts`
+- クライアント: `MemoryDistiller`
 
-Updated 2026-07-03 (M4): the response schema became "see → understand →
-respond" (`situation` / `extracted` / `asks` / `suggested_actions` with reply
-drafts), and the request accepts the same optional `context` / `memory`
-blocks as `POST /api/ai/review` (prompt-only, never stored).
+## アカウント・メモリ・管理
 
-Updated 2026-07-03 (M4-B): the receiving side is a special case of
-interpretation — `input.text`（受信メッセージ、最大16,000文字）を
-`input.image_base64` の代わりに渡せる。**どちらか一方が必須**（両方・ゼロは
-`BAD_REQUEST`）。text の場合 `extracted` は「攻撃性・感情・皮肉を除いた
-中立な整理版」になる。
+- `GET /account`
+- `GET|POST|PATCH|DELETE /memory/cards`
+- `GET /admin/overview`
 
-### Request Body
-
-```json
-{
-  "request_id": "...",
-  "operation": "vision",
-  "input": {
-    "image_base64": "（base64。最大4M文字 ≒ 3MB。text と排他）",
-    "media_type": "image/png",
-    "text": "（受信メッセージ。image_base64 と排他。最大16,000文字）",
-    "instruction": "（任意の追加指示）",
-    "context": {
-      "app_name": "Mail",
-      "window_title": "（任意）",
-      "conversation_excerpt": "（任意。AX で取れた周辺テキスト）"
-    },
-    "memory": {
-      "persona_md": "（任意。L3 Persona Card）",
-      "relationship_subject": "（任意）",
-      "relationship_md": "（任意。L2 Relationship Card）"
-    }
-  },
-  "preferences": { "output_language": "japanese" },
-  "client": { "platform": "macos", "app_version": "0.1.0" }
-}
-```
-
-- `media_type`: `image/png` or `image/jpeg`. Clients should re-encode large
-  PNG captures as JPEG to stay under the size limit (Vercel body cap ~4.5MB).
-- `context` / `memory` are optional and used only to build the prompt
-  (recipient/tone inference and persona-aware reply drafts).
-
-### Success Response
-
-`result` is the interpretation JSON as produced by the model; clients decode
-it flexibly (legacy `summary` / `visible_text` shapes are still accepted
-client-side):
-
-```json
-{
-  "situation": "この画面で何が起きているかの要約（1-2文）",
-  "extracted": "画面から読み取った本文（構造化 Markdown）",
-  "asks": ["あなたに求められていること（依頼・期限・事実）"],
-  "suggested_actions": [
-    {
-      "title": "田中さんへ返信する",
-      "kind": "reply | fill_form | task | info_only",
-      "draft": "kind=reply の場合、Persona/Relationship を反映した返信文案"
-    }
-  ]
-}
-```
-
-`meta` carries `output_language`, `model_vendor`, `model_id`, `latency_ms`.
-
-Usage events: `operation = vision`, `unit_type = call`, with
-`input_kind`（`image` / `text`）and `has_context` / `has_memory` flags in the
-metadata. There is no hard Vision quota yet (same policy as transcribe).
-
-## GET/PUT /api/memory/cards
-
-Added 2026-07-02 (Universal I/O M3-B). Memory-card sync: persona/relationship
-cards authored client-side (bootstrap, distill, user edits) live in local
-SQLite; this route is the only place they leave the device, so a signed-in
-user's cards are shared across their Macs. There is no separate quota check
-beyond the standard entitlement gate, and no usage event is recorded (these
-are not LLM calls).
-
-There is no `DELETE`. A deletion is expressed as a tombstone: the client sets
-`deleted_at` on the card and sends it through `PUT` like any other update.
-
-### Card Object
-
-All timestamps are epoch seconds (`number`), matching the client's SQLite
-representation -- this is the one place in the contract where timestamps are
-not ISO 8601 strings, since the card's `created_at`/`updated_at` are compared
-directly against the client's local logical clock.
-
-```json
-{
-  "id": "8d74bb7a-54aa-4b7b-a947-b68f4a34b5d2",
-  "kind": "persona",
-  "subject": null,
-  "content_md": "（カード本文 Markdown）",
-  "source": "bootstrap",
-  "created_at": 1751500800.0,
-  "updated_at": 1751500800.0,
-  "deleted_at": null
-}
-```
-
-- `id`: required, client-generated UUID. Stable across syncs; also the
-  server-side primary key.
-- `kind`: required, `persona` or `relationship`.
-- `subject`: optional string, null for `persona` cards; the counterpart name
-  for `relationship` cards.
-- `content_md`: required string.
-- `source`: required, `bootstrap`, `distilled`, or `user_edited`.
-- `created_at` / `updated_at`: required numbers (epoch seconds). `updated_at`
-  is the client's logical clock, not a server timestamp, and is what conflict
-  resolution compares.
-- `deleted_at`: number or `null`. Non-null marks the card as a tombstone.
-
-### GET /api/memory/cards
-
-Returns every card owned by the authenticated user, including tombstones, so
-the client can reconcile local deletes with cards it hasn't seen yet.
-
-```json
-{ "cards": [ /* Card Object, see above */ ] }
-```
-
-### PUT /api/memory/cards
-
-Body: the client's full local card set.
-
-```json
-{ "cards": [ /* Card Object, see above; max 200 entries */ ] }
-```
-
-Rules:
-
-- `cards` is required, an array, and capped at 200 entries; a malformed card
-  (bad `kind`/`source` enum, wrong field type, missing required field) or an
-  oversized array is rejected with `BAD_REQUEST` for the whole request.
-- `tenant_id` and `user_id` are never read from the request body; the gateway
-  stamps every written row with the values resolved from the caller's access
-  token.
-- **Conflict resolution is last-write-wins on `updated_at`.** For each
-  incoming card:
-  - if no row with that `id` exists yet, it is inserted;
-  - if a row exists and belongs to the caller, it is overwritten only when
-    `incoming.updated_at` is strictly greater than the stored value;
-  - if a row exists but belongs to a different user (an `id` collision), the
-    incoming card is silently skipped rather than overwritten.
-- The response is the **merged full server state** for the caller (same
-  shape as `GET`), so a single `PUT` round trip also completes a pull --
-  clients do not need to follow a `PUT` with a `GET`.
-
-### Success Response
-
-```json
-{ "cards": [ /* Card Object, see above */ ] }
-```
-
-## Deferred Routes
-
-These are reserved but not implemented in the first pass.
-
-### POST /api/ai/analyze-audio
-
-Expected future use:
-
-- emotion analysis
-- acoustic event analysis
-- long-running or async worker path
-
-## Navigate（画面ナビゲーター、2026-07-06 追加・実装済み）
-
-`POST /api/ai/navigate` — Navigator/Copilot の中核。**常に SSE**（`accept: text/event-stream`）。
-実装: `web/app/api/ai/navigate/route.ts` + `web/lib/server/navigate-engine.ts`（プロンプト・
-モデル段階選択・ハーネス選択はサーバー所有）。クライアント: `GatewayNavigateClient`。
-
-**2026-07-14 v4 shadow contract**: user messageは、従来の画像/OCRに加えて同じcaptureの
-`observation` v1を任意で送れる。Gatewayはstrictに検証して計測するが、現段階のprovider promptと
-レスポンスはv3のまま。旧クライアントは`observation`無しで引き続き動く。1リクエストに送れるのは
-最新Observation 1件だけで、assistant messageには付けられない。
-
-リクエスト（共通エンベロープ準拠）:
-
-```json
-{
-  "request_id": "uuid",
-  "operation": "navigate",
-  "input": {
-    "messages": [
-      { "role": "user",
-        "text": "任意（auto first turn は text 無しの画像のみ）",
-        "image_base64": "最新キャプチャのみ", "media_type": "image/jpeg",
-        "ocr_text": "最新キャプチャのローカルOCR全文",
-        "observation": {
-          "schema_version": 1,
-          "capture_id": "uuid",
-          "captured_at": "ISO 8601 UTC",
-          "capture_scope": "display | region | unknown",
-          "coordinate_space": "normalized_top_left",
-          "pixel_size": { "width": 1600, "height": 1000 },
-          "screen_rect": { "x": 0, "y": 0, "width": 1440, "height": 900 },
-          "environment": {
-            "app_name": "Google Chrome",
-            "bundle_id": "com.google.Chrome",
-            "window_title": "アナリティクス",
-            "url": "https://analytics.google.com/"
-          },
-          "transition_state": "stable",
-          "candidates": [
-            {
-              "id": "ocr:0",
-              "source": "ocr",
-              "role": "text",
-              "label": "ユーザー属性",
-              "rect": { "x": 0.1, "y": 0.2, "width": 0.2, "height": 0.05 },
-              "parent_label": "任意",
-              "states": ["expanded"]
-            }
-          ]
-        } }
-    ],
-    "hints": { "app_name": "...", "window_title": "..." },
-    "task": {
-      "goal": "...",
-      "steps": [{ "verbal": "...", "target": "画面上の正確なラベル", "fill": "任意" }],
-      "current_step": 0
-    },
-    "run_snapshot": "v4 shadow中の署名済みsnapshot（任意）",
-    "previous_observation": "現在step開始時のObservation（run_snapshotと対で必須）"
-  },
-  "preferences": { "output_language": "japanese" },
-  "client": { "platform": "macos", "app_version": "...", "build_number": "..." }
-}
-```
-
-- v3の`input.task`はクライアント輸送のステッププラン（プランはデータであり、モデルが毎ターン
-  再導出しない）。無ければ通常の Q&A ターン。v4では下記のGateway-owned Runへ移す。
-- 画像・OCR は**最新キャプチャの1つだけ**が乗る（過去分はテキストプレースホルダ化）。
-- `observation.capture_id` はcaptureのUUID。candidate IDは同一capture内で安定し、別captureを
-  またいだ同一性は保証しない。
-- candidate `rect` は画像左上原点、0〜1正規化。画像外にはみ出すrect、500件超のcandidate、
-  未知フィールドは`BAD_REQUEST`。
-- candidate `states` は `selected / expanded / collapsed / disabled / focused / loading /
-  checked / unchecked` の既知状態だけを受理する。
-- `environment` は画面認識の状況であり、認証identityではない。`tenant_id` / `user_id` は
-  クライアントObservationから絶対に受け取らず、従来どおりJWTからGatewayが確定する。
-- `hints` はv3互換の移行用。v4ではObservation environmentからContextを解決するが、shadow期間は
-  provider/harnessの挙動を変えないため従来hintsも併送する。
-- Gateway usage metadataには本文を保存せず、Observation有無、schema version、capture scope、
-  transition state、candidate件数/sourceだけを記録する。
-- `run_snapshot`を送る場合は`previous_observation`と、messages内の最新`observation`が必須。
-  Gatewayは署名・認証scope・authoritative run rowを照合してから、snapshotの現在stepに署名された
-  postconditionだけを前後Observationへ適用する。片方だけ、または最新Observation無しは
-  `BAD_REQUEST`であり、別の状態を推測して継続しない。
-
-### v4 Run proposal / snapshot（Gateway API実装済み・既定OFF）
-
-v4 feature flagでRunを有効にした後は、Gatewayがrunの唯一のwriterとなる。clientは直前の
-`run_snapshot`をrequestでechoし、responseのsnapshotで必ず置換する。
-
-PlannerがTaskを提案したSSE resultには、flag有効時だけ`result.run_proposal`を加える。proposalは
-認証tenant/userとplan IDへHMACで束縛され、10分で失効する。この時点ではrun rowを作らない。
-ユーザーが「開始」を選び、同じ認証でstart actionを送った時だけRunを作る。
-
-```json
-{
-  "run_snapshot": {
-    "schema_version": 1,
-    "run_id": "uuid",
-    "pack": { "id": "ga4", "version": "1" },
-    "plan": {
-      "id": "uuid",
-      "version": 1,
-      "hash": "sha256:...",
-      "task": {
-        "recipe_id": "demographics",
-        "goal": "...",
-        "steps": [
-          {
-            "id": "step-1",
-            "verbal": "...",
-            "target": "...",
-            "fill": null,
-            "postconditions": []
-          }
-        ]
-      }
-    },
-    "current_step": 0,
-    "status": "active",
-    "revision": 3,
-    "expires_at": "ISO 8601 UTC",
-    "signature": "v1.base64url-hmac-sha256"
-  }
-}
-```
-
-- `tenant_id` / `user_id` はsnapshotにもrequest bodyにも含めずJWTから確定する。Gatewayのrun rowは
-  `run_id / tenant_id / user_id / pack id+version / plan id+version+hash / current_step / status /
-  revision / created_at / updated_at / expires_at` だけを保存する。
-- clientが送ったrevision、plan hash/signatureがrun rowと一致しない場合はstepを進めない。
-  Gatewayは最新snapshotを返し、clientは再同期する。client単独の`current_step`更新は禁止。
-- signatureはTaskだけでなくpack/plan identity、step、status、revision、expiryを含むsnapshot全体を
-  HMAC-SHA256で保護する。検証は形検査→署名→Task hash→認証scope付きrun row照合の順で行う。
-- `status` は `active / ambiguous / blocked / complete / cancelled / expired`。active/terminalとも
-  最終操作から24時間以内にpurgeする。
-- screenshot、OCR、candidate label/rect、会話、モデル自由文はrun row/usage traceへ保存しない。
-  signed Task snapshotはclientが輸送し、server rowにはhashだけを置く。
-- `0005_navigator_runs.sql`、Gateway内部repository、署名／改ざん検知、下記control API、macOSの
-  shadow start／rule-first verification接続は実装済み。migrationと環境変数は未適用で、shadow中は
-  現行v3 Taskが表示・step進行の正本であり続ける。
-- step更新はtyped postconditionのrule-first Verifier結果だけで行う。曖昧時はmodel verifierへ
-  strict schemaでescalateするが、自由文本文や`[[step:done]]`をrevision更新の根拠にしない。
-
-#### Pack v1 typed postcondition（shadow実装済み）
-
-1 stepあたり最大8件。現段階で許可するkindは次だけで、自由文条件、座標、画像/OCR本文、任意式、
-機密field valueは署名Taskへ入れない。
-
-- `candidate_present / candidate_absent`: `selector.label`必須、`parent_label / role`任意。
-- `candidate_state`: 上記selector＋Observation既知state。
-- `environment_matches`: `url_contains / window_title_contains`の一方以上。
-- `environment_changed`: `field = url | window_title`。
-
-rule-first Verifierはafterが`stable`かつbefore/afterのcapture scopeが同じ場合だけ評価する。全条件を
-満たせば`verified`（最終stepは`complete`）、disabled targetは`blocked`、可視状態が同一なら
-`not_changed`、不安定・矛盾・情報不足は`ambiguous`。`ambiguous`だけが将来のmodel Verifier対象で、
-空のpostconditionを完了扱いしてはならない。
-
-Pack v1では`pack_version / recipe_id / step.id`を安定IDとして固定する。v4 Plannerはrecipe採用時に
-これらのIDだけを選び、GatewayがPackの正規step（verbal/target/fill/postconditions）を復元する。
-モデルが返した同名の自由文からpostconditionを推測しない。ID創作、順序逆転、別recipe混在は
-Planner失敗として明示的にdegradeし、署名Taskへ入れない。
-
-#### POST /api/ai/navigate/run
-
-共通bodyは`request_id`と`action`。`BOMB_SQUAD_NAVIGATE_V4_ENABLED=false`なら404
-`FEATURE_NOT_ENABLED`。署名鍵不備、store障害、改ざん、revision競合は成功へfallbackしない。
-
-- `start`: `proposal`必須。署名・期限・認証audienceを検証し、Runを冪等作成してsnapshotを返す。
-- `sync`: `run_snapshot`必須。Task署名とplan identityを検証し、row側の最新progressで再署名する。
-- `cancel`: `run_snapshot`必須。最新revisionだけをcancelし、更新済みsnapshotを返す。同じcancelの
-  再送は最新cancelled snapshotを返す。
-- clientはstep/status/Taskを別フィールドで送れない。`advance`はGA4実画面shadow gateを通るまで存在しない。
-
-```json
-{
-  "request_id": "uuid",
-  "action": "start | sync | cancel",
-  "proposal": "startだけ: SSE result.run_proposal",
-  "run_snapshot": "sync/cancelだけ: 直前のresponse値"
-}
-```
-
-SSE イベント: `delta`（`{"text": "..."}` の増分）→ `result`
-（`{"result": {"text", "harness", "task", "grounding", "run_proposal", "verification", "shadow_rendering", "shadow_grounding"}, "meta": {"model_id"}}`）。
-feature flag下の `grounding` は `{capture_id, candidate_id, confidence, method}` または `null` の
-加算フィールドで、
-`BOMB_SQUAD_NAVIGATE_V4_ENABLED` が未設定／falseの間は常に `null`。shadow期間は従来markerを
-置き換えない。エラーは `error` イベント
-または非 2xx の JSON（共通エラー契約）。`result.text` には決定論マーカー
-`[[target:ラベル]]` / `[[loc:x0,y0,x1,y1]]` / `[[step:done]]` / `[[fill:テキスト]]` が埋め込まれ、
-クライアント（`NavigatorLocator`）が抽出して OCR grounding と突き合わせる
-（経緯は [old/navigator-copilot-plan.md](old/navigator-copilot-plan.md)）。
-
-> ⚠️ **書き換え予約（2026-07-15）**: 本節が記述する Navigate の役割別 env
-> （PLANNER/GROUNDER/VERIFIER）・`run_proposal`・`shadow_grounding`・`safe_to_prompt` は
-> 現在稼働中の pre-pivot 実装。ワンコール新エンジン
-> （[copilot-challenge-3.md](copilot-challenge-3.md) §5）への切替コミットで、本節を
-> 新契約（構造化単一応答 + candidate ID）へ**同一コミットで**書き換えること。
-> この env 一覧を目標仕様として実装しないこと。
-`result.meta.notices`は共通規約どおり表示する。初手main fallback、role別model fallback、
-Planner/Grounder/Verifier/Locatorの部分失敗も成功結果から隠さない。
-
-`verification`はRun shadow inputを送った時だけ
-`{source:"rule|model", status, reason, evidence_candidate_ids, confidence}`、それ以外は`null`。statusは
-`verified / not_changed / ambiguous / blocked / complete`。現段階ではresponseとusage trace
-（ruleのstatus/reason、最終source/status/reason/evidence件数、model route/token/failure reason）へ記録するだけで、
-Run revisionもv3 Taskも更新しない。ruleが安定済み・同一capture scopeでなお証拠不足／矛盾の場合だけ
-独立Verifier modelへstrict schemaで昇格する。撮影不安定、scope変更、空postconditionをモデルで
-推測補完しない。`confidence`はmodel結果だけ0〜1、rule結果は`null`。署名検証・
-Run store・rule evaluationが利用不能でも主回答を返せる場合は`STATE_FALLBACK`で
-「新しい検証を使えず従来判定を表示した」ことをユーザーへ明示する。
-
-`shadow_rendering`はverificationがある時だけ、署名済みTaskと構造化Verifier結果をコードで投影した
-`{schema_version:1, state, verification_source, verification_status, step}`。stateは
-`current_step / next_step / needs_confirmation / blocked / complete`、stepは
-`{id, verbal, target, fill}`またはcomplete時の`null`。stream本文やmarkerを入力にせず、modelにも
-生成させない。GA4 shadow gateまではmacOSが比較用に保持するだけで、画面表示の正本はv3のまま。
-usageには本文でなくrenderer stateとstep IDだけを記録する。
-
-`shadow_grounding`はRun verificationがある時だけ、Rendererが選んだ`current_step / next_step`の
-`target`を最新Observation candidateへ解決した加算結果で、それ以外は`null`。shapeは
-`{schema_version:1, status, comparison, safe_to_prompt, capture_id, step_id, candidate_id,
-confidence, method, legacy_candidate_id}`。statusは`grounded / ambiguous / unresolved /
-not_applicable`、comparisonは`agreement / disagreement / not_comparable`。同一captureで構造化経路と
-従来経路が別candidate IDを選んだ場合、または構造化Grounderのconfidenceが0.85未満の場合は
-`ambiguous`かつ`safe_to_prompt=false`とし、`shadow_rendering.state`も`needs_confirmation`へ倒す。
-macOSはこの時だけv3のハイライトを抑止する。`blocked / needs_confirmation / complete`やtarget無しstepを
-Grounderへ送らず、`safe_to_prompt=false`で操作を促さない。Grounder不能の`unresolved`はshadow障害として
-notice/usageへ残し、現行v3表示へfallbackする。usageにはcandidate label/rectを保存せず、status、comparison、
-model route/token、安全判定だけを記録する。
-
-## Account / Admin（実装済み・簡易記載）
-
-- `GET /api/account` — アカウント要約（email / tenant_id / plan / status /
-  monthly_review_limit）＋ `quota` エンベロープ。プラン→機能は `bs_plans` 由来の
-  `features` を含む。
-- `GET /api/admin/overview` — 管理コンソール v0 の集計。`ADMIN_EMAILS` に列挙された
-  メールのユーザーのみ 200（それ以外 403）。読み取り専用。
-
-## Implementation Rule
-
-Before building the macOS `BombSquadAPIClient` or the Next.js route handler,
-both sides should use this document as the source of truth for:
-
-- environment variable names
-- request body fields
-- response envelope
-- error codes
+各routeの入力検証と認可は `web/app/api` の現行実装を正とする。

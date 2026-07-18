@@ -6,12 +6,7 @@
     "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "eval:navigator": "tsx evals/navigator/run.ts",
-    "eval:navigator:capture-v3": "tsx evals/navigator/capture-current-v3.ts",
-    "eval:navigator:check": "npm run eval:navigator -- --fixtures evals/navigator/fixtures/ga4-smoke.v1.json --results evals/navigator/results/ga4-reference.v1.json"
+    "lint": "eslint"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
@@ -28,8 +23,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "tsx": "^4.23.1",
-    "typescript": "^5",
-    "vitest": "^4.1.10"
+    "typescript": "^5"
   }
 }

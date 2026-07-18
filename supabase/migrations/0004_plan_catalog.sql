@@ -19,7 +19,7 @@ create table if not exists public.bs_plans (
     -- Monthly cap across ALL AI operations (1 request = 1 unit). NULL = unlimited.
     monthly_usage_limit integer
         check (monthly_usage_limit is null or monthly_usage_limit >= 0),
-    -- Allowed feature ids (compose/transform/navigator/copilot/packs_*).
+    -- Allowed product feature ids.
     -- ["*"] means every feature — the current beta policy (no feature gating).
     features jsonb not null default '["*"]'::jsonb,
     updated_at timestamptz not null default now()
@@ -44,8 +44,8 @@ create trigger bs_plans_touch_updated_at
     for each row
     execute function public.bs_touch_updated_at();
 
--- RLS on, NO policies: plan config is gateway-internal (service-role only),
--- same posture as bs_harness_packs. End users read their effective plan via
+-- RLS on, NO policies: plan config is gateway-internal (service-role only).
+-- End users read their effective plan via
 -- GET /api/account, never this table directly.
 alter table public.bs_plans enable row level security;
 

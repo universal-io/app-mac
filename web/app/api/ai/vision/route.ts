@@ -1,12 +1,3 @@
-// AI gateway: POST /api/ai/vision. Interpretation ("see → understand →
-// respond"): situation, extracted content, asks, and suggested actions with
-// persona-aware reply drafts. The source is either a screenshot
-// (input.image_base64, PNG/JPEG) or a received message (input.text — the
-// M4-B receiving side); optional context/memory blocks ride along for the
-// prompt. The gateway stores none of them.
-// Entitlement must be active; Vision has no hard quota yet (usage is recorded
-// per call so a cap can be enforced when Stripe plans land in M3-B).
-
 import {
   authenticate,
   enforceQuota,
@@ -16,154 +7,191 @@ import {
   recordUsage,
 } from "@/lib/server/gateway";
 import { ProviderCallError } from "@/lib/server/review-engine";
-import { runVisionInterpretation } from "@/lib/server/vision-engine";
-import type {
-  MemoryPayload,
-  OutputLanguageCode,
-  SituationalContextPayload,
-} from "@/lib/server/prompts";
+import {
+  runVision,
+  VISION_IMAGE_DETAIL,
+  VISION_MODEL_ID,
+  VISION_REASONING_EFFORT,
+  type VisionCandidate,
+  type VisionTurn,
+} from "@/lib/server/vision-engine";
 
-// Vercel rejects bodies past ~4.5MB; fail with a contract error before that.
 const MAX_IMAGE_BASE64_CHARS = 4 * 1024 * 1024;
-const MAX_TEXT_CHARS = 16_000;
+const MAX_CAPTURE_ID_CHARS = 128;
+const MAX_TURNS = 20;
+const MAX_TURN_CHARS = 4_000;
+const MAX_CANDIDATES = 500;
 
 type VisionRequestBody = {
   request_id?: string;
   operation?: string;
   input?: {
-    // Exactly one of image_base64 (screenshot) or text (received message,
-    // M4-B receiving side) must be present.
+    capture_id?: string;
     image_base64?: string;
     media_type?: string;
-    text?: string;
-    instruction?: string;
-    context?: SituationalContextPayload;
-    memory?: MemoryPayload;
+    question?: string;
+    turns?: VisionTurn[];
+    candidate_diagnostics?: {
+      elapsed_ms?: number;
+      visited_nodes?: number;
+      candidate_count?: number;
+      truncated_reason?: string;
+      target_app_name?: string;
+      target_bundle_id?: string;
+      target_window_present?: boolean;
+      target_window_title?: string;
+      collection_root?: string;
+      capture_scope?: string;
+      collection_passes?: number;
+      web_area_present?: boolean;
+    };
+    guidance?: {
+      goal?: string;
+      previous_instruction?: string;
+    };
+    candidates?: Array<{
+      id?: string;
+      source?: string;
+      role?: string;
+      label?: string;
+      parent_label?: string;
+      states?: string[];
+    }>;
   };
-  preferences?: {
-    output_language?: string;
-  };
-  client?: {
-    platform?: string;
-    app_version?: string;
-  };
+  preferences?: { output_language?: string };
+  client?: { platform?: string; app_version?: string };
 };
 
 export async function POST(request: Request): Promise<Response> {
   let requestId: string | null = null;
   try {
-    const body = (await request.json().catch(() => null)) as VisionRequestBody | null;
+    const body = (await request.json().catch(() => null)) as
+      | VisionRequestBody
+      | null;
     if (!body) {
       return errorResponse(400, "BAD_REQUEST", "Request body must be JSON.", null);
     }
     requestId = typeof body.request_id === "string" ? body.request_id : null;
+    const validationError = validateBody(body, requestId);
+    if (validationError) return validationError;
 
-    const imageBase64 = body.input?.image_base64;
-    const mediaType = body.input?.media_type ?? "image/png";
-    const sourceText = body.input?.text?.trim();
-    const language = body.preferences?.output_language;
-    const platform = body.client?.platform;
-    if (!requestId) {
-      return errorResponse(400, "BAD_REQUEST", "request_id is required.", requestId);
-    }
-    if (body.operation !== "vision") {
-      return errorResponse(400, "BAD_REQUEST", "operation must be 'vision'.", requestId);
-    }
-    if (Boolean(imageBase64) === Boolean(sourceText)) {
-      return errorResponse(
-        400, "BAD_REQUEST",
-        "Exactly one of input.image_base64 or input.text is required.", requestId,
-      );
-    }
-    if (imageBase64 && imageBase64.length > MAX_IMAGE_BASE64_CHARS) {
-      return errorResponse(400, "BAD_REQUEST", "Image is too large.", requestId);
-    }
-    if (imageBase64 && mediaType !== "image/png" && mediaType !== "image/jpeg") {
-      return errorResponse(400, "BAD_REQUEST", "input.media_type must be 'image/png' or 'image/jpeg'.", requestId);
-    }
-    if (sourceText && sourceText.length > MAX_TEXT_CHARS) {
-      return errorResponse(400, "BAD_REQUEST", "input.text is too long.", requestId);
-    }
-    if (language !== "japanese" && language !== "english") {
-      return errorResponse(400, "BAD_REQUEST", "preferences.output_language must be 'japanese' or 'english'.", requestId);
-    }
-    if (platform !== "macos" && platform !== "ios" && platform !== "android" && platform !== "web") {
-      return errorResponse(400, "BAD_REQUEST", "client.platform is required.", requestId);
-    }
+    const imageBase64 = body.input!.image_base64!;
+    const mediaType = body.input!.media_type ?? "image/png";
+    const captureId = body.input!.capture_id!;
+    const question = body.input!.question?.trim();
+    const turns = body.input!.turns ?? [];
+    const candidates = (body.input!.candidates ?? []).map((candidate) => ({
+      id: candidate.id!,
+      source: candidate.source as "ax" | "dom",
+      role: candidate.role,
+      label: candidate.label!,
+      parentLabel: candidate.parent_label,
+      states: candidate.states ?? [],
+    })) satisfies VisionCandidate[];
+    const language = body.preferences!.output_language as "japanese" | "english";
+    const guidance = body.input!.guidance
+      ? {
+          goal: body.input!.guidance.goal!,
+          previousInstruction: body.input!.guidance.previous_instruction!,
+        }
+      : undefined;
 
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
 
     const metadata = {
-      platform,
+      capture_id: captureId,
+      platform: body.client!.platform,
       app_version: body.client?.app_version,
-      input_kind: imageBase64 ? "image" : "text",
-      media_type: imageBase64 ? mediaType : undefined,
-      image_base64_chars: imageBase64?.length,
-      text_chars: sourceText?.length,
-      has_instruction: Boolean(body.input?.instruction?.trim()),
-      has_context: Boolean(body.input?.context?.conversation_excerpt),
-      has_memory: Boolean(body.input?.memory?.persona_md || body.input?.memory?.relationship_md),
+      media_type: mediaType,
+      image_base64_chars: imageBase64.length,
+      candidate_count: candidates.length,
+      candidate_diagnostics: body.input!.candidate_diagnostics ?? null,
+      turn_count: turns.length,
+      has_question: Boolean(question),
+      is_guidance_progress: Boolean(guidance),
+      api: "responses",
+      image_detail: VISION_IMAGE_DETAIL,
+      reasoning_effort: VISION_REASONING_EFFORT,
+      fallback_used: false,
     };
 
     const started = Date.now();
-    let engineOutput;
     try {
-      engineOutput = await runVisionInterpretation({
-        imageDataURL: imageBase64 ? `data:${mediaType};base64,${imageBase64}` : undefined,
-        sourceText,
-        instruction: body.input?.instruction,
-        language: language as OutputLanguageCode,
-        context: body.input?.context,
-        memory: body.input?.memory,
+      const output = await runVision({
+        imageDataURL: `data:${mediaType};base64,${imageBase64}`,
+        question,
+        turns,
+        candidates,
+        guidance,
+        language,
       });
-    } catch (error) {
-      const rateLimited = error instanceof ProviderCallError && error.rateLimited;
-      const message = rateLimited
-        ? (error as ProviderCallError).message
-        : "画面の読み取りに失敗しました。少し待ってから再試行してください。";
-      const detail = error instanceof ProviderCallError ? error.message : String(error);
-      console.error(`[/api/ai/vision] provider error (request ${requestId}):`, detail);
+      const latencyMs = Date.now() - started;
       await recordUsage(tenantId, userId, {
         operation: "vision",
         unitType: "call",
-        requestId,
-        status: "error",
-        errorCode: "PROVIDER_ERROR",
-        latencyMs: Date.now() - started,
+        requestId: requestId!,
+        status: "success",
+        modelVendor: output.modelVendor,
+        modelId: output.modelId,
+        inputUnits: output.inputTokens,
+        outputUnits: output.outputTokens,
+        latencyMs,
         metadata,
       });
-      return errorResponse(502, "PROVIDER_ERROR", message, requestId);
+
+      return Response.json({
+        request_id: requestId,
+        capture_id: captureId,
+        result: {
+          mode: output.result.mode,
+          message: output.result.message,
+          observations: output.result.observations,
+          uncertainties: output.result.uncertainties,
+          target_candidate_id: output.result.targetCandidateId,
+        },
+        meta: {
+          output_language: language,
+          model_vendor: output.modelVendor,
+          model_id: output.modelId,
+          route: output.route,
+          api: "responses",
+          image_detail: VISION_IMAGE_DETAIL,
+          reasoning_effort: VISION_REASONING_EFFORT,
+          fallback_used: false,
+          latency_ms: latencyMs,
+        },
+      });
+    } catch (error) {
+      const latencyMs = Date.now() - started;
+      const rateLimited = error instanceof ProviderCallError && error.rateLimited;
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(
+        `[/api/ai/vision] GPT-5.6 Luna failed (request ${requestId}):`,
+        detail,
+      );
+      await recordUsage(tenantId, userId, {
+        operation: "vision",
+        unitType: "call",
+        requestId: requestId!,
+        status: "error",
+        modelVendor: "openai",
+        modelId: VISION_MODEL_ID,
+        errorCode: rateLimited ? "RATE_LIMITED" : "PROVIDER_ERROR",
+        latencyMs,
+        metadata,
+      });
+      return errorResponse(
+        rateLimited ? 429 : 502,
+        rateLimited ? "RATE_LIMITED" : "PROVIDER_ERROR",
+        "GPT-5.6 Lunaで画面を読み取れませんでした。別モデルへの自動切り替えは行いません。",
+        requestId,
+        {
+          model_id: VISION_MODEL_ID,
+          fallback_used: false,
+        },
+      );
     }
-    const latencyMs = Date.now() - started;
-
-    await recordUsage(tenantId, userId, {
-      operation: "vision",
-      unitType: "call",
-      requestId,
-      status: "success",
-      modelVendor: engineOutput.modelVendor,
-      modelId: engineOutput.modelId,
-      inputUnits: engineOutput.inputTokens,
-      outputUnits: engineOutput.outputTokens,
-      latencyMs,
-      metadata: {
-        ...metadata,
-        operational_notice_codes: engineOutput.notices.map((notice) => notice.code),
-      },
-    });
-
-    return Response.json({
-      request_id: requestId,
-      result: engineOutput.result,
-      meta: {
-        output_language: language,
-        model_vendor: engineOutput.modelVendor,
-        model_id: engineOutput.modelId,
-        latency_ms: latencyMs,
-        notices: engineOutput.notices,
-      },
-    });
   } catch (error) {
     if (error instanceof GatewayError) {
       return gatewayErrorResponse(error, requestId);
@@ -171,4 +199,161 @@ export async function POST(request: Request): Promise<Response> {
     console.error("[/api/ai/vision] internal error:", error);
     return errorResponse(500, "INTERNAL_ERROR", "Unclassified server failure.", requestId);
   }
+}
+
+function validateBody(
+  body: VisionRequestBody,
+  requestId: string | null,
+): Response | null {
+  if (!requestId) {
+    return errorResponse(400, "BAD_REQUEST", "request_id is required.", requestId);
+  }
+  if (body.operation !== "vision") {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "operation must be 'vision'.",
+      requestId,
+    );
+  }
+  const captureId = body.input?.capture_id?.trim();
+  if (!captureId || captureId.length > MAX_CAPTURE_ID_CHARS) {
+    return errorResponse(400, "BAD_REQUEST", "A valid input.capture_id is required.", requestId);
+  }
+  const imageBase64 = body.input?.image_base64;
+  if (!imageBase64 || imageBase64.length > MAX_IMAGE_BASE64_CHARS) {
+    return errorResponse(400, "BAD_REQUEST", "A valid input.image_base64 is required.", requestId);
+  }
+  const mediaType = body.input?.media_type ?? "image/png";
+  if (mediaType !== "image/png" && mediaType !== "image/jpeg") {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "input.media_type must be 'image/png' or 'image/jpeg'.",
+      requestId,
+    );
+  }
+  if (body.input?.question && body.input.question.length > MAX_TURN_CHARS) {
+    return errorResponse(400, "BAD_REQUEST", "input.question is too long.", requestId);
+  }
+  const guidance = body.input?.guidance;
+  if (guidance && body.input?.question) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "input.guidance and input.question are mutually exclusive.",
+      requestId,
+    );
+  }
+  if (guidance && (
+    typeof guidance.goal !== "string"
+    || guidance.goal.trim().length === 0
+    || guidance.goal.length > MAX_TURN_CHARS
+    || typeof guidance.previous_instruction !== "string"
+    || guidance.previous_instruction.trim().length === 0
+    || guidance.previous_instruction.length > MAX_TURN_CHARS
+  )) {
+    return errorResponse(400, "BAD_REQUEST", "input.guidance is invalid.", requestId);
+  }
+  const turns = body.input?.turns ?? [];
+  if (
+    !Array.isArray(turns)
+    || turns.length > MAX_TURNS
+    || turns.some((turn) => (
+      (turn.role !== "user" && turn.role !== "assistant")
+      || typeof turn.text !== "string"
+      || turn.text.length > MAX_TURN_CHARS
+    ))
+  ) {
+    return errorResponse(400, "BAD_REQUEST", "input.turns is invalid.", requestId);
+  }
+  const candidates = body.input?.candidates ?? [];
+  if (
+    !Array.isArray(candidates)
+    || candidates.length > MAX_CANDIDATES
+    || candidates.some((candidate) => (
+      typeof candidate.id !== "string" || candidate.id.length === 0 || candidate.id.length > 128
+      || (candidate.source !== "ax" && candidate.source !== "dom")
+      || typeof candidate.label !== "string" || candidate.label.length === 0
+      || candidate.label.length > 512
+      || (candidate.role !== undefined
+        && (typeof candidate.role !== "string" || candidate.role.length > 64))
+      || (candidate.parent_label !== undefined
+        && (typeof candidate.parent_label !== "string" || candidate.parent_label.length > 512))
+      || !Array.isArray(candidate.states)
+      || candidate.states.length > 16
+      || candidate.states.some((state) => typeof state !== "string" || state.length > 64)
+    ))
+    || new Set(candidates.map((candidate) => candidate.id)).size !== candidates.length
+  ) {
+    return errorResponse(400, "BAD_REQUEST", "input.candidates is invalid.", requestId);
+  }
+  const diagnostics = body.input?.candidate_diagnostics;
+  const allowedTruncationReasons = new Set([
+    "no_target_app",
+    "unknown_capture_rect",
+    "permission_denied",
+    "node_limit",
+    "candidate_limit",
+    "deadline",
+    "not_configured",
+  ]);
+  const allowedCollectionRoots = new Set(["none", "focused_window", "application"]);
+  const allowedCaptureScopes = new Set(["display", "region", "unknown"]);
+  if (diagnostics && (
+    !Number.isInteger(diagnostics.elapsed_ms)
+    || diagnostics.elapsed_ms! < 0
+    || diagnostics.elapsed_ms! > 60_000
+    || !Number.isInteger(diagnostics.visited_nodes)
+    || diagnostics.visited_nodes! < 0
+    || diagnostics.visited_nodes! > 100_000
+    || !Number.isInteger(diagnostics.candidate_count)
+    || diagnostics.candidate_count! < 0
+    || diagnostics.candidate_count! > MAX_CANDIDATES
+    || diagnostics.candidate_count !== candidates.length
+    || (diagnostics.truncated_reason !== undefined
+      && !allowedTruncationReasons.has(diagnostics.truncated_reason))
+    || (diagnostics.target_app_name !== undefined
+      && (typeof diagnostics.target_app_name !== "string"
+        || diagnostics.target_app_name.length > 256))
+    || (diagnostics.target_bundle_id !== undefined
+      && (typeof diagnostics.target_bundle_id !== "string"
+        || diagnostics.target_bundle_id.length > 256))
+    || (diagnostics.target_window_present !== undefined
+      && typeof diagnostics.target_window_present !== "boolean")
+    || (diagnostics.target_window_title !== undefined
+      && (typeof diagnostics.target_window_title !== "string"
+        || diagnostics.target_window_title.length > 512))
+    || (diagnostics.collection_root !== undefined
+      && !allowedCollectionRoots.has(diagnostics.collection_root))
+    || (diagnostics.capture_scope !== undefined
+      && !allowedCaptureScopes.has(diagnostics.capture_scope))
+    || (diagnostics.collection_passes !== undefined
+      && (!Number.isInteger(diagnostics.collection_passes)
+        || diagnostics.collection_passes! < 0
+        || diagnostics.collection_passes! > 10))
+    || (diagnostics.web_area_present !== undefined
+      && typeof diagnostics.web_area_present !== "boolean")
+  )) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "input.candidate_diagnostics is invalid.",
+      requestId,
+    );
+  }
+  const language = body.preferences?.output_language;
+  if (language !== "japanese" && language !== "english") {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "preferences.output_language must be 'japanese' or 'english'.",
+      requestId,
+    );
+  }
+  const platform = body.client?.platform;
+  if (platform !== "macos" && platform !== "ios" && platform !== "android" && platform !== "web") {
+    return errorResponse(400, "BAD_REQUEST", "client.platform is required.", requestId);
+  }
+  return null;
 }

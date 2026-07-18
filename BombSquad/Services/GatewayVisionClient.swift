@@ -1,13 +1,59 @@
 import AppKit
 import Foundation
 
-/// Screenshot interpretation via the product gateway (POST /api/ai/vision).
-/// The server owns the OpenAI key and the prompt; usage is metered per
-/// tenant. The BYOK OpenAIVisionClient remains as a developer fallback.
-/// Transport/error plumbing lives in `GatewayClient`.
-struct GatewayVisionClient: VisionProvider {
-    /// The gateway rejects payloads past ~4MB of base64 (Vercel body limit);
-    /// re-encode large PNG screenshots as JPEG before sending.
+struct VisionTurn: Equatable {
+    enum Role: String {
+        case user
+        case assistant
+    }
+
+    let role: Role
+    let text: String
+}
+
+struct ScreenGuidanceContext: Equatable {
+    let goal: String
+    let previousInstruction: String
+
+    var wirePayload: [String: Any] {
+        ["goal": goal, "previous_instruction": previousInstruction]
+    }
+}
+
+struct VisionResult: Equatable {
+    enum Mode: String {
+        case observation
+        case answer
+        case guide
+        case clarification
+    }
+
+    let mode: Mode
+    let message: String
+    let observations: [String]
+    let uncertainties: [String]
+    let targetCandidateID: String?
+}
+
+struct VisionMetadata: Equatable {
+    let modelVendor: String
+    let modelID: String
+    let route: String
+    let api: String
+    let imageDetail: String
+    let reasoningEffort: String
+    let fallbackUsed: Bool
+    let latencyMs: Int
+}
+
+struct VisionResponse: Equatable {
+    let captureID: UUID
+    let result: VisionResult
+    let metadata: VisionMetadata
+}
+
+struct GatewayVisionClient {
+    static let requiredModelID = "gpt-5.6-luna"
     private static let maxRawImageBytes = 3_000_000
 
     private let client: GatewayClient
@@ -21,91 +67,124 @@ struct GatewayVisionClient: VisionProvider {
         self.client = client
     }
 
-    func interpret(
-        imageURL: URL,
-        instruction: String?,
-        language: OutputLanguage,
-        context: SituationalContext?,
-        memory: MemoryInjection?
-    ) async throws -> VisionInterpretationResult {
-        let imageData = try Data(contentsOf: imageURL)
-        var payloadData = imageData
-        var mediaType = "image/png"
-        if payloadData.count > Self.maxRawImageBytes,
-           let jpeg = Self.jpegData(from: imageData) {
-            payloadData = jpeg
-            mediaType = "image/jpeg"
-        }
-
-        var input: [String: Any] = [
-            "image_base64": payloadData.base64EncodedString(),
-            "media_type": mediaType,
-        ]
-        addCommonFields(to: &input, instruction: instruction, context: context, memory: memory)
-        return try await send(input: input, language: language)
-    }
-
-    /// M4-B receiving side: interpret a received message with the same
-    /// schema/prompt family as a screenshot (`input.text` on the gateway).
-    func interpret(
-        receivedText: String,
-        instruction: String?,
-        language: OutputLanguage,
-        context: SituationalContext?,
-        memory: MemoryInjection?
-    ) async throws -> VisionInterpretationResult {
-        var input: [String: Any] = ["text": receivedText]
-        addCommonFields(to: &input, instruction: instruction, context: context, memory: memory)
-        return try await send(input: input, language: language)
-    }
-
-    private func addCommonFields(
-        to input: inout [String: Any],
-        instruction: String?,
-        context: SituationalContext?,
-        memory: MemoryInjection?
-    ) {
-        if let instruction = instruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !instruction.isEmpty {
-            input["instruction"] = instruction
-        }
-        // Same payload shapes as ai/review: the gateway builds the prompt and
-        // stores neither block (see the API contract).
-        if let context {
-            input["context"] = GatewayClient.contextPayload(context)
-        }
-        if let memory, let payload = GatewayClient.memoryPayload(memory) {
-            input["memory"] = payload
-        }
-    }
-
-    private func send(
-        input: [String: Any],
+    func understand(
+        attachment: ScreenshotAttachment,
+        question: String?,
+        turns: [VisionTurn],
+        candidates: [VisionObservation.Candidate] = [],
+        candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
+        guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
-    ) async throws -> VisionInterpretationResult {
-        let data = try await client.postJSON(
-            "ai/vision",
-            body: GatewayClient.envelope(operation: "vision", input: input, language: language)
+    ) async throws -> VisionResponse {
+        let encoded = try Self.encodedImage(at: attachment.url)
+        var input: [String: Any] = [
+            "capture_id": attachment.id.uuidString,
+            "image_base64": encoded.data.base64EncodedString(),
+            "media_type": encoded.mediaType,
+            "turns": turns.map { ["role": $0.role.rawValue, "text": $0.text] },
+            "candidates": candidates.map(\.wirePayload),
+        ]
+        if let candidateDiagnostics {
+            input["candidate_diagnostics"] = candidateDiagnostics.wirePayload
+        }
+        if let guidanceContext {
+            input["guidance"] = guidanceContext.wirePayload
+        }
+        if let question = question?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !question.isEmpty {
+            input["question"] = question
+        }
+
+        let body = GatewayClient.envelope(
+            operation: "vision",
+            input: input,
+            language: language
         )
+        let data = try await client.postJSON("ai/vision", body: body)
+        return try Self.decode(data, expectedCaptureID: attachment.id)
+    }
 
+    private static func encodedImage(at url: URL) throws -> (data: Data, mediaType: String) {
+        let source = try Data(contentsOf: url)
+        guard source.count > maxRawImageBytes else {
+            return (source, url.pathExtension.lowercased() == "jpg" ? "image/jpeg" : "image/png")
+        }
+        guard
+            let bitmap = NSBitmapImageRep(data: source),
+            let jpeg = bitmap.representation(
+                using: .jpeg,
+                properties: [.compressionFactor: 0.9]
+            )
+        else {
+            throw ProviderError.decoding("The captured image exceeds the Gateway limit.")
+        }
+        return (jpeg, "image/jpeg")
+    }
+
+    private static func decode(
+        _ data: Data,
+        expectedCaptureID: UUID
+    ) throws -> VisionResponse {
         let root = try GatewayClient.rootObject(data)
-        guard let result = root["result"] else {
-            throw ProviderError.decoding("unexpected gateway response shape")
+        guard
+            let rawCaptureID = root["capture_id"] as? String,
+            let captureID = UUID(uuidString: rawCaptureID),
+            captureID == expectedCaptureID,
+            let resultObject = root["result"] as? [String: Any],
+            let rawMode = resultObject["mode"] as? String,
+            let mode = VisionResult.Mode(rawValue: rawMode),
+            let message = resultObject["message"] as? String,
+            !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let observations = resultObject["observations"] as? [String],
+            let uncertainties = resultObject["uncertainties"] as? [String],
+            let meta = root["meta"] as? [String: Any],
+            let route = meta["route"] as? String,
+            let modelVendor = meta["model_vendor"] as? String,
+            let modelID = meta["model_id"] as? String,
+            let api = meta["api"] as? String,
+            let imageDetail = meta["image_detail"] as? String,
+            let reasoningEffort = meta["reasoning_effort"] as? String,
+            let fallbackUsed = meta["fallback_used"] as? Bool,
+            let latencyMs = meta["latency_ms"] as? Int
+        else {
+            throw ProviderError.decoding("The Vision response did not match its contract.")
+        }
+        let targetCandidateID = resultObject["target_candidate_id"] as? String
+
+        guard
+            modelVendor == "openai",
+            api == "responses",
+            imageDetail == "original",
+            reasoningEffort == "none",
+            fallbackUsed == false,
+            route == "snapshot_vlm",
+            modelID == requiredModelID
+        else {
+            throw ProviderError.decoding(
+                "The required Vision model configuration was not used; the turn was rejected."
+            )
         }
 
-        do {
-            let resultData = try JSONSerialization.data(withJSONObject: result)
-            var interpretation = try VisionInterpretationResult.decodeFlexible(from: resultData)
-            let meta = root["meta"] as? [String: Any]
-            interpretation.modelID = meta?["model_id"] as? String
-            return interpretation
-        } catch {
-            throw ProviderError.decoding(error.localizedDescription)
-        }
+        return VisionResponse(
+            captureID: captureID,
+            result: VisionResult(
+                mode: mode,
+                message: message,
+                observations: observations,
+                uncertainties: uncertainties,
+                targetCandidateID: targetCandidateID
+            ),
+            metadata: VisionMetadata(
+                modelVendor: modelVendor,
+                modelID: modelID,
+                route: route,
+                api: api,
+                imageDetail: imageDetail,
+                reasoningEffort: reasoningEffort,
+                fallbackUsed: fallbackUsed,
+                latencyMs: latencyMs
+            )
+        )
     }
 
-    private static func jpegData(from imageData: Data) -> Data? {
-        guard let bitmap = NSBitmapImageRep(data: imageData) else { return nil }
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
-    }
 }

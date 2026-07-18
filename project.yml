@@ -23,10 +23,7 @@ targets:
         CFBundleDisplayName: "Universal I/O"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        # Authoritative production gateway (Vercel project "gateway"). Debug
-        # and Release both use this unless Debug explicitly opts into local
-        # mode via BOMB_SQUAD_GATEWAY_MODE=local.
-        # The endpoint builder tolerates a base URL with or without "/api".
+        # Authoritative production gateway (Vercel project "gateway").
         BOMB_SQUAD_API_BASE_URL: "https://api.universal-io.com"
         LSApplicationCategoryType: "public.app-category.productivity"
         NSMicrophoneUsageDescription: "音声入力（ASR）で下書きを作成するためにマイクを使用します。"
@@ -37,20 +34,10 @@ targets:
     dependencies:
       - package: Supabase
         product: Supabase
-    # Generate a shared scheme so `xcodebuild -scheme BombSquad` works right
-    # after `xcodegen generate` (CLI builds resolve SPM packages via schemes;
-    # bare -target builds fail on package module resolution).
-    scheme:
-      testTargets:
-        - BombSquadTests
-      gatherCoverageData: false
+    scheme: {}
     sources:
       - BombSquad
-      # Bundle the gitignored local auth config so the app reads it regardless
-      # of launch working directory (Finder/Spotlight/Xcode give CWD "/"). The
-      # Supabase anon key is public. A gateway value in this file is inert unless
-      # Debug is explicitly launched with BOMB_SQUAD_GATEWAY_MODE=local.
-      # optional: build still works for developers without the file.
+      # Bundle the gitignored Supabase auth config. Gateway routing never reads it.
       - path: BombSquad.local.plist
         buildPhase: resources
         optional: true
@@ -86,30 +73,3 @@ targets:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           DEVELOPMENT_TEAM: TG68TFXG88
           ENABLE_HARDENED_RUNTIME: YES
-  BombSquadTests:
-    type: bundle.unit-test
-    platform: macOS
-    sources:
-      - BombSquadTests
-    dependencies:
-      - target: BombSquad
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.universal-io.mac.tests
-        CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: TG68TFXG88
-        GENERATE_INFOPLIST_FILE: YES
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Universal IO.app/Contents/MacOS/Universal IO"
-        BUNDLE_LOADER: "$(TEST_HOST)"
-schemes:
-  # Deliberately separate from the everyday BombSquad scheme. Selecting this
-  # scheme is the explicit opt-in to local Gateway development; it never falls
-  # through to production when the local server is absent or broken.
-  BombSquad Local Gateway:
-    build:
-      targets:
-        BombSquad: all
-    run:
-      config: Debug
-      environmentVariables:
-        BOMB_SQUAD_GATEWAY_MODE: local

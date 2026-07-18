@@ -101,7 +101,7 @@ struct ScreenshotCaptureService {
             // Capturing a different display than requested (display unplugged
             // or SCK enumeration mismatch) must never be silent.
             NSLog(
-                "[Challenge3] capture display fallback: requested=%u using=%u",
+                "Vision capture display fallback: requested=%u using=%u",
                 displayID, display.displayID
             )
         }
@@ -370,11 +370,11 @@ enum StableScreenCaptureService {
 #if DEBUG
         if let difference {
             NSLog(
-                "[Challenge3] stable-capture attempt=%d phase=%@ diff=%.4f",
+                "Vision stable capture attempt=%d phase=%@ diff=%.4f",
                 attempt, phase, difference
             )
         } else {
-            NSLog("[Challenge3] stable-capture attempt=%d phase=%@", attempt, phase)
+            NSLog("Vision stable capture attempt=%d phase=%@", attempt, phase)
         }
 #endif
     }

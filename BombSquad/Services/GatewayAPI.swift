@@ -40,20 +40,12 @@ struct GatewayAPI {
 
     /// Usable only when the gateway URL is configured and a user is signed in.
     static func make() -> GatewayAPI? {
-        // A hosted XCTest process still constructs the SwiftUI App and its
-        // shared auth model before tests begin. Never let that incidental
-        // initialization contact a real gateway; transport tests inject their
-        // own GatewayAPI and URLSession explicitly.
-        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
-            return nil
-        }
-
-        let routePlan = BombSquadConfig.gatewayRoutePlan()
+        let baseURL = BombSquadConfig.resolvedAPIBaseURL().flatMap(URL.init(string:))
         guard
-            let routePlan,
+            let baseURL,
             BombSquadAuthClient.shared.currentSession() != nil
         else { return nil }
-        return GatewayAPI(baseURL: routePlan.preferredURL)
+        return GatewayAPI(baseURL: baseURL)
     }
 
     /// `BOMB_SQUAD_API_BASE_URL` may or may not include the `/api` base path.

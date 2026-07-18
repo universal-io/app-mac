@@ -1,20 +1,5 @@
 import SwiftUI
 
-/// Compact warning shown when development overrides the production Gateway.
-struct GatewayOverrideBadge: View {
-    var body: some View {
-        if let plan = BombSquadConfig.gatewayRoutePlan(), plan.usesDevelopmentOverride {
-            Text("開発GW")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.orange, in: Capsule())
-                .help("明示的なlocalモード: \(plan.preferredURL.absoluteString)\n本番への自動切替なし")
-        }
-    }
-}
-
 /// Selectable error text shared by all transient panel modes.
 struct ErrorBanner: View {
     let message: String
@@ -65,11 +50,11 @@ struct OperationalNoticeBanner: View {
 
 /// "See → understand → respond": situation first, then requests,
 /// prepared actions, and finally the extracted source as reference material.
-struct VisionInterpretationView: View {
-    let result: VisionInterpretationResult
+struct TransformInterpretationView: View {
+    let result: TransformInterpretationResult
     var isTransform: Bool = false
-    let onApprove: (VisionSuggestedAction) -> Void
-    let onEdit: (VisionSuggestedAction) -> Void
+    let onApprove: (TransformSuggestedAction) -> Void
+    let onEdit: (TransformSuggestedAction) -> Void
 
     var body: some View {
         ScrollView {
@@ -147,7 +132,7 @@ struct VisionInterpretationView: View {
 }
 
 private struct FoundationSuggestedActionCard: View {
-    let action: VisionSuggestedAction
+    let action: TransformSuggestedAction
     var isTransform: Bool
     let onApprove: () -> Void
     let onEdit: () -> Void

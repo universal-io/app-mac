@@ -47,7 +47,6 @@ final class ComposeSession: ObservableObject {
     let outputLanguage: OutputLanguage
 
     private let deployer: Deployer
-    private let overrideProvider: ReviewProvider?
     private var contextCaptureTask: Task<SituationalContext?, Never>?
     private var reviewTask: Task<Void, Never>?
     private var hasLoadedHistory = false
@@ -56,12 +55,10 @@ final class ComposeSession: ObservableObject {
 
     init(
         deployer: Deployer,
-        contextCaptureTask: Task<SituationalContext?, Never>,
-        provider: ReviewProvider? = nil
+        contextCaptureTask: Task<SituationalContext?, Never>
     ) {
         self.deployer = deployer
         self.contextCaptureTask = contextCaptureTask
-        self.overrideProvider = provider
         self.outputLanguage = AppSettings.outputLanguage()
         self.draft = FoundationComposeDraftStore.load()
 
@@ -138,13 +135,12 @@ final class ComposeSession: ObservableObject {
 
     func deployRevision() {
         let finalText = revisedDraft.isEmpty ? draft : revisedDraft
-        let model = result == nil ? nil : AppSettings.selectedModel()
         let historyInput = HistoryEntryInput(
             mode: .compose,
             sourceText: draft,
             finalText: finalText,
-            modelID: model?.id,
-            modelName: lastModelName ?? model?.displayName,
+            modelID: nil,
+            modelName: lastModelName,
             outputLanguage: outputLanguage.displayName,
             action: .sent
         )
@@ -228,45 +224,35 @@ final class ComposeSession: ObservableObject {
         let context = await resolveContext()
         let memory = await resolveMemory(context: context)
         guard !Task.isCancelled else { return }
-        let provider = currentProvider()
+        guard let provider = GatewayReviewClient.make() else {
+            errorMessage = "入力レビューサービスを利用できません。ログイン状態を確認してください。"
+            return
+        }
 
         do {
-            let reviewed: ReviewResult
-            if let gateway = provider as? GatewayReviewClient {
-                streamingRevision = ""
-                var finalResult: ReviewResult?
-                let stream = try await gateway.reviewStream(
-                    draft: input,
-                    language: language,
-                    context: context,
-                    memory: memory
-                )
-                for try await event in stream {
-                    try Task.checkCancellation()
-                    switch event {
-                    case .delta(let text):
-                        streamingRevision = (streamingRevision ?? "") + text
-                    case .result(let result):
-                        finalResult = result
-                    }
+            streamingRevision = ""
+            var finalResult: ReviewResult?
+            let stream = try await provider.reviewStream(
+                draft: input,
+                language: language,
+                context: context,
+                memory: memory
+            )
+            for try await event in stream {
+                try Task.checkCancellation()
+                switch event {
+                case .delta(let text):
+                    streamingRevision = (streamingRevision ?? "") + text
+                case .result(let result):
+                    finalResult = result
                 }
-                guard let finalResult else {
-                    throw ProviderError.decoding("stream ended without a result")
-                }
-                reviewed = finalResult
-            } else {
-                reviewed = try await provider.review(
-                    draft: input,
-                    language: language,
-                    context: context,
-                    memory: memory
-                )
+            }
+            guard let reviewed = finalResult else {
+                throw ProviderError.decoding("stream ended without a result")
             }
             try Task.checkCancellation()
             lastDurationMs = Int(Date().timeIntervalSince(started) * 1000)
-            lastModelName = provider is GatewayReviewClient
-                ? "I//O Cloud"
-                : AppSettings.selectedModel().displayName
+            lastModelName = "I//O Cloud"
             result = reviewed
             revisedDraft = reviewed.revisedText
             reviewedDraft = input
@@ -279,22 +265,6 @@ final class ComposeSession: ObservableObject {
             return
         } catch {
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        }
-    }
-
-    private func currentProvider() -> ReviewProvider {
-        if let overrideProvider { return overrideProvider }
-        if let gateway = GatewayReviewClient.make() { return gateway }
-        let model = AppSettings.selectedModel()
-        OperationalNoticeCenter.shared.publish(
-            code: "CLIENT_PROVIDER_FALLBACK",
-            message: "I//O Cloudにアクセスできなかったため、端末の\(model.displayName)で処理します。"
-        )
-        switch model.vendor {
-        case .anthropic:
-            return ClaudeClient(model: model.apiModelID)
-        case .openAI, .groq:
-            return OpenAICompatibleClient(model: model)
         }
     }
 

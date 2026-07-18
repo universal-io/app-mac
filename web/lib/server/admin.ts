@@ -5,6 +5,7 @@
 import { getServerEnv } from "@/lib/server/env";
 import { authenticate, GatewayError } from "@/lib/server/gateway";
 import { getPlanConfig } from "@/lib/server/plans";
+import { VISION_MODEL_ID } from "@/lib/server/vision-engine";
 
 /**
  * Verifies the Supabase JWT (reusing the gateway's authenticate helper) and
@@ -25,10 +26,9 @@ export async function assertAdmin(request: Request): Promise<{ email: string }> 
 
 // --- Effective model configuration (admin-dashboard-plan §3-a) -------------
 // Shows what the gateway ACTUALLY uses per operation, and whether each value
-// comes from an env override or the code default — the 2026-07-06 incident
-// (a forgotten navigate model override) is caught at a glance here.
+// comes from an env override or the code default.
 
-export type ConfigSource = "env" | "default" | "inherited";
+export type ConfigSource = "env" | "default";
 
 export type ModelConfigRow = {
   /** Operation label, e.g. "review（既定）". */
@@ -65,52 +65,22 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
         modelSource: sourceOf("BOMB_SQUAD_DEFAULT_MODEL_ID"),
       },
       {
-        label: "vision",
-        // The vision engine pins the vendor to OpenAI in code; only the
-        // model id is env-tunable today.
+        label: "transform",
         vendor: "openai",
         vendorSource: "default",
-        modelId: env.visionModelId,
-        modelSource: sourceOf("BOMB_SQUAD_VISION_MODEL_ID"),
+        modelId: env.transformModelId,
+        modelSource: sourceOf("BOMB_SQUAD_TRANSFORM_MODEL_ID"),
       },
       {
-        label: "navigate（後続ターン）",
-        vendor: env.navigateModelVendor,
-        vendorSource: sourceOf("BOMB_SQUAD_NAVIGATE_MODEL_VENDOR"),
-        modelId: env.navigateModelId,
-        modelSource: sourceOf("BOMB_SQUAD_NAVIGATE_MODEL_ID"),
-      },
-      {
-        label: "navigate（初手・高速）",
-        vendor: env.navigateFastModelVendor,
-        vendorSource: sourceOf("BOMB_SQUAD_NAVIGATE_FAST_MODEL_VENDOR"),
-        modelId: env.navigateFastModelId,
-        modelSource: sourceOf("BOMB_SQUAD_NAVIGATE_FAST_MODEL_ID"),
-      },
-      {
-        label: "navigate（Planner）",
-        vendor: env.navigatePlannerModelVendor,
-        vendorSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_VENDOR"),
-        modelId: env.navigatePlannerModelId,
-        modelSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_PLANNER_MODEL_ID"),
-      },
-      {
-        label: "navigate（Grounder）",
-        vendor: env.navigateGrounderModelVendor,
-        vendorSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_VENDOR"),
-        modelId: env.navigateGrounderModelId,
-        modelSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_GROUNDER_MODEL_ID"),
-      },
-      {
-        label: "navigate（Verifier）",
-        vendor: env.navigateVerifierModelVendor,
-        vendorSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_VENDOR"),
-        modelId: env.navigateVerifierModelId,
-        modelSource: roleSourceOf("BOMB_SQUAD_NAVIGATE_VERIFIER_MODEL_ID"),
+        label: "vision",
+        vendor: "openai",
+        vendorSource: "default",
+        modelId: VISION_MODEL_ID,
+        modelSource: "default",
       },
     ],
     freeMonthlyLimit: {
-      value: freePlan?.monthlyUsageLimit ?? null,
+      value: freePlan.monthlyUsageLimit,
       source: "plan",
     },
     apiKeys: {
@@ -126,8 +96,4 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
  * as getServerEnv), "default" otherwise. */
 function sourceOf(name: string): ConfigSource {
   return process.env[name]?.trim() ? "env" : "default";
-}
-
-function roleSourceOf(name: string): ConfigSource {
-  return process.env[name]?.trim() ? "env" : "inherited";
 }
