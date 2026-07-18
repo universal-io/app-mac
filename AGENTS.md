@@ -32,3 +32,12 @@ Current operational note:
 - 2026-07-18: Vision/Copilotを単一の本番経路へ統合。旧Navigator、実験名、
   runtime flag、local Gateway、BYOK fallback、常設test/eval harnessは削除済み。
 - 実験は短命ブランチで行い、終了時に本番ツリーへ残さない。
+
+# Supabase Production Writes
+
+- Bomb Squadの正しいMCPは `supabase_bomb_squad`、project refは
+  `skcsbcyivjcvevxntvqa`。汎用名 `supabase` や他プロジェクトのMCPを使わない。
+- schema/data readおよびSQL作業の前にproject URLを確認し、
+  `https://skcsbcyivjcvevxntvqa.supabase.co` と完全一致しなければ停止する。
+- 書き込み前にはURLを再確認し、migrationまたはSQLをレビューして、ユーザーの
+  明示承認を得る。MCPがwrite-capableであること自体は実行承認ではない。
