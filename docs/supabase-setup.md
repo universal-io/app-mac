@@ -31,7 +31,7 @@ Database naming rule:
   `bs_entitlements.plan` を FK 化、`monthly_review_limit` を NULL 可（NULL = プラン値に従う）に変更、
   `bs_provision_user()` 再定義。**ベータ方針（2026-07-08）: free=500件/月、他プランは無制限・
   機能ゲート無し。プラン変更はこのテーブルの行を編集する（env・コードにコピーを持たない）**。
-- `supabase/migrations/0005_remove_unused_tables.sql` — 使用を終了した旧画面案内テーブルを削除。
+- `supabase/migrations/20260718000000_remove_unused_tables.sql` — 使用を終了した旧画面案内テーブルを削除。
 
 ## Secrets Needed Later
 
