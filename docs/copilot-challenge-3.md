@@ -1,6 +1,6 @@
 # 画面コパイロット 第3次挑戦 — 設計空間の全列挙と判断
 
-作成: 2026-07-15 ／ 最終更新: 2026-07-17 ／ ステータス: **挑戦3 実装中**
+作成: 2026-07-15 ／ 最終更新: 2026-07-18 ／ ステータス: **挑戦3 ⑦まで実画面成功・⑧計測待ち**
 本書は Navigator/Copilot（視覚コパイロット機能）の**新しい正本**。前身の
 navigator-copilot-plan.md（v3設計）と navigator-stabilization-followups.md（v4精度計画）は
 本書に総括を引き継いで old/ へ移す。
@@ -330,14 +330,20 @@ Copilot（後続段階）
   `UniversalIO-Challenge3-Replays`へ直近20件保存する。ReleaseとSupabase usageには画像・会話・候補本文を
   保存しない。これで⑤の失敗ターンを同じ入力から剖検できる。3MB超のJPEG化、20ターン上限、Chrome
   cold start時のAX候補変動は現時点で挙動を変えず、media type・エラー・AX診断をreplayとtraceで観測する。
-- 次回セッション開始点（2026-07-17）: branchは`experiment/copilot-challenge-3`、実装基準は
-  `701f19f`。まず新規実装を増やさず、署名付きDebugアプリで次を順に実画面確認する。
-  (1) Spot Visionで案内文が維持され、スクリーンショット内の赤枠が対象矩形へ収まる、
-  (2) 「案内を開始」後に右下帯と実画面の永続赤枠が出る、(3) 対象をクリックすると新しい安定captureと
-  AX候補へ更新され、同じ指示を繰り返さず次の一手または目的の答えを返す。失敗時は開発UIの
-  target app/window、`collection_root`、`capture_scope`、打切理由を記録し、Consoleに出る
-  `UniversalIO-Challenge3-Replays`のrequest/image/responseを剖検する。⑤と⑦の実画面証拠が揃うまで
-  ⑥のDOM等を追加せず、原因をcandidate選択、AX欠落、scope制約、進捗判断へ分類する。
+- 次回セッション開始点（2026-07-18 更新）: branchは`experiment/copilot-challenge-3`、実装基準は
+  `7c92c6c`（この日の一連の修正がすべて入った切りの良い地点）。⑦（クリック反復）は複数の実画面
+  ケースで成功済み: GA4のデバイス別（near-miss完了の是正後）、未知Web UIの登録ゲート（通過点/決断点
+  の是正後）、初回クリックのフォーカス移動問題の是正後。この日入った修正: AX複数パス収集、
+  ブロック単位の変化検知、変化ゲートの拒否権全廃・進捗capture全採用、no_target_app堅牢化、
+  マルチディスプレイ座標修正＋OverlayWindow統合、完了条件厳格化＋ドメイン中立化、通過点/決断点、
+  guided-flowを疑問形でなく案内形で閉じる、対象アプリ前面維持、隔離DerivedDataルール。
+  **次フェーズはコパイロットの追加実装ではなく、入力パネルを含む全体UIの合理化**（オーナー指示、
+  別プロジェクト扱い）。UI統一の第一歩は入力行の共有コンポーネント化（compose/transform/Challenge3
+  でSendableTextEditorは共有済みだが「入力行＝エディタ＋録音/文字起こし表示＋主ボタン」の組み立てが
+  各Viewで手組み。録音状態は配線済みだがChallenge3では未表示）。**⑧ golden path計測は挑戦3の
+  完了ゲートとして未了**——UI整理と並行または後に実施し、20〜30ケースで誤ハイライト0・誤advance 0・
+  stale採用0を判定する。失敗時はConsoleの`[Challenge3]`ログとOS一時ディレクトリ
+  `UniversalIO-Challenge3-Replays`（request/image/response）で層を剖検する。
 - ローカル起動の署名ルール（2026-07-17）: `CODE_SIGNING_ALLOWED=NO`はコンパイル検証専用で、生成物を
   実画面テストに起動しない。未署名またはad-hoc署名の`/tmp`ビルドは、システム設定で許可済みの
   Apple Development署名版とmacOS TCC上で別主体になり、3権限が未許可に見える。実画面テストは通常の
