@@ -471,5 +471,21 @@ final class Challenge3VisionSession: ObservableObject {
             height: rect.height * captureRect.height
         )
         HighlightOverlayPresenter.shared.show(around: globalRect, duration: nil, padding: 6)
+        // Whenever we point at a control to click, the target app must be
+        // frontmost — otherwise the user's first click is spent activating
+        // its window (macOS click-to-focus) instead of pressing the control,
+        // yet our global monitor still fires and clears the ring. Handing
+        // focus back makes the very first click act. The strip floats above
+        // and does not close on resign-active, so nothing is lost.
+        activateTargetApp()
+    }
+
+    /// Returns frontmost status to the app being navigated. No-op when it is
+    /// already active (e.g. mid-task, after the user clicked in it).
+    private func activateTargetApp() {
+        guard let pid = preferredTargetPID,
+              let app = NSRunningApplication(processIdentifier: pid),
+              !app.isActive else { return }
+        app.activate()
     }
 }
