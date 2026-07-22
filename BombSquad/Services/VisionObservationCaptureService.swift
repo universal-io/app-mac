@@ -26,16 +26,14 @@ enum VisionObservationCaptureService {
                 "candidate_count": candidateCount,
             ]
             if let truncatedReason { payload["truncated_reason"] = truncatedReason }
-            if let targetAppName { payload["target_app_name"] = targetAppName }
-            if let targetBundleID { payload["target_bundle_id"] = targetBundleID }
+            // App identity and window titles are useful only in the local
+            // DEBUG UI. Never send them to the Gateway or persist them in
+            // usage diagnostics.
             payload["target_window_present"] = targetWindowTitle != nil
             payload["collection_root"] = collectionRoot
             payload["capture_scope"] = captureScope
             payload["collection_passes"] = collectionPasses
             payload["web_area_present"] = webAreaPresent
-#if DEBUG
-            if let targetWindowTitle { payload["target_window_title"] = targetWindowTitle }
-#endif
             return payload
         }
     }

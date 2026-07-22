@@ -3,7 +3,7 @@ import Foundation
 /// LLM calls that build and grow memory cards through the product Gateway.
 /// Memory work happens off the review
 /// hot path, so a failed call must never surface as a user-facing error
-/// (except in the explicit bootstrap flow, which reports).
+/// that blocks sending. The shared operational notice may still report it.
 enum MemoryDistiller {
     enum DistillerError: LocalizedError {
         case badResponse(String)
@@ -39,7 +39,7 @@ enum MemoryDistiller {
 
     /// Observe one deploy (original → suggestion → final) and append any
     /// high-confidence notes to the memory cards. Fire-and-forget: failures
-    /// are logged, never shown.
+    /// never block sending and are reported through the shared notice.
     static func distillAfterDeploy(
         original: String,
         suggestion: String,

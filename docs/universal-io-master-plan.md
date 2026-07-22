@@ -50,6 +50,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 - 認証、entitlement、usage、同期メモリはSupabaseを正とする。
 - 下書きと入力履歴はMacローカル。履歴上限は100件。
 - スクリーンショット、音声、周辺コンテクストは処理用で、Gatewayへ恒久保存しない。
+- usageと運用ログには入力本文、画像・音声、画像パス、アプリ名、ウインドウタイトルを保存しない。
 - APIキーはGateway環境だけに置く。macOSのKeychainへAI APIキーを保存しない。
 
 ## リリースまでのマイルストーン
@@ -61,7 +62,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 - Compose、Transform、Transcribe、Memoryを本番Gateway専用に統一。
 - 実験資料とアーカイブをGit履歴へ戻し、作業ツリーから削除。
 
-### R2 — 機械検証（進行中）
+### R2 — 機械検証（完了、2026-07-22）
 
 - XcodeGen生成が成功する。
 - macOS Debugを署名なしでビルドできる。
@@ -69,7 +70,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 - 本番route一覧とクライアントendpointが一対一で一致する。
 - リポジトリ内に旧経路の参照が残っていない。
 
-### R3 — 本番E2E
+### R3 — 本番E2E（進行中）
 
 - ログイン、レビュー、音声入力、受信変換、Vision、Copilot、履歴、メモリを実機確認。
 - 本番Gatewayで全routeがJSON/SSE契約を返し、404 HTMLを返さない。

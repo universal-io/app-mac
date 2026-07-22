@@ -108,7 +108,9 @@ export async function POST(request: Request): Promise<Response> {
       media_type: mediaType,
       image_base64_chars: imageBase64.length,
       candidate_count: candidates.length,
-      candidate_diagnostics: body.input!.candidate_diagnostics ?? null,
+      candidate_diagnostics: candidateDiagnosticsForUsage(
+        body.input!.candidate_diagnostics,
+      ),
       turn_count: turns.length,
       has_question: Boolean(question),
       is_guidance_progress: Boolean(guidance),
@@ -369,4 +371,25 @@ function validateBody(
     return errorResponse(400, "BAD_REQUEST", "client.platform is required.", requestId);
   }
   return null;
+}
+
+function candidateDiagnosticsForUsage(
+  diagnostics: NonNullable<
+    NonNullable<VisionRequestBody["input"]>["candidate_diagnostics"]
+  > | undefined,
+): Record<string, unknown> | null {
+  if (!diagnostics) return null;
+  // Accept identity fields from older clients for compatibility, but never
+  // persist app names, bundle IDs, or window titles in usage metadata.
+  return {
+    elapsed_ms: diagnostics.elapsed_ms,
+    visited_nodes: diagnostics.visited_nodes,
+    candidate_count: diagnostics.candidate_count,
+    truncated_reason: diagnostics.truncated_reason,
+    target_window_present: diagnostics.target_window_present,
+    collection_root: diagnostics.collection_root,
+    capture_scope: diagnostics.capture_scope,
+    collection_passes: diagnostics.collection_passes,
+    web_area_present: diagnostics.web_area_present,
+  };
 }

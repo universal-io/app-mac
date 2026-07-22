@@ -130,8 +130,7 @@ async function callReviewModel(
   const { endpoint, apiKey, body } = prepareCall(input, target);
   const response = await callProvider(endpoint, apiKey, body);
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, 500);
-    throw new ProviderCallError(`Provider HTTP ${response.status}: ${detail}`, {
+    throw new ProviderCallError(`Provider HTTP ${response.status}.`, {
       rateLimited: response.status === 429,
     });
   }

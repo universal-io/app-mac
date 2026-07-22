@@ -65,7 +65,10 @@
 
 ## リリースビルド
 
-- [ ] Developer ID署名とHardened Runtimeが有効。
+- [x] 追跡ファイルへの秘密情報混入と、usage／ログへの入力本文・画像・音声・画像パス・
+  アプリ名・ウインドウタイトル漏洩を点検（2026-07-22）。
+- [ ] 操作中のクラッシュと異常終了を点検。
+- [x] Developer ID署名とHardened Runtimeが有効（2026-07-22、Universal binaryで確認）。
 - [ ] notarizationとstapleが成功。
 - [ ] DMGからApplicationsへコピーして初回起動できる。
 - [ ] バージョン、build番号、配布URL、rollback tagが一致する。

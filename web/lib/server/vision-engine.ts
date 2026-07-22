@@ -95,9 +95,8 @@ async function callVisionModel(
   });
 
   if (!response.ok) {
-    const detail = (await response.text()).slice(0, 500);
     throw new ProviderCallError(
-      `${target.vendor}/${target.modelId} failed with HTTP ${response.status}: ${detail}`,
+      `${target.vendor}/${target.modelId} failed with HTTP ${response.status}.`,
       { rateLimited: response.status === 429 },
     );
   }
