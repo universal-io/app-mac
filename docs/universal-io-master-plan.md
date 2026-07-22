@@ -90,7 +90,8 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 - 公開候補は `0.1.0`（build `2`）として確定し、署名・notarization済み候補を検証する。
 - mainへ統合し、本番Gatewayを先にdeployする。
 - 本番routeの疎通確認後にmacOSビルドを配布する。
-- version/build番号、release note、rollback tagを確定する。
+- 公開DMGはversion／build別の不変URLへ保存し、Webサイト用latest aliasだけを切り替える。
+- version/build番号、release note、rollback可能なGitタグを確定する。
 - 初期usage、エラー率、レイテンシを監視する。
 
 ## リリース判定

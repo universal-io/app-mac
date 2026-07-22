@@ -88,6 +88,25 @@ npm run build
 通常のCLI検証では署名を無効にします。署名付き実行はマイク・画面収録・Accessibility・
 Keychain の許可状態に影響するため、明示的な実機確認時だけ行います。
 
+## リリース運用
+
+公開版は長期ブランチではなく、Gitタグと変更しないバージョン／build別DMGで保存します。
+`main`は次のリリースへ進め、公開済みコードへ緊急修正が必要な場合だけタグからfixブランチを
+作成します。versionは公開単位で更新し、build番号は署名・配布ビルドごとに増加させます。
+
+```bash
+# Developer ID署名、notarization、staple、Gatekeeper検証、DMG作成まで
+bash tools/release.sh
+
+# 上記に加え、履歴用の不変URLへ保存してWebサイトの最新版を切り替える
+bash tools/release.sh --publish
+```
+
+通常実行は配布物を変更しません。`--publish`だけがR2へアップロードします。公開時は
+`releases/<version>/build-<build>/Universal-IO.dmg`を履歴として保持し、
+`Universal-IO-<version>.dmg`とWebサイト用`Universal-IO.dmg`を最新版へ更新します。
+公開成功後、そのソースコミットへ`v<version>`タグを付けます。
+
 ## 設定
 
 `BOMB_SQUAD_API_BASE_URL` は `project.yml` の Info.plist 定義が唯一の正本です。
