@@ -87,6 +87,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 
 ### R5 — 公開
 
+- 公開候補は `0.1.0`（build `2`）。notarization前に最終確定する。
 - mainへ統合し、本番Gatewayを先にdeployする。
 - 本番routeの疎通確認後にmacOSビルドを配布する。
 - version/build番号、release note、rollback tagを確定する。
