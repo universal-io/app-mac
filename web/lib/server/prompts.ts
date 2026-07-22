@@ -1,7 +1,7 @@
 // Server-side port of the macOS ReviewPrompt (BombSquad/Resources/ReviewPrompt.swift).
 // The gateway owns prompts from M3 on, so prompt improvements ship without an
 // app release. Keep the Japanese text in sync with the Swift original until the
-// Swift copy is removed from the BYOK fallback path.
+// The Gateway owns the production prompt copy.
 
 export type ReviewMode = "compose" | "transform";
 export type OutputLanguageCode = "japanese" | "english";

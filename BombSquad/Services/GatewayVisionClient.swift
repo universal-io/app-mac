@@ -53,7 +53,6 @@ struct VisionResponse: Equatable {
 }
 
 struct GatewayVisionClient {
-    static let requiredModelID = "gpt-5.6-luna"
     private static let maxRawImageBytes = 3_000_000
 
     private let client: GatewayClient
@@ -152,16 +151,15 @@ struct GatewayVisionClient {
         let targetCandidateID = resultObject["target_candidate_id"] as? String
 
         guard
-            modelVendor == "openai",
-            api == "responses",
+            !modelVendor.isEmpty,
+            !modelID.isEmpty,
+            !api.isEmpty,
             imageDetail == "original",
             reasoningEffort == "none",
-            fallbackUsed == false,
-            route == "snapshot_vlm",
-            modelID == requiredModelID
+            route == "snapshot_vlm"
         else {
             throw ProviderError.decoding(
-                "The required Vision model configuration was not used; the turn was rejected."
+                "The Vision response used an invalid model configuration."
             )
         }
 

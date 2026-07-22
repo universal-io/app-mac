@@ -6,11 +6,13 @@ import {
   GatewayError,
   recordUsage,
 } from "@/lib/server/gateway";
-import { ProviderCallError } from "@/lib/server/review-engine";
+import {
+  aiModelFailureContract,
+  AI_MODEL_ROUTES,
+} from "@/lib/server/ai-routing";
 import {
   runVision,
   VISION_IMAGE_DETAIL,
-  VISION_MODEL_ID,
   VISION_REASONING_EFFORT,
   type VisionCandidate,
   type VisionTurn,
@@ -113,7 +115,6 @@ export async function POST(request: Request): Promise<Response> {
       api: "responses",
       image_detail: VISION_IMAGE_DETAIL,
       reasoning_effort: VISION_REASONING_EFFORT,
-      fallback_used: false,
     };
 
     const started = Date.now();
@@ -137,7 +138,11 @@ export async function POST(request: Request): Promise<Response> {
         inputUnits: output.inputTokens,
         outputUnits: output.outputTokens,
         latencyMs,
-        metadata,
+        metadata: {
+          ...metadata,
+          fallback_used: output.fallbackUsed,
+          operational_notice_codes: output.notices.map((notice) => notice.code),
+        },
       });
 
       return Response.json({
@@ -155,40 +160,48 @@ export async function POST(request: Request): Promise<Response> {
           model_vendor: output.modelVendor,
           model_id: output.modelId,
           route: output.route,
-          api: "responses",
+          api: output.modelApi,
           image_detail: VISION_IMAGE_DETAIL,
           reasoning_effort: VISION_REASONING_EFFORT,
-          fallback_used: false,
+          fallback_used: output.fallbackUsed,
           latency_ms: latencyMs,
+          notices: output.notices,
         },
       });
     } catch (error) {
       const latencyMs = Date.now() - started;
-      const rateLimited = error instanceof ProviderCallError && error.rateLimited;
-      const detail = error instanceof Error ? error.message : String(error);
+      const failure = aiModelFailureContract(error);
       console.error(
-        `[/api/ai/vision] GPT-5.6 Luna failed (request ${requestId}):`,
-        detail,
+        `[/api/ai/vision] primary and secondary failed (request ${requestId}):`,
+        failure.detail,
       );
+      const primary = AI_MODEL_ROUTES.vision.primary;
+      const secondary = AI_MODEL_ROUTES.vision.secondary;
       await recordUsage(tenantId, userId, {
         operation: "vision",
         unitType: "call",
         requestId: requestId!,
         status: "error",
-        modelVendor: "openai",
-        modelId: VISION_MODEL_ID,
-        errorCode: rateLimited ? "RATE_LIMITED" : "PROVIDER_ERROR",
+        modelVendor: primary.vendor,
+        modelId: primary.modelId,
+        errorCode: failure.code,
         latencyMs,
-        metadata,
+        metadata: {
+          ...metadata,
+          fallback_attempted: true,
+          secondary_model_vendor: secondary.vendor,
+          secondary_model_id: secondary.modelId,
+        },
       });
       return errorResponse(
-        rateLimited ? 429 : 502,
-        rateLimited ? "RATE_LIMITED" : "PROVIDER_ERROR",
-        "GPT-5.6 Lunaで画面を読み取れませんでした。別モデルへの自動切り替えは行いません。",
+        failure.status,
+        failure.code,
+        failure.message,
         requestId,
         {
-          model_id: VISION_MODEL_ID,
-          fallback_used: false,
+          primary_model_id: primary.modelId,
+          secondary_model_id: secondary.modelId,
+          fallback_attempted: true,
         },
       );
     }

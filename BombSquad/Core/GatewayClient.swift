@@ -13,13 +13,8 @@ struct GatewayOperationalNotice: Equatable {
     let message: String
 }
 
-/// Recovered failures are still product-visible state. Gateway responses use
-/// `meta.notices`; client-side Cloud→BYOK switches publish through the same
-/// center so every transient panel renders one consistent warning.
-///
-/// These operational notices are developer-facing diagnostics. Owner decision
-/// 2026-07-15: they must be hidden or gated behind a developer setting before
-/// public release; end users must never see them.
+/// Recovered failures are still product-visible state. Every Gateway AI route
+/// publishes the same `meta.notices` shape when it uses its secondary model.
 @MainActor
 final class OperationalNoticeCenter: ObservableObject {
     static let shared = OperationalNoticeCenter()

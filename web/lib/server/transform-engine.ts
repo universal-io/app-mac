@@ -2,20 +2,19 @@
 // JSON is passed through to the client, which decodes
 // it flexibly (TransformInterpretationResult.decodeFlexible).
 
-import { getServerEnv } from "@/lib/server/env";
-import { ProviderCallError } from "@/lib/server/review-engine";
 import {
-  modelFallbackNotice,
-  type OperationalNotice,
-} from "@/lib/server/operational-notice";
+  apiKeyFor,
+  endpointFor,
+  ProviderCallError,
+  runWithModelFallback,
+  type AIModelTarget,
+} from "@/lib/server/ai-routing";
+import type { OperationalNotice } from "@/lib/server/operational-notice";
 import type {
   MemoryPayload,
   OutputLanguageCode,
   SituationalContextPayload,
 } from "@/lib/server/prompts";
-
-const ENDPOINT = "https://api.openai.com/v1/responses";
-const FALLBACK_MODEL = "gpt-4.1-mini";
 
 const LANGUAGE_PROMPT_NAMES: Record<OutputLanguageCode, string> = {
   japanese: "日本語",
@@ -41,6 +40,8 @@ export type TransformEngineOutput = {
   result: Record<string, unknown>;
   modelVendor: string;
   modelId: string;
+  modelApi: string;
+  fallbackUsed: boolean;
   inputTokens: number;
   outputTokens: number;
   notices: OperationalNotice[];
@@ -49,44 +50,28 @@ export type TransformEngineOutput = {
 export async function runTransformInterpretation(
   input: TransformEngineInput,
 ): Promise<TransformEngineOutput> {
-  const env = getServerEnv();
-  if (!env.openaiApiKey) {
-    throw new ProviderCallError('No provider key configured for vendor "openai".');
-  }
   if (!input.imageDataURL && !input.sourceText?.trim()) {
     throw new ProviderCallError("Interpretation needs an image or a source text.");
   }
 
-  const models = [env.transformModelId];
-  if (!models.includes(FALLBACK_MODEL)) {
-    models.push(FALLBACK_MODEL);
-  }
-
-  let lastError: ProviderCallError | null = null;
-  for (const model of models) {
-    const response = await fetch(ENDPOINT, {
+  const routed = await runWithModelFallback("transform", async (target) => {
+    if (target.api !== "responses") {
+      throw new ProviderCallError(`Transform cannot use API "${target.api}".`);
+    }
+    const response = await fetch(endpointFor(target), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${env.openaiApiKey}`,
+        Authorization: `Bearer ${apiKeyFor(target)}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify(requestBody(model, input)),
+      body: JSON.stringify(requestBody(target, input)),
     });
 
-    if (response.status === 429) {
-      throw new ProviderCallError(
-        "AI エンジンが混雑しています。数秒おいてから再試行してください。",
-        { rateLimited: true },
-      );
-    }
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 500);
-      lastError = new ProviderCallError(`Provider HTTP ${response.status}: ${detail}`);
-      // Unknown/rejected model id: try the fallback model once.
-      if ((response.status === 400 || response.status === 404) && model !== models[models.length - 1]) {
-        continue;
-      }
-      throw lastError;
+      throw new ProviderCallError(`Provider HTTP ${response.status}: ${detail}`, {
+        rateLimited: response.status === 429,
+      });
     }
 
     const root = (await response.json()) as {
@@ -115,25 +100,24 @@ export async function runTransformInterpretation(
 
     return {
       result: parsed as Record<string, unknown>,
-      modelVendor: "openai",
-      modelId: model,
       inputTokens: root.usage?.input_tokens ?? 0,
       outputTokens: root.usage?.output_tokens ?? 0,
-      notices: model === models[0]
-        ? []
-        : [modelFallbackNotice({
-            fromVendor: "openai",
-            fromModelId: models[0],
-            toVendor: "openai",
-            toModelId: model,
-          })],
     };
-  }
+  });
 
-  throw lastError ?? new ProviderCallError("Vision interpretation failed.");
+  return {
+    result: routed.value.result,
+    modelVendor: routed.modelVendor,
+    modelId: routed.modelId,
+    modelApi: routed.api,
+    fallbackUsed: routed.fallbackUsed,
+    inputTokens: routed.value.inputTokens,
+    outputTokens: routed.value.outputTokens,
+    notices: routed.notices,
+  };
 }
 
-function requestBody(model: string, input: TransformEngineInput): Record<string, unknown> {
+function requestBody(target: AIModelTarget, input: TransformEngineInput): Record<string, unknown> {
   const instruction = input.instruction?.trim();
   const isText = Boolean(input.sourceText?.trim());
   const taskParts: string[] = [];
@@ -159,7 +143,9 @@ function requestBody(model: string, input: TransformEngineInput): Record<string,
   }
 
   return {
-    model,
+    model: target.modelId,
+    store: false,
+    reasoning: { effort: "none" },
     max_output_tokens: 2048,
     input: [
       {

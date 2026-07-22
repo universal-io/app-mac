@@ -1,33 +1,21 @@
 // Whisper proxy for the production AI gateway, including its hallucination
 // filter.
 //
-// Availability principle (owner decision, 2026-07-03): a provider-side
-// failure (outage, provider rate limit, misconfigured operator quota) must
-// never take the feature away from the user. Groq is the fast primary; on
-// any provider error the request falls back to OpenAI whisper-1 and returns
-// a user-visible operational notice
-// (a different vendor, so a Groq outage cannot take both down). Only the
-// user's own plan quota may stop a request — that check lives in the route.
-
-import { getServerEnv } from "@/lib/server/env";
-import { ProviderCallError } from "@/lib/server/review-engine";
 import {
-  modelFallbackNotice,
-  type OperationalNotice,
-} from "@/lib/server/operational-notice";
-
-type TranscriptionEngine = {
-  vendor: string;
-  modelId: string;
-  endpoint: string;
-  apiKey: string | null;
-  timeoutMs: number;
-};
+  apiKeyFor,
+  endpointFor,
+  ProviderCallError,
+  runWithModelFallback,
+  type AIModelTarget,
+} from "@/lib/server/ai-routing";
+import type { OperationalNotice } from "@/lib/server/operational-notice";
 
 export type TranscriptionOutput = {
   text: string;
   modelVendor: string;
   modelId: string;
+  modelApi: string;
+  fallbackUsed: boolean;
   durationSeconds: number;
   notices: OperationalNotice[];
 };
@@ -40,81 +28,39 @@ type WhisperSegment = {
 };
 
 export async function runTranscription(audio: File): Promise<TranscriptionOutput> {
-  const env = getServerEnv();
-  // Hold-to-talk clips are seconds long; a primary that stalls counts as
-  // down, so it gets a tight budget and the fallback a generous one.
-  const engines: TranscriptionEngine[] = [
-    {
-      vendor: "groq",
-      modelId: "whisper-large-v3",
-      endpoint: "https://api.groq.com/openai/v1/audio/transcriptions",
-      apiKey: env.groqApiKey,
-      timeoutMs: 15_000,
-    },
-    {
-      vendor: "openai",
-      modelId: "whisper-1",
-      endpoint: "https://api.openai.com/v1/audio/transcriptions",
-      apiKey: env.openaiApiKey,
-      timeoutMs: 60_000,
-    },
-  ];
-
-  if (!engines.some((engine) => Boolean(engine.apiKey))) {
-    throw new ProviderCallError("No provider key configured for transcription.");
-  }
-
-  let lastError: ProviderCallError | null = null;
-  const unavailable: TranscriptionEngine[] = [];
-  for (const engine of engines) {
-    if (!engine.apiKey) {
-      unavailable.push(engine);
-      continue;
-    }
-    try {
-      const output = await transcribeWith(engine, audio);
-      return {
-        ...output,
-        notices: unavailable.map((failed) => modelFallbackNotice({
-          fromVendor: failed.vendor,
-          fromModelId: failed.modelId,
-          toVendor: engine.vendor,
-          toModelId: engine.modelId,
-        })),
-      };
-    } catch (error) {
-      lastError =
-        error instanceof ProviderCallError
-          ? error
-          : new ProviderCallError(String(error));
-      console.warn(
-        `[transcribe] ${engine.vendor}/${engine.modelId} failed, ` +
-          `${engine === engines[engines.length - 1] ? "no fallback left" : "falling back"}:`,
-        lastError.message,
-      );
-      unavailable.push(engine);
-    }
-  }
-
-  throw lastError ?? new ProviderCallError("Transcription failed.");
+  const routed = await runWithModelFallback("transcribe", (target) =>
+    transcribeWith(target, audio)
+  );
+  return {
+    text: routed.value.text,
+    modelVendor: routed.modelVendor,
+    modelId: routed.modelId,
+    modelApi: routed.api,
+    fallbackUsed: routed.fallbackUsed,
+    durationSeconds: routed.value.durationSeconds,
+    notices: routed.notices,
+  };
 }
 
 async function transcribeWith(
-  engine: TranscriptionEngine,
+  target: AIModelTarget,
   audio: File,
-): Promise<TranscriptionOutput> {
+): Promise<{ text: string; durationSeconds: number }> {
+  if (target.api !== "transcriptions") {
+    throw new ProviderCallError(`Transcription cannot use API "${target.api}".`);
+  }
   const form = new FormData();
-  form.append("model", engine.modelId);
+  form.append("model", target.modelId);
   form.append("temperature", "0");
   // verbose_json gives per-segment confidence used to filter hallucinations.
   form.append("response_format", "verbose_json");
   form.append("file", audio, audio.name || "audio.m4a");
 
-  const response = await fetch(engine.endpoint, {
+  const response = await fetch(endpointFor(target), {
     method: "POST",
-    headers: { Authorization: `Bearer ${engine.apiKey}` },
+    headers: { Authorization: `Bearer ${apiKeyFor(target)}` },
     body: form,
-    signal: AbortSignal.timeout(engine.timeoutMs),
+    signal: AbortSignal.timeout(target.vendor === "groq" ? 15_000 : 60_000),
   });
 
   if (!response.ok) {
@@ -147,10 +93,7 @@ async function transcribeWith(
 
   return {
     text,
-    modelVendor: engine.vendor,
-    modelId: engine.modelId,
     durationSeconds: typeof root.duration === "number" ? root.duration : 0,
-    notices: [],
   };
 }
 

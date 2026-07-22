@@ -194,7 +194,7 @@ final class AuthViewModel: ObservableObject {
     }
 
     /// Refreshes the account summary (and the quota bundled with it) from the
-    /// gateway. Called when the my page appears so usage is always current.
+    /// gateway. Called when the account page appears so usage is always current.
     /// Keeps the existing summary while loading and on failure (no flicker).
     func refreshAccount() async {
         guard hasSession else { return }

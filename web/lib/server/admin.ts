@@ -3,9 +3,9 @@
 // who is an admin; v1 promotes this to bs_profiles.role.
 
 import { getServerEnv } from "@/lib/server/env";
+import { AI_MODEL_ROUTES } from "@/lib/server/ai-routing";
 import { authenticate, GatewayError } from "@/lib/server/gateway";
 import { getPlanConfig } from "@/lib/server/plans";
-import { VISION_MODEL_ID } from "@/lib/server/vision-engine";
 
 /**
  * Verifies the Supabase JWT (reusing the gateway's authenticate helper) and
@@ -25,18 +25,16 @@ export async function assertAdmin(request: Request): Promise<{ email: string }> 
 }
 
 // --- Effective model configuration (admin-dashboard-plan §3-a) -------------
-// Shows what the gateway ACTUALLY uses per operation, and whether each value
-// comes from an env override or the code default.
-
-export type ConfigSource = "env" | "default";
+// Shows the primary and secondary targets from the same routing SSOT used by
+// every engine.
 
 export type ModelConfigRow = {
   /** Operation label, e.g. "review（既定）". */
   label: string;
+  priority: "primary" | "secondary";
   vendor: string;
-  vendorSource: ConfigSource;
   modelId: string;
-  modelSource: ConfigSource;
+  api: string;
 };
 
 export type EffectiveConfig = {
@@ -49,36 +47,28 @@ export type EffectiveConfig = {
   apiKeys: { groq: boolean; openai: boolean; gemini: boolean; anthropic: boolean };
 };
 
-/** Resolves the same way the engines do (getServerEnv for models, the plan
- * catalog for the free quota) and tags each value with its origin. Never
- * includes secret values, only booleans for keys. */
+/** Reads the same routing object as the engines. Never includes secret values,
+ * only booleans for key presence. */
 export async function effectiveConfig(): Promise<EffectiveConfig> {
   const env = getServerEnv();
   const freePlan = await getPlanConfig("free");
   return {
-    models: [
+    models: Object.values(AI_MODEL_ROUTES).flatMap((route) => [
       {
-        label: "review（既定）",
-        vendor: env.defaultModelVendor,
-        vendorSource: sourceOf("BOMB_SQUAD_DEFAULT_MODEL_VENDOR"),
-        modelId: env.defaultModelId,
-        modelSource: sourceOf("BOMB_SQUAD_DEFAULT_MODEL_ID"),
+        label: route.label,
+        priority: "primary" as const,
+        vendor: route.primary.vendor,
+        modelId: route.primary.modelId,
+        api: route.primary.api,
       },
       {
-        label: "transform",
-        vendor: "openai",
-        vendorSource: "default",
-        modelId: env.transformModelId,
-        modelSource: sourceOf("BOMB_SQUAD_TRANSFORM_MODEL_ID"),
+        label: route.label,
+        priority: "secondary" as const,
+        vendor: route.secondary.vendor,
+        modelId: route.secondary.modelId,
+        api: route.secondary.api,
       },
-      {
-        label: "vision",
-        vendor: "openai",
-        vendorSource: "default",
-        modelId: VISION_MODEL_ID,
-        modelSource: "default",
-      },
-    ],
+    ]),
     freeMonthlyLimit: {
       value: freePlan.monthlyUsageLimit,
       source: "plan",
@@ -90,10 +80,4 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
       anthropic: Boolean(env.anthropicApiKey),
     },
   };
-}
-
-/** "env" when the variable is set to a non-empty value (same normalization
- * as getServerEnv), "default" otherwise. */
-function sourceOf(name: string): ConfigSource {
-  return process.env[name]?.trim() ? "env" : "default";
 }

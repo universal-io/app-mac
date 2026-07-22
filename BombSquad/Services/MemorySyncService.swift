@@ -13,9 +13,8 @@ extension Notification.Name {
 /// (last-write-wins on `updated_at`, docs/api-contract.md), which is then
 /// applied back locally via `MemoryStore.applyServerState`.
 ///
-/// BYOK / signed-out users have no gateway configured (`GatewayAPI.make()`
-/// returns nil), so sync is simply a no-op for them — memory stays
-/// local-only, same as before M3-B.
+/// Signed-out users cannot create an authenticated Gateway client, so sync is
+/// a no-op and memory stays local-only.
 actor MemorySyncService {
     static let shared = MemorySyncService()
 

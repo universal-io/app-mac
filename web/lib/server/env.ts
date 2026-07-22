@@ -9,9 +9,6 @@ export type ServerEnv = {
   geminiApiKey: string | null;
   openaiApiKey: string | null;
   anthropicApiKey: string | null;
-  defaultModelVendor: string;
-  defaultModelId: string;
-  transformModelId: string;
   /** Lowercased emails allowed into /admin (docs/admin-dashboard-plan.md §2). */
   adminEmails: string[];
 };
@@ -39,12 +36,6 @@ export function getServerEnv(): ServerEnv {
     geminiApiKey: normalize(process.env.GEMINI_API_KEY),
     openaiApiKey: normalize(process.env.OPENAI_API_KEY),
     anthropicApiKey: normalize(process.env.ANTHROPIC_API_KEY),
-    defaultModelVendor:
-      normalize(process.env.BOMB_SQUAD_DEFAULT_MODEL_VENDOR) ?? "groq",
-    defaultModelId:
-      normalize(process.env.BOMB_SQUAD_DEFAULT_MODEL_ID) ?? "openai/gpt-oss-120b",
-    transformModelId:
-      normalize(process.env.BOMB_SQUAD_TRANSFORM_MODEL_ID) ?? "gpt-5.4-mini",
     // Comma-separated allowlist for the admin console (v0 authorization;
     // admin-dashboard-plan §2). Empty list means nobody is an admin.
     adminEmails: parseEmailList(process.env.ADMIN_EMAILS),

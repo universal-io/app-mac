@@ -2,6 +2,32 @@
 
 Universal I/O は、入力・受信・画面理解をひとつの操作体系にまとめる macOS アプリです。
 
+## 重要: 本番AIモデルとfallback
+
+全AIモデルの一次・二次ルートは
+[`web/lib/server/ai-routing.ts`](web/lib/server/ai-routing.ts) が唯一の正本です。
+個別のengine、macOSクライアント、環境変数へモデル名を分散させません。
+
+| 機能 | 一次モデル | 二次モデル |
+|---|---|---|
+| Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
+| Transform（選択テキストの解説） | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
+| Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
+| 音声入力 | Groq `whisper-large-v3` | OpenAI `whisper-1` |
+| メモリ抽出 | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
+
+共通規則:
+
+- 一次モデルが失敗した時だけ二次モデルを1回実行する。三番目の経路は持たない。
+- 二次モデルで成功した場合は、全routeが `fallback_used: true` と同じ形式のnoticeを返す。
+  macOSは「一次へアクセスできなかったため、二次で処理した」と必ず表示する。
+- 両方が失敗した場合は、全機能で同じ明示的エラーを返す。
+- macOSはモデルを選ばず、認証済みの本番Gatewayだけを呼ぶ。
+
+メモリは、ユーザーが実際に送った文章とレビュー案との差分、またはユーザー自身が提供した
+過去文例から、文体・敬語・相手との距離感だけを抽出する機能です。保存内容はユーザーが閲覧・
+編集でき、次回のComposeレビューとTransformへ任意の参考コンテクストとして注入されます。
+
 ## 現行機能
 
 - 入力パネル: 文章の作成、音声入力、レビュー、対象アプリへの送信
@@ -23,8 +49,9 @@ macOS アプリは AI プロバイダーを直接呼びません。認証済み�
 | Vision / Copilot | `VisionSession` / `GatewayVisionClient` | `POST /api/ai/vision` |
 | メモリ抽出 | `MemoryDistiller` | `POST /api/ai/memory/distill` |
 
-ローカル Gateway、BYOK、旧 Navigator、shadow、runtime feature flag、自動フォールバックは
-実行経路に存在しません。別方式を試す場合は短命ブランチで行い、終了時に削除します。
+ローカルGateway、BYOK、旧Navigator endpoint、shadow、runtime feature flag、macOS側の
+代替経路は存在しません。モデルfallbackは本番Gateway内の共通ルーターだけが行います。
+別方式を試す場合は短命ブランチで行い、終了時に削除します。
 
 ## 操作
 

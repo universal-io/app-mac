@@ -11,8 +11,7 @@ enum ReviewStreamEvent {
 /// `ReviewProvider` backed by the product gateway (docs/api-contract.md).
 /// This is the production path: no LLM provider keys on the device, the
 /// server owns prompts/model routing, and usage is metered per tenant.
-/// The BYOK clients remain as a developer fallback when no gateway URL is
-/// configured. Transport/SSE/error plumbing lives in `GatewayClient`.
+/// Transport/SSE/error plumbing lives in `GatewayClient`.
 struct GatewayReviewClient: ReviewProvider {
     private let client: GatewayClient
 

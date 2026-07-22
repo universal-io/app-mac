@@ -2,14 +2,17 @@
 // and post-deploy distillation. Server-side port of the macOS MemoryDistiller
 // and PersonaPrompt (BombSquad/Services/MemoryDistiller.swift,
 // BombSquad/Resources/PersonaPrompt.swift); keep the Japanese prompt text in
-// sync with the Swift originals until the BYOK fallback path is removed.
+// sync with the Swift originals.
 
-import { getServerEnv } from "@/lib/server/env";
-import { ProviderCallError } from "@/lib/server/review-engine";
+import {
+  apiKeyFor,
+  endpointFor,
+  ProviderCallError,
+  runWithModelFallback,
+  type AIModelTarget,
+} from "@/lib/server/ai-routing";
+import type { OperationalNotice } from "@/lib/server/operational-notice";
 import type { SituationalContextPayload } from "@/lib/server/prompts";
-
-const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL_ID = "openai/gpt-oss-120b";
 
 export const BOOTSTRAP_SYSTEM = `あなたは文体プロファイラーです。ユーザーが過去に実際に送ったメッセージのサンプルを受け取り、
 そのユーザーの「スタイルプロファイル」を Markdown で作成します。
@@ -84,25 +87,29 @@ export type MemoryEngineOutput<T> = {
   result: T;
   modelVendor: string;
   modelId: string;
+  modelApi: string;
+  fallbackUsed: boolean;
   inputTokens: number;
   outputTokens: number;
+  notices: OperationalNotice[];
 };
 
 export async function runPersonaBootstrap(
   samples: string,
 ): Promise<MemoryEngineOutput<{ persona_md: string }>> {
   const user = `以下はユーザーが過去に実際に送ったメッセージのサンプルです。スタイルプロファイルを作成してください。\n\n${samples}`;
-  const { content, inputTokens, outputTokens } = await chat(BOOTSTRAP_SYSTEM, user, false);
-  const personaMd = content.trim();
-  if (!personaMd) {
-    throw new ProviderCallError("Provider returned an empty persona card.");
-  }
+  const routed = await routedChat(BOOTSTRAP_SYSTEM, user, false);
+  const personaMd = routed.value.content.trim();
+  if (!personaMd) throw new ProviderCallError("Provider returned an empty persona card.");
   return {
     result: { persona_md: personaMd },
-    modelVendor: "groq",
-    modelId: MODEL_ID,
-    inputTokens,
-    outputTokens,
+    modelVendor: routed.modelVendor,
+    modelId: routed.modelId,
+    modelApi: routed.api,
+    fallbackUsed: routed.fallbackUsed,
+    inputTokens: routed.value.inputTokens,
+    outputTokens: routed.value.outputTokens,
+    notices: routed.notices,
   };
 }
 
@@ -110,9 +117,9 @@ export async function runDistillation(
   observation: DistillObservation,
 ): Promise<MemoryEngineOutput<DistillNotes>> {
   const user = distillUser(observation);
-  const { content, inputTokens, outputTokens } = await chat(DISTILL_SYSTEM, user, true);
+  const routed = await routedChat(DISTILL_SYSTEM, user, true);
 
-  const json = extractJSON(content);
+  const json = extractJSON(routed.value.content);
   if (!json) {
     throw new ProviderCallError("Provider response contained no JSON object.");
   }
@@ -129,10 +136,13 @@ export async function runDistillation(
       relationship_subject: nonEmptyString(root.relationship_subject),
       relationship_note: nonEmptyString(root.relationship_note),
     },
-    modelVendor: "groq",
-    modelId: MODEL_ID,
-    inputTokens,
-    outputTokens,
+    modelVendor: routed.modelVendor,
+    modelId: routed.modelId,
+    modelApi: routed.api,
+    fallbackUsed: routed.fallbackUsed,
+    inputTokens: routed.value.inputTokens,
+    outputTokens: routed.value.outputTokens,
+    notices: routed.notices,
   };
 }
 
@@ -155,47 +165,58 @@ function distillUser(observation: DistillObservation): string {
   return sections.join("\n\n");
 }
 
+function routedChat(
+  system: string,
+  user: string,
+  jsonMode: boolean,
+){
+  return runWithModelFallback("memory", (target) =>
+    chat(target, system, user, jsonMode)
+  );
+}
+
 async function chat(
+  target: AIModelTarget,
   system: string,
   user: string,
   jsonMode: boolean,
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
-  const env = getServerEnv();
-  if (!env.groqApiKey) {
-    throw new ProviderCallError('No provider key configured for vendor "groq".');
+  if (target.api !== "chat_completions") {
+    throw new ProviderCallError(`Memory cannot use API "${target.api}".`);
   }
 
   const body: Record<string, unknown> = {
-    model: MODEL_ID,
-    max_tokens: 2048,
-    reasoning_effort: "low",
+    model: target.modelId,
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
     ],
   };
+  if (target.vendor === "openai") {
+    body.max_completion_tokens = 2048;
+    body.reasoning_effort = "none";
+  } else {
+    body.max_tokens = 2048;
+    body.reasoning_effort = "low";
+  }
   if (jsonMode) {
     body.response_format = { type: "json_object" };
   }
 
-  const response = await fetch(ENDPOINT, {
+  const response = await fetch(endpointFor(target), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.groqApiKey}`,
+      Authorization: `Bearer ${apiKeyFor(target)}`,
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
   });
 
-  if (response.status === 429) {
-    throw new ProviderCallError(
-      "AI エンジンが混雑しています。数秒おいてから再試行してください。",
-      { rateLimited: true },
-    );
-  }
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 500);
-    throw new ProviderCallError(`Provider HTTP ${response.status}: ${detail}`);
+    throw new ProviderCallError(`Provider HTTP ${response.status}: ${detail}`, {
+      rateLimited: response.status === 429,
+    });
   }
 
   const root = (await response.json()) as {

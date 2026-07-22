@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The account / "my page" section of the management window. This is the single
+/// The account section of the management window. This is the single
 /// place for sign in, sign up, and sign out: first-time use creates a free
 /// account, so login and registration are the same flow here.
 struct AccountView: View {
@@ -29,11 +29,11 @@ struct AccountView: View {
         .navigationTitle("アカウント")
     }
 
-    // MARK: - Signed in (my page)
+    // MARK: - Signed in
 
     private var signedIn: some View {
         VStack(alignment: .leading, spacing: 20) {
-            header(title: "マイページ", subtitle: viewModel.signedInEmail)
+            header(title: "アカウント", subtitle: viewModel.signedInEmail)
 
             GroupBox {
                 VStack(spacing: 0) {
@@ -67,7 +67,7 @@ struct AccountView: View {
             .controlSize(.large)
             .disabled(viewModel.isBusy)
         }
-        // Refresh summary + quota from the gateway every time the my page is
+        // Refresh summary + quota from the gateway every time the account page is
         // shown; existing values stay on screen while the request runs.
         .task {
             await viewModel.refreshAccount()

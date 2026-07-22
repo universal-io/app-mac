@@ -1,7 +1,7 @@
 import Foundation
 
 /// Latest quota envelope returned by the gateway (docs/api-contract.md).
-/// Updated by gateway clients on each successful review; shown on my page.
+/// Updated by gateway clients on each successful review; shown on the account page.
 struct GatewayQuota: Codable, Equatable {
     let plan: String
     let used: Int

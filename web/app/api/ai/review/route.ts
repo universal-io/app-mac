@@ -14,12 +14,15 @@ import {
   type QuotaInfo,
 } from "@/lib/server/gateway";
 import {
-  ProviderCallError,
   runReview,
   runReviewStream,
   type ReviewEngineOutput,
   type ReviewResultPayload,
 } from "@/lib/server/review-engine";
+import {
+  aiModelFailureContract,
+  ProviderCallError,
+} from "@/lib/server/ai-routing";
 import type {
   MemoryPayload,
   OutputLanguageCode,
@@ -41,7 +44,6 @@ type ReviewRequestBody = {
   };
   preferences?: {
     output_language?: string;
-    model_preference?: { vendor?: string; model_id?: string };
   };
   client?: {
     platform?: string;
@@ -103,8 +105,6 @@ export async function POST(request: Request): Promise<Response> {
       language: language as OutputLanguageCode,
       context: body.input?.context,
       memory: body.input?.memory,
-      preferredVendor: body.preferences?.model_preference?.vendor,
-      preferredModelId: body.preferences?.model_preference?.model_id,
     };
 
     // --- Streaming path (SSE) ---
@@ -128,24 +128,19 @@ export async function POST(request: Request): Promise<Response> {
     try {
       engineOutput = await runReview(engineInput);
     } catch (error) {
-      // User-facing message: pass the rate-limit guidance through, keep raw
-      // upstream details in the server log only.
-      const rateLimited = error instanceof ProviderCallError && error.rateLimited;
-      const message = rateLimited
-        ? (error as ProviderCallError).message
-        : "AI エンジン側で一時的なエラーが発生しました。少し待ってから再試行してください。";
-      const detail = error instanceof ProviderCallError ? error.message : String(error);
-      console.error(`[/api/ai/review] provider error (request ${requestId}):`, detail);
+      // Keep raw upstream details in the server log only.
+      const failure = aiModelFailureContract(error);
+      console.error(`[/api/ai/review] provider error (request ${requestId}):`, failure.detail);
       await recordUsage(tenantId, userId, {
         operation: "review",
         unitType: "review",
         requestId,
         status: "error",
-        errorCode: "PROVIDER_ERROR",
+        errorCode: failure.code,
         latencyMs: Date.now() - started,
         metadata: usageMetadata(body),
       });
-      return errorResponse(502, "PROVIDER_ERROR", message, requestId);
+      return errorResponse(failure.status, failure.code, failure.message, requestId);
     }
     const latencyMs = Date.now() - started;
 
@@ -173,6 +168,8 @@ export async function POST(request: Request): Promise<Response> {
         output_language: language,
         model_vendor: engineOutput.modelVendor,
         model_id: engineOutput.modelId,
+        api: engineOutput.modelApi,
+        fallback_used: engineOutput.fallbackUsed,
         latency_ms: latencyMs,
         notices: engineOutput.notices,
       },
@@ -253,29 +250,30 @@ function streamingResponse(input: StreamingResponseInput): Response {
             output_language: input.language,
             model_vendor: finalOutput.modelVendor,
             model_id: finalOutput.modelId,
+            api: finalOutput.modelApi,
+            fallback_used: finalOutput.fallbackUsed,
             latency_ms: latencyMs,
             notices: finalOutput.notices,
           },
           quota: input.quota(input.usedBefore + 1),
         });
       } catch (error) {
-        const rateLimited = error instanceof ProviderCallError && error.rateLimited;
-        const message = rateLimited
-          ? (error as ProviderCallError).message
-          : "AI エンジン側で一時的なエラーが発生しました。少し待ってから再試行してください。";
-        const detail = error instanceof ProviderCallError ? error.message : String(error);
-        console.error(`[/api/ai/review] stream provider error (request ${input.requestId}):`, detail);
+        const failure = aiModelFailureContract(error);
+        console.error(
+          `[/api/ai/review] stream provider error (request ${input.requestId}):`,
+          failure.detail,
+        );
         await recordUsage(input.tenantId, input.userId, {
           operation: "review",
           unitType: "review",
           requestId: input.requestId,
           status: "error",
-          errorCode: "PROVIDER_ERROR",
+          errorCode: failure.code,
           latencyMs: Date.now() - started,
           metadata: input.metadata,
         });
         send("error", {
-          error: { code: "PROVIDER_ERROR", message },
+          error: { code: failure.code, message: failure.message },
           request_id: input.requestId,
         });
       } finally {

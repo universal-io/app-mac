@@ -112,30 +112,21 @@ function AdminBody({ data }: { data: Overview }) {
 
 function EffectiveConfigSection({ config }: { config: EffectiveConfig }) {
   return (
-    <Section title="実効モデル設定" note="実際に使われる値。env 上書き中は強調表示。">
+    <Section title="実効モデル設定" note="全機能の一次・二次モデル。GatewayのルーティングSSOTを表示。">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <Row header cells={["操作", "ベンダー", "モデルID", "出所"]} />
+          <Row header cells={["操作", "順序", "ベンダー", "モデルID", "API"]} />
         </thead>
         <tbody>
-          {config.models.map((m) => {
-            const overridden = m.vendorSource === "env" || m.modelSource === "env";
-            return (
-              <tr
-                key={m.label}
-                className={overridden ? "bg-iris/8" : undefined}
-              >
-                <Cell>{m.label}</Cell>
-                <Cell mono>{m.vendor}</Cell>
-                <Cell mono>{m.modelId}</Cell>
-                <Cell>
-                  <span className={overridden ? "font-semibold text-iris" : "text-slate"}>
-                    {overridden ? "env 上書き" : "コード既定"}
-                  </span>
-                </Cell>
-              </tr>
-            );
-          })}
+          {config.models.map((m) => (
+            <tr key={`${m.label}-${m.priority}`}>
+              <Cell>{m.label}</Cell>
+              <Cell>{m.priority === "primary" ? "一次" : "二次"}</Cell>
+              <Cell mono>{m.vendor}</Cell>
+              <Cell mono>{m.modelId}</Cell>
+              <Cell mono>{m.api}</Cell>
+            </tr>
+          ))}
         </tbody>
       </table>
 

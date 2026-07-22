@@ -6,10 +6,19 @@ import SwiftUI
 /// trust that lets the app read screens and messages.
 struct MemoryView: View {
     @StateObject private var viewModel = MemoryViewModel()
+    @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
     @AppStorage(AppSettings.isMemoryEnabledKey) private var isMemoryEnabled = true
 
     var body: some View {
         Form {
+            if let notice = noticeCenter.current {
+                Section {
+                    OperationalNoticeBanner(
+                        message: notice.message,
+                        onDismiss: noticeCenter.dismiss
+                    )
+                }
+            }
             if !isMemoryEnabled {
                 Section {
                     Label("メモリは現在オフです。カードの閲覧・編集はできますが、レビューへの反映と学習は行われません。", systemImage: "brain")
@@ -235,6 +244,7 @@ final class MemoryViewModel: ObservableObject {
     }
 
     func generatePersona() async {
+        OperationalNoticeCenter.shared.beginOperation()
         errorMessage = nil
         isGenerating = true
         defer { isGenerating = false }

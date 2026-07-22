@@ -1,9 +1,12 @@
-import { getServerEnv } from "@/lib/server/env";
-import { ProviderCallError } from "@/lib/server/review-engine";
+import {
+  apiKeyFor,
+  endpointFor,
+  ProviderCallError,
+  runWithModelFallback,
+  type AIModelTarget,
+} from "@/lib/server/ai-routing";
+import type { OperationalNotice } from "@/lib/server/operational-notice";
 
-const RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
-
-export const VISION_MODEL_ID = "gpt-5.6-luna";
 export const VISION_REASONING_EFFORT = "none";
 export const VISION_IMAGE_DETAIL = "original";
 export const VISION_MAX_OUTPUT_TOKENS = 25_000;
@@ -42,42 +45,60 @@ export type VisionEngineInput = {
 export type VisionEngineOutput = {
   result: VisionResult;
   route: "snapshot_vlm";
-  modelVendor: "openai";
-  modelId: typeof VISION_MODEL_ID;
+  modelVendor: string;
+  modelId: string;
+  modelApi: string;
+  fallbackUsed: boolean;
   inputTokens: number;
   outputTokens: number;
+  notices: OperationalNotice[];
 };
 
 export async function runVision(
   input: VisionEngineInput,
 ): Promise<VisionEngineOutput> {
-  const env = getServerEnv();
-  if (!env.openaiApiKey) {
-    throw new ProviderCallError("OPENAI_API_KEY is required for Vision.");
-  }
   if (!input.imageDataURL) {
     throw new ProviderCallError("Vision requires an image.");
   }
 
-  const response = await fetch(RESPONSES_ENDPOINT, {
+  const routed = await runWithModelFallback("vision", (target) =>
+    callVisionModel(input, target)
+  );
+  return {
+    result: routed.value.result,
+    route: "snapshot_vlm",
+    modelVendor: routed.modelVendor,
+    modelId: routed.modelId,
+    modelApi: routed.api,
+    fallbackUsed: routed.fallbackUsed,
+    inputTokens: routed.value.inputTokens,
+    outputTokens: routed.value.outputTokens,
+    notices: routed.notices,
+  };
+}
+
+async function callVisionModel(
+  input: VisionEngineInput,
+  target: AIModelTarget,
+): Promise<{ result: VisionResult; inputTokens: number; outputTokens: number }> {
+  if (target.api !== "responses") {
+    throw new ProviderCallError(`Vision cannot use API "${target.api}".`);
+  }
+
+  const response = await fetch(endpointFor(target), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${env.openaiApiKey}`,
+      Authorization: `Bearer ${apiKeyFor(target)}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify(requestBody(input)),
+    body: JSON.stringify(requestBody(input, target)),
   });
 
-  if (response.status === 429) {
-    throw new ProviderCallError(
-      "GPT-5.6 Luna is rate limited. Vision does not fall back to another model.",
-      { rateLimited: true },
-    );
-  }
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 500);
     throw new ProviderCallError(
-      `GPT-5.6 Luna Responses API failed with HTTP ${response.status}: ${detail}`,
+      `${target.vendor}/${target.modelId} failed with HTTP ${response.status}: ${detail}`,
+      { rateLimited: response.status === 429 },
     );
   }
 
@@ -93,40 +114,37 @@ export async function runVision(
   };
   if (root.status === "incomplete") {
     throw new ProviderCallError(
-      `GPT-5.6 Luna returned an incomplete response: ${root.incomplete_details?.reason ?? "unknown"}`,
+      `${target.vendor}/${target.modelId} returned an incomplete response: ${root.incomplete_details?.reason ?? "unknown"}`,
     );
   }
 
-  const text = outputText(root);
+  const text = outputText(root, target);
   if (!text) {
-    throw new ProviderCallError("GPT-5.6 Luna returned no structured output.");
+    throw new ProviderCallError(`${target.vendor}/${target.modelId} returned no structured output.`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new ProviderCallError("GPT-5.6 Luna structured output was not valid JSON.");
+    throw new ProviderCallError(`${target.vendor}/${target.modelId} output was not valid JSON.`);
   }
   if (!isVisionResult(parsed)) {
-    throw new ProviderCallError("GPT-5.6 Luna output did not match the Vision schema.");
+    throw new ProviderCallError(`${target.vendor}/${target.modelId} output did not match the Vision schema.`);
   }
   const allowedIDs = new Set(input.candidates.map((candidate) => candidate.id));
   if (parsed.targetCandidateId !== null && !allowedIDs.has(parsed.targetCandidateId)) {
-    throw new ProviderCallError("GPT-5.6 Luna selected an unknown candidate ID.");
+    throw new ProviderCallError(`${target.vendor}/${target.modelId} selected an unknown candidate ID.`);
   }
 
   return {
     result: parsed,
-    route: "snapshot_vlm",
-    modelVendor: "openai",
-    modelId: VISION_MODEL_ID,
     inputTokens: root.usage?.input_tokens ?? 0,
     outputTokens: root.usage?.output_tokens ?? 0,
   };
 }
 
-function requestBody(input: VisionEngineInput): Record<string, unknown> {
+function requestBody(input: VisionEngineInput, target: AIModelTarget): Record<string, unknown> {
   const languageName = input.language === "japanese" ? "Japanese" : "English";
   const question = input.question?.trim();
   const task = input.guidance
@@ -140,7 +158,7 @@ function requestBody(input: VisionEngineInput): Record<string, unknown> {
     : "(none)";
 
   return {
-    model: VISION_MODEL_ID,
+    model: target.modelId,
     store: false,
     max_output_tokens: VISION_MAX_OUTPUT_TOKENS,
     reasoning: { effort: VISION_REASONING_EFFORT },
@@ -206,7 +224,7 @@ function outputText(root: {
     type?: string;
     content?: Array<{ type?: string; text?: string; refusal?: string }>;
   }>;
-}): string | null {
+}, target: AIModelTarget): string | null {
   if (typeof root.output_text === "string" && root.output_text.trim()) {
     return root.output_text;
   }
@@ -214,7 +232,9 @@ function outputText(root: {
     if (item.type !== "message") continue;
     for (const content of item.content ?? []) {
       if (content.type === "refusal" && content.refusal) {
-        throw new ProviderCallError(`GPT-5.6 Luna refused the request: ${content.refusal}`);
+        throw new ProviderCallError(
+          `${target.vendor}/${target.modelId} refused the request: ${content.refusal}`,
+        );
       }
       if (content.type === "output_text" && content.text?.trim()) {
         return content.text;

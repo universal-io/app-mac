@@ -67,6 +67,12 @@ enum MemoryDistiller {
             }
         } catch {
             NSLog("BombSquad memory distillation skipped: \(error.localizedDescription)")
+            await MainActor.run {
+                OperationalNoticeCenter.shared.publish(
+                    code: "MODEL_ROUTE_FAILED",
+                    message: error.localizedDescription
+                )
+            }
         }
     }
 

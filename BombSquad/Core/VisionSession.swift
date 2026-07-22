@@ -201,6 +201,7 @@ final class VisionSession: ObservableObject {
 
     private func run(question: String?, priorTurns: [VisionTurn]) {
         requestTask?.cancel()
+        OperationalNoticeCenter.shared.beginOperation()
         guard let client else {
             errorMessage = "画面読み取りサービスを利用できません。ログインと接続設定を確認してください。"
             return
@@ -279,6 +280,7 @@ final class VisionSession: ObservableObject {
     private func scheduleCopilotProgressCheck(after delay: UInt64, waitForChange: Bool) {
         guard isCopilotActive, !isCopilotChecking,
               copilotState != .complete, copilotState != .stepLimit else { return }
+        OperationalNoticeCenter.shared.beginOperation()
         copilotProgressTask?.cancel()
         isCopilotChecking = true
         copilotState = .waitingForChange

@@ -1,11 +1,8 @@
-// These operational notices are developer-facing diagnostics. Owner decision
-// 2026-07-15: they must be hidden or gated behind a developer setting before
-// public release; end users must never see them.
+// User-visible recovery notices returned by every AI route. A fallback must
+// never look like an ordinary clean success.
 export type OperationalNotice = {
   severity: "warning";
-  code:
-    | "MODEL_FALLBACK"
-    | "PROVIDER_RETRY";
+  code: "MODEL_FALLBACK";
   message: string;
 };
 
@@ -21,16 +18,6 @@ export function modelFallbackNotice(args: {
     message:
       `${displayRoute(args.fromVendor, args.fromModelId)} にアクセスできなかったため、` +
       `${displayRoute(args.toVendor, args.toModelId)} で処理しました。`,
-  };
-}
-
-export function providerRetryNotice(vendor: string, modelId: string): OperationalNotice {
-  return {
-    severity: "warning",
-    code: "PROVIDER_RETRY",
-    message:
-      `${displayRoute(vendor, modelId)} で一時的なエラーが発生しましたが、` +
-      "再試行して処理を完了しました。",
   };
 }
 

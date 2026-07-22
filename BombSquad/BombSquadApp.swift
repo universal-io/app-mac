@@ -33,7 +33,7 @@ struct BombSquadApp: App {
             }
             Divider()
 
-            Button(auth.hasSession ? "アカウント / マイページ…" : "ログイン / 新規登録…") {
+            Button(auth.hasSession ? "アカウント…" : "ログイン / 新規登録…") {
                 openManagement(.account)
             }
             Button("設定…") { openManagement(.settings) }

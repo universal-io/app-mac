@@ -1,13 +1,15 @@
 # Universal I/O Gateway API契約
 
-最終更新: 2026-07-18 ／ ステータス: 現行
+最終更新: 2026-07-22 ／ ステータス: 現行
 
 ## 共通
 
 - Base URL: `https://api.universal-io.com/api`
 - 認証: `Authorization: Bearer <Supabase access token>`
 - Content-Type: `application/json`（transcribeのみmultipart）
-- macOSクライアントにローカルGateway、BYOK、別経路への自動フォールバックはない。
+- macOSクライアントにローカルGateway、BYOK、別endpointへのfallbackはない。
+- Gateway内のモデル順序は `web/lib/server/ai-routing.ts` が唯一の正本。全AI機能が一次・二次を
+  1つずつ持ち、一次失敗時だけ二次を1回実行する。
 - `request_id` は全AIリクエストで必須。
 
 共通JSON envelope:
@@ -34,6 +36,32 @@
 主なcodeは `BAD_REQUEST`、`UNAUTHENTICATED`、`PAYMENT_REQUIRED`、
 `QUOTA_EXCEEDED`、`RATE_LIMITED`、`PROVIDER_ERROR`、`INTERNAL_ERROR`。
 
+全AI成功応答の `meta` は次のモデル情報を持つ。
+
+```json
+{
+  "model_vendor": "openai",
+  "model_id": "gpt-5.6-luna",
+  "api": "responses",
+  "fallback_used": false,
+  "notices": []
+}
+```
+
+二次モデルで成功した場合は `fallback_used: true` とし、`notices` に必ず次を返す。
+
+```json
+{
+  "severity": "warning",
+  "code": "MODEL_FALLBACK",
+  "message": "一次モデルにアクセスできなかったため、二次モデルで処理しました。"
+}
+```
+
+macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合は `PROVIDER_ERROR` と共通文言
+「一次モデルと二次モデルの両方が応答しませんでした。少し待ってから再試行してください。」
+を返す。三番目のモデルや別endpointは試さない。
+
 ## POST /ai/review
 
 入力文章をレビューする。通常応答はSSEで、`delta`の後に最終`result`を返す。
@@ -48,7 +76,7 @@
 
 音声を文字起こしする。
 
-- multipart fields: `file`, `request_id`, `language`
+- multipart fields: `file`, `request_id`, `platform`, `app_version`（任意）
 - 実装: `web/app/api/ai/transcribe/route.ts`
 - クライアント: `GatewayTranscriber`
 
@@ -65,8 +93,8 @@
 ## POST /ai/vision
 
 固定したスクリーンショットを読み、初期説明、質問回答、次の操作、Copilot進捗を
-同一契約で返す。認知コアは1回のVLM呼び出しで、旧Navigator endpointや別モデルへの
-自動切り替えは行わない。
+同一契約で返す。1回の試行につきVLM呼び出しは1回とし、一次失敗時だけ共通ルーターが
+二次モデルを1回試す。旧Navigator endpointへは切り替えない。
 
 - `operation`: `vision`
 - `input.capture_id`: 必須
@@ -99,13 +127,14 @@
     "image_detail": "original",
     "reasoning_effort": "none",
     "fallback_used": false,
-    "latency_ms": 0
+    "latency_ms": 0,
+    "notices": []
   }
 }
 ```
 
-クライアントはcapture ID、モデル設定、`fallback_used == false`を検証し、不一致なら
-結果を採用しない。
+クライアントはcapture ID、route、画像detail、reasoning設定を検証する。モデルIDと
+`fallback_used` はGatewayのSSOTを受け入れ、fallback時はnoticeを表示する。
 
 ## POST /ai/memory/distill
 
@@ -118,7 +147,7 @@
 ## アカウント・メモリ・管理
 
 - `GET /account`
-- `GET|POST|PATCH|DELETE /memory/cards`
+- `GET|PUT /memory/cards`
 - `GET /admin/overview`
 
 各routeの入力検証と認可は `web/app/api` の現行実装を正とする。

@@ -1,7 +1,6 @@
 import Foundation
 
-/// Speech-to-text abstraction: the gateway proxy is the production path,
-/// the BYOK Groq client remains as a developer fallback.
+/// Speech-to-text abstraction implemented by the production Gateway.
 protocol Transcriber {
     func transcribe(fileURL: URL) async throws -> String
 }

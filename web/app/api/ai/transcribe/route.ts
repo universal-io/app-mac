@@ -11,7 +11,9 @@ import {
   GatewayError,
   recordUsage,
 } from "@/lib/server/gateway";
-import { ProviderCallError } from "@/lib/server/review-engine";
+import {
+  aiModelFailureContract,
+} from "@/lib/server/ai-routing";
 import { runTranscription } from "@/lib/server/transcribe-engine";
 
 // Recordings are short hold-to-talk clips; anything bigger is a client bug.
@@ -57,22 +59,18 @@ export async function POST(request: Request): Promise<Response> {
     try {
       output = await runTranscription(file);
     } catch (error) {
-      const rateLimited = error instanceof ProviderCallError && error.rateLimited;
-      const message = rateLimited
-        ? (error as ProviderCallError).message
-        : "音声の文字起こしに失敗しました。少し待ってから再試行してください。";
-      const detail = error instanceof ProviderCallError ? error.message : String(error);
-      console.error(`[/api/ai/transcribe] provider error (request ${requestId}):`, detail);
+      const failure = aiModelFailureContract(error);
+      console.error(`[/api/ai/transcribe] provider error (request ${requestId}):`, failure.detail);
       await recordUsage(tenantId, userId, {
         operation: "transcribe",
         unitType: "seconds",
         requestId,
         status: "error",
-        errorCode: "PROVIDER_ERROR",
+        errorCode: failure.code,
         latencyMs: Date.now() - started,
         metadata,
       });
-      return errorResponse(502, "PROVIDER_ERROR", message, requestId);
+      return errorResponse(failure.status, failure.code, failure.message, requestId);
     }
     const latencyMs = Date.now() - started;
 
@@ -97,6 +95,8 @@ export async function POST(request: Request): Promise<Response> {
       meta: {
         model_vendor: output.modelVendor,
         model_id: output.modelId,
+        api: output.modelApi,
+        fallback_used: output.fallbackUsed,
         duration_seconds: output.durationSeconds,
         latency_ms: latencyMs,
         notices: output.notices,

@@ -12,7 +12,9 @@ import {
   GatewayError,
   recordUsage,
 } from "@/lib/server/gateway";
-import { ProviderCallError } from "@/lib/server/review-engine";
+import {
+  aiModelFailureContract,
+} from "@/lib/server/ai-routing";
 import {
   runDistillation,
   runPersonaBootstrap,
@@ -90,22 +92,21 @@ export async function POST(request: Request): Promise<Response> {
               context: body.input?.context,
             });
     } catch (error) {
-      const rateLimited = error instanceof ProviderCallError && error.rateLimited;
-      const message = rateLimited
-        ? (error as ProviderCallError).message
-        : "プロファイル生成に失敗しました。少し待ってから再試行してください。";
-      const detail = error instanceof ProviderCallError ? error.message : String(error);
-      console.error(`[/api/ai/memory/distill] provider error (request ${requestId}):`, detail);
+      const failure = aiModelFailureContract(error);
+      console.error(
+        `[/api/ai/memory/distill] provider error (request ${requestId}):`,
+        failure.detail,
+      );
       await recordUsage(tenantId, userId, {
         operation: "memory_distill",
         unitType: "call",
         requestId,
         status: "error",
-        errorCode: "PROVIDER_ERROR",
+        errorCode: failure.code,
         latencyMs: Date.now() - started,
         metadata,
       });
-      return errorResponse(502, "PROVIDER_ERROR", message, requestId);
+      return errorResponse(failure.status, failure.code, failure.message, requestId);
     }
     const latencyMs = Date.now() - started;
 
@@ -119,7 +120,10 @@ export async function POST(request: Request): Promise<Response> {
       inputUnits: engineOutput.inputTokens,
       outputUnits: engineOutput.outputTokens,
       latencyMs,
-      metadata,
+      metadata: {
+        ...metadata,
+        operational_notice_codes: engineOutput.notices.map((notice) => notice.code),
+      },
     });
 
     return Response.json({
@@ -129,7 +133,10 @@ export async function POST(request: Request): Promise<Response> {
         operation,
         model_vendor: engineOutput.modelVendor,
         model_id: engineOutput.modelId,
+        api: engineOutput.modelApi,
+        fallback_used: engineOutput.fallbackUsed,
         latency_ms: latencyMs,
+        notices: engineOutput.notices,
       },
     });
   } catch (error) {

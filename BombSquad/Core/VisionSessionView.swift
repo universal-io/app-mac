@@ -3,14 +3,25 @@ import SwiftUI
 struct VisionRootView: View {
     @ObservedObject var session: VisionSession
     @ObservedObject private var authViewModel = AuthViewModel.shared
+    @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
 
     var body: some View {
         Group {
             if authViewModel.hasSession {
-                if session.isCopilotActive {
-                    CopilotStripView(session: session)
-                } else {
-                    VisionSessionView(session: session)
+                VStack(spacing: 0) {
+                    if let notice = noticeCenter.current {
+                        OperationalNoticeBanner(
+                            message: notice.message,
+                            onDismiss: noticeCenter.dismiss
+                        )
+                        .padding(.horizontal, 14)
+                        .padding(.top, 12)
+                    }
+                    if session.isCopilotActive {
+                        CopilotStripView(session: session)
+                    } else {
+                        VisionSessionView(session: session)
+                    }
                 }
             } else {
                 LoginRequiredView(
