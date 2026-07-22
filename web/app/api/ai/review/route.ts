@@ -128,7 +128,7 @@ export async function POST(request: Request): Promise<Response> {
     try {
       engineOutput = await runReview(engineInput);
     } catch (error) {
-      // Keep raw upstream details in the server log only.
+      // Log only the sanitized provider failure detail; upstream bodies may contain user data.
       const failure = aiModelFailureContract(error);
       console.error(`[/api/ai/review] provider error (request ${requestId}):`, failure.detail);
       await recordUsage(tenantId, userId, {
