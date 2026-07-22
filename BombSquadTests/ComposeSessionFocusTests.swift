@@ -61,13 +61,11 @@ final class ComposeSessionFocusTests: XCTestCase {
         let entry = HistoryEntry(
             id: UUID(),
             createdAt: Date(),
-            mode: .compose,
             sourceText: "以前の原文",
             finalText: "履歴から戻す文面",
             modelID: nil,
             modelName: nil,
-            outputLanguage: nil,
-            action: .sent
+            outputLanguage: nil
         )
 
         session.restoreHistoryEntry(entry)

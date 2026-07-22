@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         trace("app.didFinishLaunching")
         terminateOtherRunningCopies()
+        ScreenshotCaptureService.cleanupTemporaryCaptures()
         NSApp.setActivationPolicy(.accessory)
 
         // Start shared services before the first summon so authentication and

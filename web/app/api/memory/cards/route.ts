@@ -51,11 +51,12 @@ type MemoryCardRow = {
 };
 
 function toWireCard(row: MemoryCardRow): WireCard {
+  const isDeleted = row.deleted_at !== null;
   return {
     id: row.id,
     kind: row.kind as CardKind,
-    subject: row.subject,
-    content_md: row.content_md,
+    subject: isDeleted ? null : row.subject,
+    content_md: isDeleted ? "" : row.content_md,
     source: row.source as CardSource,
     created_at: new Date(row.created_at).getTime() / 1000,
     updated_at: new Date(row.updated_at).getTime() / 1000,
@@ -104,11 +105,12 @@ function parseIncomingCard(raw: unknown): WireCard | null {
     return null;
   }
 
+  const isDeleted = deletedAt !== undefined && deletedAt !== null;
   return {
     id,
     kind: kind as CardKind,
-    subject: subject ?? null,
-    content_md: contentMd,
+    subject: isDeleted ? null : (subject ?? null),
+    content_md: isDeleted ? "" : contentMd,
     source: source as CardSource,
     created_at: createdAt,
     updated_at: updatedAt,
@@ -213,8 +215,8 @@ export async function PUT(request: Request): Promise<Response> {
         tenant_id: tenantId,
         user_id: userId,
         kind: card.kind,
-        subject: card.subject,
-        content_md: card.content_md,
+        subject: card.deleted_at !== null ? null : card.subject,
+        content_md: card.deleted_at !== null ? "" : card.content_md,
         source: card.source,
         created_at: new Date(card.created_at * 1000).toISOString(),
         updated_at: new Date(card.updated_at * 1000).toISOString(),

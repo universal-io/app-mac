@@ -18,11 +18,7 @@ final class HistoryViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            entries = try await historyStore.fetchEntries(
-                limit: AppSettings.localHistoryLimit,
-                mode: nil,
-                action: nil
-            )
+            entries = try await historyStore.fetchEntries(limit: AppSettings.localHistoryLimit)
         } catch {
             errorMessage = "履歴の読み込みに失敗しました: \(error.localizedDescription)"
         }

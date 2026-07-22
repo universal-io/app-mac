@@ -46,17 +46,13 @@ actor MemoryStore {
     }
 
     /// Append a distilled note to the persona card, creating a provisional
-    /// card when none exists yet. Skipped when the card has grown past the
-    /// size cap (re-distillation into a compact card is a later milestone).
+    /// card when none exists yet. The auto-learned section is deduplicated and
+    /// bounded independently from the user-controlled profile text.
     func appendPersonaNote(_ note: String) throws {
-        let dateStamp = Self.dateStamp()
         if let existing = try personaCard() {
-            guard existing.contentMD.count < Self.maxCardChars else { return }
-            var content = existing.contentMD
-            if !content.contains(Self.learnedSectionHeader) {
-                content += "\n\n\(Self.learnedSectionHeader)\n"
+            guard let content = Self.appendingLearnedNote(note, to: existing.contentMD) else {
+                return
             }
-            content += "- \(dateStamp): \(note)\n"
             try updateCard(id: existing.id, contentMD: content, source: .distilled)
         } else {
             let content = """
@@ -65,7 +61,7 @@ actor MemoryStore {
             まだブートストラップが行われていないため、使用中の学習だけで作られた暫定プロファイルです。
 
             \(Self.learnedSectionHeader)
-            - \(dateStamp): \(note)
+            - \(Self.dateStamp()): \(note)
             """
             try insertCard(kind: .persona, subject: nil, contentMD: content, source: .distilled)
             postChangeNotification()
@@ -88,13 +84,15 @@ actor MemoryStore {
         if let existing = try relationshipCards().first(where: {
             $0.subject?.compare(trimmedSubject, options: .caseInsensitive) == .orderedSame
         }) {
-            guard existing.contentMD.count < Self.maxCardChars else { return }
-            let content = existing.contentMD + "\n- \(dateStamp): \(note)"
+            guard let content = Self.appendingLearnedNote(note, to: existing.contentMD) else {
+                return
+            }
             try updateCard(id: existing.id, contentMD: content, source: .distilled)
         } else {
             let content = """
             # \(trimmedSubject)
 
+            \(Self.learnedSectionHeader)
             - \(dateStamp): \(note)
             """
             try insertCard(kind: .relationship, subject: trimmedSubject, contentMD: content, source: .distilled)
@@ -132,12 +130,15 @@ actor MemoryStore {
         postChangeNotification()
     }
 
-    /// Soft delete: marks the row as a tombstone (`deleted_at` + bumped
-    /// `updated_at`) instead of removing it, so the sync merge can propagate
-    /// the deletion to other devices.
+    /// Soft delete: keep only a content-free tombstone so the sync merge can
+    /// propagate deletion to other devices without retaining the user's text.
     func deleteCard(id: String) throws {
         try openIfNeeded()
-        let sql = "UPDATE memory_cards SET deleted_at = ?, updated_at = ? WHERE id = ?;"
+        let sql = """
+        UPDATE memory_cards
+        SET subject = NULL, content_md = '', deleted_at = ?, updated_at = ?
+        WHERE id = ?;
+        """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
             throw databaseError()
@@ -207,11 +208,50 @@ actor MemoryStore {
 
     private static let learnedSectionHeader = "## 学習した傾向"
     private static let maxCardChars = 6000
+    private static let maxLearnedNotes = 20
 
     private static func dateStamp() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
+    }
+
+    /// Appends one unique auto-learned note while keeping the learned section
+    /// bounded. Text before the section is user-controlled and never trimmed.
+    private static func appendingLearnedNote(_ note: String, to content: String) -> String? {
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedNote.isEmpty,
+              !content.localizedCaseInsensitiveContains(trimmedNote)
+        else { return nil }
+
+        let prefix: String
+        let learnedText: String
+        if let marker = content.range(of: learnedSectionHeader) {
+            prefix = String(content[..<marker.upperBound])
+            learnedText = String(content[marker.upperBound...])
+        } else {
+            prefix = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                + "\n\n\(learnedSectionHeader)"
+            learnedText = ""
+        }
+
+        let existingNotes = learnedText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("- ") }
+        var notes = Array(
+            (existingNotes + ["- \(dateStamp()): \(trimmedNote)"])
+                .suffix(maxLearnedNotes)
+        )
+
+        while !notes.isEmpty {
+            let candidate = prefix + "\n" + notes.joined(separator: "\n") + "\n"
+            if candidate.count <= maxCardChars {
+                return candidate
+            }
+            notes.removeFirst()
+        }
+        return nil
     }
 
     private func postChangeNotification() {
@@ -382,6 +422,7 @@ actor MemoryStore {
         )
         try migrateAddDeletedAtColumnIfNeeded()
         try migrateNormalizeIdCaseIfNeeded()
+        try scrubDeletedCardContent()
     }
 
     /// Repairs rows created before ids were lowercased (see `insertCard`).
@@ -420,6 +461,19 @@ actor MemoryStore {
 
         guard !hasDeletedAt else { return }
         try execute("ALTER TABLE memory_cards ADD COLUMN deleted_at REAL;")
+    }
+
+    /// Older builds retained card content inside deletion tombstones. Scrub
+    /// it on first access without changing the logical deletion timestamp.
+    private func scrubDeletedCardContent() throws {
+        try execute(
+            """
+            UPDATE memory_cards
+            SET subject = NULL, content_md = ''
+            WHERE deleted_at IS NOT NULL
+              AND (subject IS NOT NULL OR content_md <> '');
+            """
+        )
     }
 
     private func execute(_ sql: String) throws {

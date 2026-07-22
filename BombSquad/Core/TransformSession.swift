@@ -62,23 +62,12 @@ final class TransformSession: ObservableObject {
 
     func copyInterpretation() {
         guard let result else { return }
-        copy(text: result.copyText, historyInput: nil)
+        copy(text: result.copyText)
     }
 
     func approveSuggestedAction(_ action: TransformSuggestedAction) {
         guard action.hasDraft else { return }
-        copy(
-            text: action.draft,
-            historyInput: HistoryEntryInput(
-                mode: .transform,
-                sourceText: draft,
-                finalText: action.draft,
-                modelID: nil,
-                modelName: lastModelName,
-                outputLanguage: outputLanguage.displayName,
-                action: .copied
-            )
-        )
+        copy(text: action.draft)
     }
 
     func tearDown() {
@@ -125,15 +114,10 @@ final class TransformSession: ObservableObject {
         }
     }
 
-    private func copy(text: String, historyInput: HistoryEntryInput?) {
+    private func copy(text: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         do {
             try deployer.deploy(text)
-            if let historyInput {
-                Task {
-                    await LocalHistoryStore.shared.record(historyInput)
-                }
-            }
             didCopy = true
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 1_800_000_000)

@@ -3,7 +3,7 @@ import SQLite3
 
 protocol HistoryStore: Sendable {
     func record(_ entry: HistoryEntryInput) async
-    func fetchEntries(limit: Int, mode: HistoryEntryMode?, action: HistoryAction?) async throws -> [HistoryEntry]
+    func fetchEntries(limit: Int) async throws -> [HistoryEntry]
     func clear() async throws
 }
 
@@ -32,28 +32,16 @@ actor LocalHistoryStore: HistoryStore {
         }
     }
 
-    func fetchEntries(
-        limit: Int = AppSettings.localHistoryLimit,
-        mode: HistoryEntryMode? = nil,
-        action: HistoryAction? = nil
-    ) async throws -> [HistoryEntry] {
+    func fetchEntries(limit: Int = AppSettings.localHistoryLimit) async throws -> [HistoryEntry] {
         try openIfNeeded()
 
-        var sql = """
-        SELECT id, created_at, mode, source_text, final_text, model_id, model_name, output_language, action
+        let sql = """
+        SELECT id, created_at, source_text, final_text, model_id, model_name, output_language
         FROM history_entries
+        WHERE mode = 'compose' AND action = 'sent'
+        ORDER BY created_at DESC
+        LIMIT ?;
         """
-        var conditions: [String] = []
-        if mode != nil {
-            conditions.append("mode = ?")
-        }
-        if action != nil {
-            conditions.append("action = ?")
-        }
-        if !conditions.isEmpty {
-            sql += "\nWHERE " + conditions.joined(separator: " AND ")
-        }
-        sql += "\nORDER BY created_at DESC\nLIMIT ?;"
 
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -61,28 +49,15 @@ actor LocalHistoryStore: HistoryStore {
         }
         defer { sqlite3_finalize(statement) }
 
-        var bindIndex: Int32 = 1
-        if let mode {
-            sqlite3_bind_text(statement, bindIndex, mode.rawValue, -1, transientDestructor)
-            bindIndex += 1
-        }
-        if let action {
-            sqlite3_bind_text(statement, bindIndex, action.rawValue, -1, transientDestructor)
-            bindIndex += 1
-        }
-        sqlite3_bind_int(statement, bindIndex, Int32(limit))
+        sqlite3_bind_int(statement, 1, Int32(limit))
 
         var entries: [HistoryEntry] = []
         while sqlite3_step(statement) == SQLITE_ROW {
             guard
                 let idString = string(from: statement, column: 0),
                 let id = UUID(uuidString: idString),
-                let modeString = string(from: statement, column: 2),
-                let mode = HistoryEntryMode(rawValue: modeString),
-                let sourceText = string(from: statement, column: 3),
-                let finalText = string(from: statement, column: 4),
-                let actionString = string(from: statement, column: 8),
-                let action = HistoryAction(rawValue: actionString)
+                let sourceText = string(from: statement, column: 2),
+                let finalText = string(from: statement, column: 3)
             else {
                 continue
             }
@@ -91,13 +66,11 @@ actor LocalHistoryStore: HistoryStore {
                 HistoryEntry(
                     id: id,
                     createdAt: Date(timeIntervalSince1970: sqlite3_column_double(statement, 1)),
-                    mode: mode,
                     sourceText: sourceText,
                     finalText: finalText,
-                    modelID: string(from: statement, column: 5),
-                    modelName: string(from: statement, column: 6),
-                    outputLanguage: string(from: statement, column: 7),
-                    action: action
+                    modelID: string(from: statement, column: 4),
+                    modelName: string(from: statement, column: 5),
+                    outputLanguage: string(from: statement, column: 6)
                 )
             )
         }
@@ -152,6 +125,9 @@ actor LocalHistoryStore: HistoryStore {
             ON history_entries(created_at DESC);
             """
         )
+        // Transform is intentionally ephemeral. Remove rows created by older
+        // versions and keep the local history contract Compose-only.
+        try execute("DELETE FROM history_entries WHERE mode <> 'compose' OR action <> 'sent';")
     }
 
     private func insert(_ entry: HistoryEntryInput) throws {
@@ -170,13 +146,13 @@ actor LocalHistoryStore: HistoryStore {
         let recordID = UUID().uuidString
         sqlite3_bind_text(statement, 1, recordID, -1, transientDestructor)
         sqlite3_bind_double(statement, 2, Date().timeIntervalSince1970)
-        sqlite3_bind_text(statement, 3, entry.mode.rawValue, -1, transientDestructor)
+        sqlite3_bind_text(statement, 3, "compose", -1, transientDestructor)
         sqlite3_bind_text(statement, 4, entry.sourceText, -1, transientDestructor)
         sqlite3_bind_text(statement, 5, entry.finalText, -1, transientDestructor)
         bindOptionalText(entry.modelID, statement: statement, column: 6)
         bindOptionalText(entry.modelName, statement: statement, column: 7)
         bindOptionalText(entry.outputLanguage, statement: statement, column: 8)
-        sqlite3_bind_text(statement, 9, entry.action.rawValue, -1, transientDestructor)
+        sqlite3_bind_text(statement, 9, "sent", -1, transientDestructor)
 
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw databaseError()

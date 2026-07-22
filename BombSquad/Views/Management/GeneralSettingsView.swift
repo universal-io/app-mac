@@ -33,12 +33,12 @@ struct GeneralSettingsView: View {
             }
 
             Section("メモリ") {
-                Toggle("スタイルプロファイルを反映・学習する", isOn: $isMemoryEnabled)
+                Toggle("スタイルプロファイルをレビューへ反映・自動学習する", isOn: $isMemoryEnabled)
             }
 
             Section("履歴") {
-                Toggle("ローカル履歴を保存", isOn: $isHistoryEnabled)
-                Text("履歴はこのMacのみに最新 \(AppSettings.localHistoryLimit) 件保存します。")
+                Toggle("Composeの送信履歴をこのMacに保存", isOn: $isHistoryEnabled)
+                Text("実際に送信した内容だけを最新 \(AppSettings.localHistoryLimit) 件保存します。Transformは保存しません。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

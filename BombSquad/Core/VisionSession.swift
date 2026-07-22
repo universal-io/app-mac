@@ -187,6 +187,7 @@ final class VisionSession: ObservableObject {
         copilotProgressTask = nil
         removeCopilotClickMonitor()
         HighlightOverlayPresenter.shared.hide()
+        try? FileManager.default.removeItem(at: attachment.url)
     }
 
     func requestCopilotProgressCheck() {

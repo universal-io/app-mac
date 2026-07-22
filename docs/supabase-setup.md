@@ -32,6 +32,8 @@ Database naming rule:
   `bs_provision_user()` 再定義。**ベータ方針（2026-07-08）: free=500件/月、他プランは無制限・
   機能ゲート無し。プラン変更はこのテーブルの行を編集する（env・コードにコピーを持たない）**。
 - `supabase/migrations/20260718000000_remove_unused_tables.sql` — 使用を終了した旧画面案内テーブルを削除。
+- `supabase/migrations/20260722000000_scrub_deleted_memory_card_content.sql` — 削除済みメモリの
+  tombstoneから本文・相手名を消去し、今後もDB triggerで内容を保持しない。
 
 ## Secrets Needed Later
 

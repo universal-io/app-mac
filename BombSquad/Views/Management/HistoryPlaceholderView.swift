@@ -59,7 +59,7 @@ struct HistoryPlaceholderView: View {
                 .foregroundStyle(.tertiary)
             Text("履歴")
                 .font(.title2.weight(.semibold))
-            Text("送信またはコピーが完了した内容を、最新 \(AppSettings.localHistoryLimit) 件までこの Mac に保存します。")
+            Text("実際に送信した内容を、最新 \(AppSettings.localHistoryLimit) 件までこの Mac に保存します。")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -83,21 +83,18 @@ private struct HistoryRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(entry.mode.displayName)
+                Text("送信")
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(.quaternary, in: Capsule())
-                Text(entry.action.displayName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Spacer()
                 Text(Self.formatter.string(from: entry.createdAt))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            textBlock(title: entry.action == .sent ? "送信文" : "コピー文", text: entry.finalText)
+            textBlock(title: "送信文", text: entry.finalText)
 
             // The before→after gap is the product's core artifact; show it on
             // demand for entries that went through a review.

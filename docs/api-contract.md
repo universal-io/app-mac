@@ -150,4 +150,7 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 - `GET|PUT /memory/cards`
 - `GET /admin/overview`
 
+`/memory/cards` の削除状態は `deleted_at` を持つ同期用tombstoneとして表現する。tombstoneは
+`subject: null`、`content_md: ""` を必須とし、削除済みユーザー内容を保持しない。
+
 各routeの入力検証と認可は `web/app/api` の現行実装を正とする。

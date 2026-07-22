@@ -21,7 +21,7 @@ struct MemoryView: View {
             }
             if !isMemoryEnabled {
                 Section {
-                    Label("メモリは現在オフです。カードの閲覧・編集はできますが、レビューへの反映と学習は行われません。", systemImage: "brain")
+                    Label("メモリは現在オフです。カードは保持・同期されますが、レビューへの反映と新しい学習は行われません。", systemImage: "brain")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

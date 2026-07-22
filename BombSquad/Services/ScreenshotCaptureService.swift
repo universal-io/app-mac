@@ -26,6 +26,23 @@ enum ScreenshotCaptureError: LocalizedError {
 }
 
 struct ScreenshotCaptureService {
+    private static let temporaryDirectoryName = "UniversalIO-Captures"
+    private static let temporaryFilePrefix = "Universal-IO-"
+
+    /// Removes captures left by a prior session or abnormal termination.
+    /// Only files created by this app inside its dedicated temporary folder
+    /// are eligible; unrelated temporary data is never touched.
+    static func cleanupTemporaryCaptures(fileManager: FileManager = .default) {
+        let directory = temporaryCaptureDirectory(fileManager: fileManager)
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else { return }
+        for file in files where file.lastPathComponent.hasPrefix(temporaryFilePrefix) {
+            try? fileManager.removeItem(at: file)
+        }
+    }
+
     func captureMatchingScope(of attachment: ScreenshotAttachment) async throws -> ScreenshotAttachment {
         let displayID = Self.displayID(containing: attachment.captureRect)
         guard attachment.captureScope == .region,
@@ -185,7 +202,9 @@ struct ScreenshotCaptureService {
                     process.waitUntilExit()
 
                     guard process.terminationStatus == 0 else {
-                        if !FileManager.default.fileExists(atPath: outputURL.path) {
+                        let outputExists = FileManager.default.fileExists(atPath: outputURL.path)
+                        try? FileManager.default.removeItem(at: outputURL)
+                        if !outputExists {
                             continuation.resume(throwing: ScreenshotCaptureError.cancelled)
                         } else {
                             continuation.resume(throwing: ScreenshotCaptureError.failed(status: process.terminationStatus))
@@ -194,6 +213,7 @@ struct ScreenshotCaptureService {
                     }
 
                     guard Self.hasNonEmptyFile(at: outputURL) else {
+                        try? FileManager.default.removeItem(at: outputURL)
                         continuation.resume(throwing: ScreenshotCaptureError.outputMissing)
                         return
                     }
@@ -206,24 +226,31 @@ struct ScreenshotCaptureService {
                         captureScope: .unknown
                     ))
                 } catch {
+                    try? FileManager.default.removeItem(at: outputURL)
                     continuation.resume(throwing: error)
                 }
             }
         }
     }
 
-    /// Captures live in the temporary directory: they exist for the session
-    /// (preview, wire upload, explicit save). Nothing lands on the Desktop
-    /// unless the user presses the save button and picks a location.
+    /// Captures live only in the app's temporary directory for the active
+    /// Vision session. Session teardown removes the current capture and app
+    /// launch removes anything left by an abnormal termination.
     private static func makeCaptureOutputURL() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("UniversalIO-Captures", isDirectory: true)
+        let directory = temporaryCaptureDirectory()
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         // Multiple progress checks can land within one second. A unique suffix
         // prevents a newer capture from overwriting a still-preparing older URL.
         let unique = UUID().uuidString.prefix(8)
         let fileName = "Universal-IO-\(Self.fileTimestamp())-\(unique).png"
         return directory.appendingPathComponent(fileName)
+    }
+
+    private static func temporaryCaptureDirectory(
+        fileManager: FileManager = .default
+    ) -> URL {
+        fileManager.temporaryDirectory
+            .appendingPathComponent(temporaryDirectoryName, isDirectory: true)
     }
 
     private static func fileTimestamp() -> String {

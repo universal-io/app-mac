@@ -1,8 +1,8 @@
 // AI gateway: POST /api/ai/memory/distill.
 // operation = "bootstrap": past-message samples in, persona card Markdown out.
 // operation = "distill":   one deploy observation in, high-confidence notes out.
-// Card storage stays on the client until the memory sync API ships; the
-// gateway never persists any of this content.
+// This route never persists samples or deploy observations. Only the compact
+// result selected by the client is stored through /api/memory/cards.
 
 import {
   authenticate,

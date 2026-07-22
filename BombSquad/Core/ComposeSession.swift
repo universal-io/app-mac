@@ -122,13 +122,11 @@ final class ComposeSession: ObservableObject {
         deploy(
             text: draft,
             historyInput: HistoryEntryInput(
-                mode: .compose,
                 sourceText: draft,
                 finalText: draft,
                 modelID: nil,
                 modelName: nil,
-                outputLanguage: nil,
-                action: .sent
+                outputLanguage: nil
             )
         )
     }
@@ -136,13 +134,11 @@ final class ComposeSession: ObservableObject {
     func deployRevision() {
         let finalText = revisedDraft.isEmpty ? draft : revisedDraft
         let historyInput = HistoryEntryInput(
-            mode: .compose,
             sourceText: draft,
             finalText: finalText,
             modelID: nil,
             modelName: lastModelName,
-            outputLanguage: outputLanguage.displayName,
-            action: .sent
+            outputLanguage: outputLanguage.displayName
         )
         let original = draft
         let suggestion = result?.revisedText
@@ -320,9 +316,7 @@ final class ComposeSession: ObservableObject {
         isLoadingHistory = true
         defer { isLoadingHistory = false }
         recentHistoryEntries = (try? await LocalHistoryStore.shared.fetchEntries(
-            limit: 5,
-            mode: .compose,
-            action: .sent
+            limit: 5
         )) ?? []
     }
 
