@@ -72,4 +72,5 @@
 - [x] アプリとDeveloper ID署名済みDMGのnotarization、staple、Gatekeeper評価が成功
   （2026-07-22、`0.1.0` build `2`）。
 - [ ] DMGからApplicationsへコピーして初回起動できる。
-- [ ] バージョン、build番号、配布URL、rollback tagが一致する。
+- [x] `0.1.0` build `2`、不変配布URL、`v0.1.0`タグ（`700f607`）が一致
+  （2026-07-22）。

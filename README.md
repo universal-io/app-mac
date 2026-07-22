@@ -90,6 +90,10 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 
 ## リリース運用
 
+現行の正式版は `v0.1.0`（build `2`、ソース `700f607`）です。配布DMGは
+`https://dl.universal-io.com/releases/0.1.0/build-2/Universal-IO.dmg`、SHA-256は
+`e0b08385d11cb591019490a93a5bfc2aa3b0f510ef577f116ab768c3f90f2f90`です。
+
 公開版は長期ブランチではなく、Gitタグと変更しないバージョン／build別DMGで保存します。
 `main`は次のリリースへ進め、公開済みコードへ緊急修正が必要な場合だけタグからfixブランチを
 作成します。versionは公開単位で更新し、build番号は署名・配布ビルドごとに増加させます。
@@ -104,7 +108,8 @@ bash tools/release.sh --publish
 
 通常実行は配布物を変更しません。`--publish`だけがR2へアップロードします。公開時は
 `releases/<version>/build-<build>/Universal-IO.dmg`を履歴として保持し、
-`Universal-IO-<version>.dmg`とWebサイト用`Universal-IO.dmg`を最新版へ更新します。
+`Universal-IO-<version>.dmg`と互換用latest aliasの`Universal-IO.dmg`も更新します。
+CDNの旧aliasキャッシュを避けるため、WebサイトのCTAは履歴用の不変URLを直接参照します。
 公開成功後、そのソースコミットへ`v<version>`タグを付けます。
 
 ## 設定

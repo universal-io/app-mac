@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-22 ／ ステータス: リリース前安定化
+最終更新: 2026-07-22 ／ ステータス: `v0.1.0` 公開済み・次期開発準備
 
 ## 製品
 
@@ -85,13 +85,15 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 - クラッシュ、秘密情報、ログへの入力本文・画像パス漏洩を点検。
 - 署名、Hardened Runtime、notarization、DMG、更新導線を確認。
 
-### R5 — 公開
+### R5 — 公開（`v0.1.0` 完了、2026-07-22）
 
-- 公開候補は `0.1.0`（build `2`）として確定し、署名・notarization済み候補を検証する。
-- mainへ統合し、本番Gatewayを先にdeployする。
-- 本番routeの疎通確認後にmacOSビルドを配布する。
-- 公開DMGはversion／build別の不変URLへ保存し、Webサイト用latest aliasだけを切り替える。
-- version/build番号、release note、rollback可能なGitタグを確定する。
+- 正式版は `0.1.0`（build `2`）、Gitタグは `v0.1.0`、ソースは `700f607`。
+- main、本番Gateway、Webサイトをdeploy済み。
+- Developer ID署名、notarization、staple、Gatekeeper評価済みDMGを配布。
+- 公開DMGはversion／build別の不変URLへ保存し、Webサイトは不変URLを直接参照する。
+  version aliasとlatest aliasも互換用に更新する。
+- 公式DMGのSHA-256は
+  `e0b08385d11cb591019490a93a5bfc2aa3b0f510ef577f116ab768c3f90f2f90`。
 - 初期usage、エラー率、レイテンシを監視する。
 
 ## リリース判定
