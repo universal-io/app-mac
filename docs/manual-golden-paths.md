@@ -69,6 +69,7 @@
   アプリ名・ウインドウタイトル漏洩を点検（2026-07-22）。
 - [ ] 操作中のクラッシュと異常終了を点検。
 - [x] Developer ID署名とHardened Runtimeが有効（2026-07-22、Universal binaryで確認）。
-- [ ] notarizationとstapleが成功。
+- [x] アプリとDeveloper ID署名済みDMGのnotarization、staple、Gatekeeper評価が成功
+  （2026-07-22、`0.1.0` build `2`）。
 - [ ] DMGからApplicationsへコピーして初回起動できる。
 - [ ] バージョン、build番号、配布URL、rollback tagが一致する。

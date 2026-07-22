@@ -23,6 +23,7 @@ CONFIG="Release"
 APP_NAME="Universal IO"
 TEAM_ID="TG68TFXG88"
 NOTARY_PROFILE="${NOTARY_PROFILE:-universal-io-notary}"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application}"
 
 # Optional R2 upload. Set R2_ENDPOINT / R2_BUCKET / R2_PROFILE in
 # tools/release.env (gitignored) to auto-upload the notarized DMG. Credentials
@@ -115,11 +116,16 @@ ln -s /Applications "$DMG_STAGING/Applications"
 rm -f "$DMG_PATH"
 hdiutil create -volname "$APP_NAME" -srcfolder "$DMG_STAGING" -ov -format UDZO "$DMG_PATH"
 
+echo "== sign DMG (Developer ID) =="
+codesign --force --sign "$SIGNING_IDENTITY" --timestamp "$DMG_PATH"
+codesign --verify --strict --verbose=2 "$DMG_PATH"
+
 if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
   echo "== notarize DMG =="
   xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARY_PROFILE" --wait
   xcrun stapler staple "$DMG_PATH"
   xcrun stapler validate "$DMG_PATH"
+  spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
 else
   echo "== SKIP_NOTARIZE: DMG built but not notarized/stapled =="
 fi
