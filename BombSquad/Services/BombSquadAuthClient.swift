@@ -1,6 +1,53 @@
 import Foundation
 import Supabase
 
+/// Keeps the Supabase session in a Universal I/O-specific Keychain service.
+/// Older builds used the SDK-wide default item; import it at most once, then
+/// never consult it again so signing in/out cannot resurrect a stale session.
+private struct UniversalIOAuthLocalStorage: AuthLocalStorage {
+    static let storageKey = "com.universal-io.mac.auth.skcsbcyivjcvevxntvqa"
+
+    private static let migrationFlag = "auth.keychainScopedMigration.v1"
+    private let scoped = KeychainLocalStorage(service: "com.universal-io.mac.supabase")
+    private let legacy = KeychainLocalStorage()
+
+    func store(key: String, value: Data) throws {
+        try scoped.store(key: key, value: value)
+        if key == Self.storageKey {
+            UserDefaults.standard.set(true, forKey: Self.migrationFlag)
+        }
+    }
+
+    func retrieve(key: String) throws -> Data? {
+        if let data = try? scoped.retrieve(key: key) {
+            return data
+        }
+        guard key == Self.storageKey,
+              !UserDefaults.standard.bool(forKey: Self.migrationFlag)
+        else { return nil }
+
+        // Current SDK default first, then the oldest pre-migration key.
+        for legacyKey in ["supabase.auth.token", "supabase.session"] {
+            if let data = try? legacy.retrieve(key: legacyKey) {
+                try scoped.store(key: key, value: data)
+                UserDefaults.standard.set(true, forKey: Self.migrationFlag)
+                return data
+            }
+        }
+        UserDefaults.standard.set(true, forKey: Self.migrationFlag)
+        return nil
+    }
+
+    func remove(key: String) throws {
+        // Mark first: even if the scoped item is already absent, sign-out must
+        // never fall back to the old shared SDK item on the next launch.
+        if key == Self.storageKey {
+            UserDefaults.standard.set(true, forKey: Self.migrationFlag)
+        }
+        try? scoped.remove(key: key)
+    }
+}
+
 enum BombSquadAuthError: LocalizedError {
     case missingConfiguration
     case invalidSupabaseURL(String)
@@ -53,6 +100,8 @@ final class BombSquadAuthClient {
             supabaseKey: config.supabaseAnonKey.value ?? "",
             options: SupabaseClientOptions(
                 auth: .init(
+                    storage: UniversalIOAuthLocalStorage(),
+                    storageKey: UniversalIOAuthLocalStorage.storageKey,
                     autoRefreshToken: true,
                     emitLocalSessionAsInitialSession: true
                 )
@@ -80,6 +129,10 @@ final class BombSquadAuthClient {
 
     func currentUserEmail() -> String? {
         client?.auth.currentUser?.email
+    }
+
+    func currentUserID() -> UUID? {
+        client?.auth.currentUser?.id
     }
 
     func sendMagicLink(email: String) async throws {

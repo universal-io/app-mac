@@ -109,6 +109,8 @@ struct GatewayAPI {
             message = "今月の利用枠を使い切りました。来月のリセットをお待ちいただくか、プランをご検討ください。"
         case "PAYMENT_REQUIRED":
             message = "現在のプランではこの操作を利用できません。"
+        case "REAUTH_REQUIRED":
+            message = "安全のため、いったんログアウトして再ログインしてから退会してください。"
         case "PROVIDER_ERROR":
             // The gateway already produces a user-facing Japanese message
             // (rate-limit guidance vs. generic failure); show it as-is.

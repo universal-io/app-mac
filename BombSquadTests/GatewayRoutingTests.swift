@@ -2,51 +2,19 @@ import XCTest
 @testable import Universal_IO
 
 final class GatewayRoutingTests: XCTestCase {
-    func testStaleLocalValueIsInertByDefault() throws {
-        let plan = try XCTUnwrap(BombSquadConfig.makeGatewayRoutePlan(
-            developmentValue: "http://127.0.0.1:3001",
-            productionValue: "https://api.universal-io.com",
-            developmentModeRequested: false,
-            allowsDevelopmentOverride: true
-        ))
-
-        XCTAssertEqual(plan.preferredURL.absoluteString, "https://api.universal-io.com")
-        XCTAssertFalse(plan.usesDevelopmentOverride)
-    }
-
-    func testExplicitDebugLocalModeUsesDevelopmentGatewayOnly() throws {
-        let plan = try XCTUnwrap(BombSquadConfig.makeGatewayRoutePlan(
-            developmentValue: "http://127.0.0.1:3001",
-            productionValue: "https://api.universal-io.com",
-            developmentModeRequested: true,
-            allowsDevelopmentOverride: true
-        ))
-
-        XCTAssertEqual(plan.preferredURL.absoluteString, "http://127.0.0.1:3001")
-        XCTAssertTrue(plan.usesDevelopmentOverride)
-    }
-
-    func testExplicitLocalModeWithoutValidURLFailsClosed() {
-        let plan = BombSquadConfig.makeGatewayRoutePlan(
-            developmentValue: nil,
-            productionValue: "https://api.universal-io.com",
-            developmentModeRequested: true,
-            allowsDevelopmentOverride: true
+    func testBundledProductionGatewayIsTheOnlyResolvedRoute() {
+        XCTAssertEqual(
+            BombSquadConfig.resolvedAPIBaseURL(),
+            "https://api.universal-io.com"
         )
-
-        XCTAssertNil(plan)
     }
 
-    func testReleaseIgnoresExplicitLocalMode() throws {
-        let plan = try XCTUnwrap(BombSquadConfig.makeGatewayRoutePlan(
-            developmentValue: "http://127.0.0.1:3001",
-            productionValue: "https://api.universal-io.com",
-            developmentModeRequested: true,
-            allowsDevelopmentOverride: false
-        ))
+    func testEnvironmentCannotOverrideProductionGateway() {
+        let snapshot = BombSquadConfig.snapshot(environment: [
+            BombSquadConfig.apiBaseURLKey: "http://127.0.0.1:3001"
+        ])
 
-        XCTAssertEqual(plan.preferredURL.absoluteString, "https://api.universal-io.com")
-        XCTAssertFalse(plan.usesDevelopmentOverride)
+        XCTAssertEqual(snapshot.apiBaseURL.value, "https://api.universal-io.com")
     }
 
     func testHTML404IsNotExposedAsRawPageSource() {

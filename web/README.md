@@ -5,7 +5,7 @@
 ## Routes
 
 - `/`, `/auth`, `/auth/callback`, `/admin`
-- `/api/account`, `/api/memory/cards`, `/api/admin/overview`
+- `/api/account`（GET / DELETE）、`/api/memory/cards`（差分同期）、`/api/admin/overview`
 - `/api/ai/review`
 - `/api/ai/transcribe`
 - `/api/ai/transform`

@@ -33,8 +33,8 @@ struct MemoryCard: Identifiable, Equatable, Codable {
     let createdAt: Date
     var updatedAt: Date
     /// Soft-delete tombstone timestamp; nil while the card is live. Rows are
-    /// never hard-deleted locally so the sync merge can propagate deletions
-    /// to other devices (last-write-wins on `updatedAt`).
+    /// retained without subject/content so a long-offline device cannot
+    /// resurrect a deletion. Incremental sync avoids resending clean rows.
     var deletedAt: Date?
 
     private enum CodingKeys: String, CodingKey {

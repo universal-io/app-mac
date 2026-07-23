@@ -34,6 +34,8 @@ Database naming rule:
 - `supabase/migrations/20260718000000_remove_unused_tables.sql` — 使用を終了した旧画面案内テーブルを削除。
 - `supabase/migrations/20260722000000_scrub_deleted_memory_card_content.sql` — 削除済みメモリの
   tombstoneから本文・相手名を消去し、今後もDB triggerで内容を保持しない。
+- `supabase/migrations/20260722010000_usage_retention.sql` — request単位usageを90日保持し、
+  `bs_usage_monthly_rollups`へ集約して詳細行を削除する日次pg_cron jobを登録する。
 
 ## Secrets Needed Later
 
@@ -81,6 +83,12 @@ Optional Supabase configuration path when launching the built app outside the re
 - `STRIPE_PRICE_PRO_MONTHLY`
 - `STRIPE_PRICE_TEAM_MONTHLY`
 - `STRIPE_PRICE_ENTERPRISE_MONTHLY`
+
+Provider data controls（envではなく各provider管理画面）:
+
+- OpenAI Organization / Project: Zero Data Retention（要承認）
+- Groq Data Controls: Zero Data Retention
+- GatewayはOpenAI Responses / Chat Completionsで`store: false`を送るが、これはZDRの代替ではない。
 
 The canonical names are defined in [api-contract.md](api-contract.md).
 

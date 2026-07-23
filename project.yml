@@ -34,7 +34,9 @@ targets:
     dependencies:
       - package: Supabase
         product: Supabase
-    scheme: {}
+    scheme:
+      testTargets:
+        - BombSquadTests
     sources:
       - BombSquad
       # Bundle the gitignored Supabase auth config. Gateway routing never reads it.
@@ -73,3 +75,18 @@ targets:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           DEVELOPMENT_TEAM: TG68TFXG88
           ENABLE_HARDENED_RUNTIME: YES
+  BombSquadTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    hostApplication: BombSquad
+    sources:
+      - BombSquadTests
+    dependencies:
+      - target: BombSquad
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.universal-io.mac.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Universal IO.app/Contents/MacOS/Universal IO"
+        BUNDLE_LOADER: "$(TEST_HOST)"

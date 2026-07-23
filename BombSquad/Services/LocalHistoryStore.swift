@@ -11,6 +11,7 @@ actor LocalHistoryStore: HistoryStore {
     static let shared = LocalHistoryStore()
 
     private var database: OpaquePointer?
+    private var activeUserID: UUID?
     private let fileManager: FileManager
 
     init(fileManager: FileManager = .default) {
@@ -19,6 +20,19 @@ actor LocalHistoryStore: HistoryStore {
 
     deinit {
         sqlite3_close(database)
+    }
+
+    func activateAccount(userID: UUID?, migrateLegacyDatabase: Bool = false) throws {
+        if activeUserID == userID { return }
+        sqlite3_close(database)
+        database = nil
+        activeUserID = userID
+        if let userID {
+            _ = try AppSupport.accountDirectory(
+                for: userID,
+                migrateLegacyDatabases: migrateLegacyDatabase
+            )
+        }
     }
 
     func record(_ entry: HistoryEntryInput) async {
@@ -86,7 +100,8 @@ actor LocalHistoryStore: HistoryStore {
     private func openIfNeeded() throws {
         guard database == nil else { return }
 
-        let directoryURL = try applicationSupportDirectory()
+        guard let activeUserID else { throw LocalAccountDataError.noActiveAccount }
+        let directoryURL = try AppSupport.accountDirectory(for: activeUserID)
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
         let databaseURL = directoryURL.appendingPathComponent("history.sqlite")
@@ -199,10 +214,6 @@ actor LocalHistoryStore: HistoryStore {
     private func string(from statement: OpaquePointer?, column: Int32) -> String? {
         guard let text = sqlite3_column_text(statement, column) else { return nil }
         return String(cString: text)
-    }
-
-    private func applicationSupportDirectory() throws -> URL {
-        try AppSupport.directory()
     }
 
     private func databaseError(database: OpaquePointer? = nil) -> NSError {

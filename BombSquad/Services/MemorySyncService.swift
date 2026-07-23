@@ -1,20 +1,90 @@
+import Combine
 import Foundation
 
 extension Notification.Name {
-    /// Posted by `MemorySyncService` after a sync round trip actually
-    /// changed local state (server had newer/other-device data). The memory
-    /// page observes this to refresh without polling.
     static let memoryCardsDidSync = Notification.Name("BombSquad.memoryCardsDidSync")
 }
 
-/// Syncs local memory cards with the gateway. One `PUT /api/memory/cards`
-/// round trip does both push and pull: it sends every local card (including
-/// tombstones), and the gateway returns its already-merged full state
-/// (last-write-wins on `updated_at`, docs/api-contract.md), which is then
-/// applied back locally via `MemoryStore.applyServerState`.
-///
-/// Signed-out users cannot create an authenticated Gateway client, so sync is
-/// a no-op and memory stays local-only.
+enum MemorySyncStatus: Equatable {
+    case inactive
+    case syncing
+    case synced(Date)
+    case failed(String)
+    case conflict(Int)
+}
+
+@MainActor
+final class MemorySyncStatusStore: ObservableObject {
+    static let shared = MemorySyncStatusStore()
+    @Published private(set) var status: MemorySyncStatus = .inactive
+
+    private init() {}
+
+    func update(_ status: MemorySyncStatus) {
+        self.status = status
+    }
+}
+
+/// One dirty local card plus the authoritative server version on which the
+/// edit was based. Card timestamps remain useful for local display, but the
+/// gateway uses `base_updated_at` for conflict detection and assigns the next
+/// `updated_at` itself.
+struct MemoryUploadRecord: Codable {
+    let id: String
+    let kind: MemoryCard.Kind
+    let subject: String?
+    let contentMD: String
+    let source: MemoryCard.Source
+    let createdAt: Date
+    let updatedAt: Date
+    let deletedAt: Date?
+    let baseServerUpdatedAt: Date?
+
+    init(card: MemoryCard, baseServerUpdatedAt: Date?) {
+        id = card.id
+        kind = card.kind
+        subject = card.subject
+        contentMD = card.contentMD
+        source = card.source
+        createdAt = card.createdAt
+        updatedAt = card.updatedAt
+        deletedAt = card.deletedAt
+        self.baseServerUpdatedAt = baseServerUpdatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, subject, source
+        case contentMD = "content_md"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case deletedAt = "deleted_at"
+        case baseServerUpdatedAt = "base_updated_at"
+    }
+}
+
+struct MemorySyncResponse: Codable {
+    let cards: [MemoryCard]
+    let syncedIDs: [String]
+    let conflicts: [MemoryCard]
+    let cursor: Date?
+    let hasMore: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case cards, conflicts, cursor
+        case syncedIDs = "synced_ids"
+        case hasMore = "has_more"
+    }
+}
+
+private struct MemorySyncRequest: Codable {
+    let cards: [MemoryUploadRecord]
+    let cursor: Date?
+}
+
+/// Account-scoped, incremental memory sync. Local changes are sent in bounded
+/// batches and the response contains only server rows newer than the client's
+/// cursor. A base-version mismatch becomes an explicit conflict; neither copy
+/// is discarded until the user chooses which one should win.
 actor MemorySyncService {
     static let shared = MemorySyncService()
 
@@ -23,19 +93,15 @@ actor MemorySyncService {
     private var isSyncPending = false
     private var debounceTask: Task<Void, Never>?
     private var changeObserver: NSObjectProtocol?
+    private var conflictCards: [MemoryCard] = []
 
-    /// Local edits are bursty (typing, then a save); waiting this long after
-    /// the last `.memoryCardsDidChange` collapses a burst into one sync.
     private static let debounceNanoseconds: UInt64 = 2_500_000_000
+    private static let maxPagesPerRound = 20
 
     private init() {}
 
-    /// Runs one sync immediately, then starts observing local changes for
-    /// future debounced syncs. Safe to call more than once — only the first
-    /// call wires up the observer.
     func start() {
         Task { await syncNow() }
-
         guard !didStart else { return }
         didStart = true
 
@@ -47,17 +113,11 @@ actor MemorySyncService {
         }
     }
 
-    /// Pushes the full local state (including tombstones) and applies back
-    /// whatever the gateway returns. A no-op when the gateway isn't
-    /// configured. Failures are logged only — memory sync must never
-    /// surface as a user-facing error or block the rest of the app.
-    ///
-    /// Multiple overlapping calls coalesce: a sync already running captures
-    /// at most one more pending run, so bursts of edits don't queue up an
-    /// unbounded number of requests.
     func syncNow() async {
-        guard GatewayAPI.make() != nil else {
-            NSLog("BombSquad sync: skipped (gateway not configured or no session)")
+        guard GatewayAPI.make() != nil,
+              BombSquadAuthClient.shared.currentUserID() != nil
+        else {
+            await MemorySyncStatusStore.shared.update(.inactive)
             return
         }
 
@@ -66,6 +126,7 @@ actor MemorySyncService {
             return
         }
         isSyncing = true
+        await MemorySyncStatusStore.shared.update(.syncing)
         await runSync()
         isSyncing = false
 
@@ -75,7 +136,27 @@ actor MemorySyncService {
         }
     }
 
-    // MARK: - Internals
+    func resolveConflictsUsingLocal() async {
+        guard !conflictCards.isEmpty else { return }
+        do {
+            try await MemoryStore.shared.resolveConflictsUsingLocal(conflictCards)
+            conflictCards = []
+            await syncNow()
+        } catch {
+            await MemorySyncStatusStore.shared.update(.failed(error.localizedDescription))
+        }
+    }
+
+    func resolveConflictsUsingCloud() async {
+        guard !conflictCards.isEmpty else { return }
+        do {
+            try await MemoryStore.shared.resolveConflictsUsingCloud(conflictCards)
+            conflictCards = []
+            await MemorySyncStatusStore.shared.update(.synced(Date()))
+        } catch {
+            await MemorySyncStatusStore.shared.update(.failed(error.localizedDescription))
+        }
+    }
 
     private func scheduleDebouncedSync() {
         debounceTask?.cancel()
@@ -87,31 +168,67 @@ actor MemorySyncService {
     }
 
     private func runSync() async {
-        guard let client = GatewayClient.make() else { return }
+        guard let client = GatewayClient.make(),
+              let syncingUserID = BombSquadAuthClient.shared.currentUserID()
+        else { return }
+
         do {
-            let localCards = try await MemoryStore.shared.allCardsIncludingDeleted()
+            var allConflicts: [String: MemoryCard] = [:]
+            var serverHasMorePages = false
+            for _ in 0..<Self.maxPagesPerRound {
+                let records = try await MemoryStore.shared.pendingSyncRecords()
+                let cursor = try await MemoryStore.shared.syncCursor()
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .secondsSince1970
+                let body = try encoder.encode(MemorySyncRequest(cards: records, cursor: cursor))
+                let data = try await client.sendJSONData(
+                    "memory/cards",
+                    method: "PUT",
+                    body: body
+                )
 
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .secondsSince1970
-            let data = try await client.sendJSONData(
-                "memory/cards",
-                method: "PUT",
-                body: encoder.encode(CardsWirePayload(cards: localCards))
-            )
+                // A sign-out/account switch can finish while the request is in
+                // flight. Never apply the old account's response to the newly
+                // activated local database.
+                guard BombSquadAuthClient.shared.currentUserID() == syncingUserID else {
+                    return
+                }
 
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .secondsSince1970
-            let payload = try decoder.decode(CardsWirePayload.self, from: data)
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .secondsSince1970
+                let response = try decoder.decode(MemorySyncResponse.self, from: data)
+                try await MemoryStore.shared.applySyncResponse(response)
+                serverHasMorePages = response.hasMore
+                for card in response.conflicts { allConflicts[card.id] = card }
 
-            try await MemoryStore.shared.applyServerState(payload.cards)
+                // Conflict rows stay pending so a later app launch can fetch
+                // the cloud copy again and reconstruct the resolution UI.
+                // Stop this round immediately instead of resending the same
+                // unresolved edit up to the page limit.
+                if !response.conflicts.isEmpty { break }
+
+                let hasPending = !(try await MemoryStore.shared.pendingSyncRecords(limit: 1)).isEmpty
+                if !response.hasMore && !hasPending { break }
+            }
+
+            conflictCards = Array(allConflicts.values)
+            if conflictCards.isEmpty {
+                let hasPending = !(try await MemoryStore.shared.pendingSyncRecords(limit: 1)).isEmpty
+                if serverHasMorePages || hasPending {
+                    // Continue in a fresh bounded round instead of reporting a
+                    // false success when a very old account has >2,000 local
+                    // tombstones or server changes to reconcile.
+                    isSyncPending = true
+                } else {
+                    await MemorySyncStatusStore.shared.update(.synced(Date()))
+                }
+            } else {
+                await MemorySyncStatusStore.shared.update(.conflict(conflictCards.count))
+            }
             NotificationCenter.default.post(name: .memoryCardsDidSync, object: nil)
         } catch {
-            NSLog("BombSquad memory sync skipped: \(error.localizedDescription)")
+            await MemorySyncStatusStore.shared.update(.failed(error.localizedDescription))
+            NSLog("Universal I/O memory sync failed: \(error.localizedDescription)")
         }
     }
-}
-
-/// Wire shape for `GET/PUT /api/memory/cards`: `{ "cards": [...] }`.
-private struct CardsWirePayload: Codable {
-    let cards: [MemoryCard]
 }

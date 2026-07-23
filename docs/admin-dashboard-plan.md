@@ -1,8 +1,8 @@
 # 管理ダッシュボード（Admin Console）— 設計書
 
 作成: 2026-07-06 ／ ステータス: **v0（読み取り専用）実装済み・本番稼働中**
-（2026-07-22 更新: `web/app/admin/page.tsx`・`web/lib/server/admin.ts`・`admin-stats.ts` として実装済み。
-本書は設計の記録として維持。v1 = DB 設定への昇格は未着手）
+（2026-07-23 更新: v1以降へアカウント区分、Stripe、テスター監視、APIコスト管理を追加。
+現行実装は`web/app/admin/page.tsx`・`web/lib/server/admin.ts`・`admin-stats.ts`）
 
 全体をコントロールするための簡易ダッシュボード。実効モデル設定・利用統計・登録状況を
 一望し、事故（実験用モデルの入れっぱなし等）を可視化で防ぐ。
@@ -121,10 +121,9 @@ where created_at >= now() - interval '30 days'
 group by day order by day;
 ```
 
-> **パフォーマンス注意**: `bs_usage_events` は成長するテーブル。日次推移や月次集計は
-> `created_at` インデックス前提（既存の使用量カウントと同じ）。件数が増えたら
-> Postgres の集計を毎回叩くのは重くなるので、v1 で日次サマリーを別テーブル
-> （`bs_usage_daily`）にロールアップする案を検討（下記ロードマップ）。
+> `bs_usage_events` のrequest単位詳細は90日保持する。期限後は日次cronが
+> `bs_usage_monthly_rollups`へ加算して詳細を削除する。現行画面の今月・直近30日表示はdetailを、
+> 90日を超える将来の長期比較はrollupを読む。
 
 ## 5. 実装スケッチ（ファイル構成）
 
@@ -146,19 +145,21 @@ web/
 
 - **v0（本設計・読み取り専用）**: 実効設定表示 ＋ 利用統計 ＋ 内訳 ＋ 外部リンク。
   ADMIN_EMAILS で認可。今回の事故の再発防止が主目的。
-- **v1（設定の書き込み）**: `AI_MODEL_ROUTES` と同じschemaを
-  **DB 設定テーブル `bs_app_config`** に昇格。
-  管理画面から全機能の一次・二次・API方式を切替（**再デプロイ不要**・変更履歴も残る）。
-  エンジンは引き続き共通ルーターだけを呼び、個別にDB設定を読まない。
-  → これが本来の「選択肢をいろいろ選べるようにする」の正しい実装場所。
-- **v2（運用の深掘り）**: 日次ロールアップ（`bs_usage_daily`）、テナント別ドリルダウン、
-  コスト概算（モデル別トークン×単価）、アラート（エラー率・レイテンシ閾値超え）。
+- **v1（アカウント運用）**: plan、account class、契約状態、個別quota overrideを管理し、変更者・
+  時刻・理由を監査する。招待テスター、社内、無償提供をStripe契約なしで明示的に設定できる。
+- **v1.1（Stripe）**: Product / Priceとplanの対応、Checkout、Customer Portal、署名検証済みwebhook、
+  冪等なsubscription反映を実装する。Stripeの状態を直接権限判定せず、webhookでentitlementへ反映する。
+- **v2（運用の深掘り）**: 既存の月次rollupを使う長期推移、テスターcohort・テナント別ドリルダウン、
+  モデル単価に基づくコスト概算、予算・エラー率・レイテンシのアラートを追加する。
+- **v3（実効モデル設定）**: `AI_MODEL_ROUTES` と同じschemaをDB設定テーブルへ昇格し、管理画面から
+  一次・二次・API方式を変更する。変更履歴とrollbackを必須にし、個別engineは共通ルーターだけを呼ぶ。
 
 ## 7. 非スコープ（当面やらない）
 
 - 個別ユーザーの会話内容の閲覧（プライバシー原則: 画面・私信は保存しない方針と衝突）。
   管理画面が見るのは**集計された数字**であって中身ではない。
-- 課金・請求管理（Stripe 側のダッシュボードを使う）。
+- Stripeの請求書・入金・税務画面の再実装。アプリ側はplanとsubscription状態だけを同期し、金銭の
+  正本はStripe Dashboardとする。
 - Vercel / Supabase / R2 が自前で持つメトリクスの再実装（リンクで済ませる）。
 
 ## 8. 「今どのモデルか」を見えなくしない — 恒久対策の位置づけ
@@ -170,3 +171,46 @@ web/
 管理ダッシュボード 3-a はこれの**サーバー側の正本**。クライアント表示は「利用者が今使っている
 モデル」、管理画面は「システム全体の実効設定」を担い、二層で不可視化を防ぐ
 （開発GWバッジ・向き先警告バーと同じ思想）。
+
+## 9. 次期アカウントモデル
+
+### 9-a. 現状
+
+- 新規登録は`bs_provision_user()`により全員`free`、月500件、`active`で作成される。
+- `bs_plans`には`free` / `standard` / `pro` / `team` / `enterprise`があるが、現時点でfree以外は
+  購入導線も自動割当もなく、手動運用前提である。
+- `/admin`の権限は`ADMIN_EMAILS`で決まり、`bs_entitlements.plan`とは独立している。
+  したがって管理者であってもfreeのままなら通常quotaが適用される。
+- `bs_entitlements`にはStripe ID列があるが、Checkout、webhook、Customer Portalは未実装である。
+
+### 9-b. 分離する3つの軸
+
+1. **権限**: `user` / `operator` / `admin`。管理画面で何を閲覧・変更できるか。
+2. **商品plan**: `free` / 有料個人 / team / enterprise。機能と標準quota。
+3. **account class**: `standard` / `internal` / `tester` / `complimentary`。誰が支払い、通常のquota・
+   trial・退会制約をどう適用するか。
+
+管理者を「特別な有料plan」として表現しない。逆にpremium契約者へ管理権限を付けない。
+Stripeを通さない無償・社内・テスターアカウントもaccount classで明示し、期限、理由、付与者を持つ。
+実カラム名と制約はmigration設計時に確定し、`bs_entitlements`を商用状態のSSOTとして維持する。
+
+### 9-c. 管理画面の操作
+
+- ユーザー／tenant検索、登録日、最終利用、plan、account class、subscription、今月利用量を表示する。
+- premium、tester、complimentary等への変更は確認画面を通し、変更前後、操作者、理由を監査ログへ残す。
+- Stripe連携中のplanを管理画面だけで矛盾した状態へ変更できないよう、操作可能範囲を制限する。
+- 管理者自身の変更や無制限化も監査対象とし、「ADMIN_EMAILSだから無制限」という暗黙ルールを作らない。
+
+## 10. Stripeとコスト監視の実装順序
+
+1. **account model migration**: account class、管理role、期限、監査ログを設計し、既存freeユーザーを
+   `standard`へ安全にbackfillする。
+2. **手動運用UI**: Stripeなしでpremium候補、tester、complimentary、internalを設定できるようにする。
+3. **Stripe test mode**: Product / Price対応表、Checkout、Portal、webhook署名、イベント冪等性を実装する。
+4. **tester monitoring**: cohort、最終利用、機能別件数、成功率、fallback、エラー、レイテンシを表示する。
+5. **cost estimate**: model pricing snapshotを日付付きで保持し、input/output tokenと音声秒数から概算する。
+   provider請求との差を定期確認し、価格改定時に過去集計を書き換えない。
+6. **alerts**: 日次・月次予算、ユーザー単位の急増、エラー率、fallback率の閾値通知を追加する。
+
+管理画面へ入力本文、AI回答、画像、音声、Transform選択文を表示しない。テスターの利用状況は
+operation、時刻、モデル、unit、成否、レイテンシ等の運用メタデータだけで把握する。

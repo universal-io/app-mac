@@ -8,6 +8,7 @@ struct AccountView: View {
     /// Latest quota envelope seen on a gateway response (no extra request).
     @ObservedObject private var quotaStore = GatewayQuotaStore.shared
     let config: BombSquadConfig.Snapshot
+    @State private var isShowingDeleteConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -27,6 +28,14 @@ struct AccountView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle("アカウント")
+        .alert("アカウントを削除しますか？", isPresented: $isShowingDeleteConfirmation) {
+            Button("キャンセル", role: .cancel) {}
+            Button("退会してデータを削除", role: .destructive) {
+                viewModel.deleteAccount()
+            }
+        } message: {
+            Text("メモリ、利用記録、プロフィール、契約情報と、このMacの入力履歴・下書きを削除します。この操作は取り消せません。")
+        }
     }
 
     // MARK: - Signed in
@@ -66,6 +75,21 @@ struct AccountView: View {
             }
             .controlSize(.large)
             .disabled(viewModel.isBusy)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("退会")
+                    .font(.headline)
+                Text("サービス上のアカウントと関連データを削除します。有効な契約がある場合は先に解約が必要です。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("アカウントを削除…", role: .destructive) {
+                    isShowingDeleteConfirmation = true
+                }
+                .disabled(viewModel.isBusy)
+            }
         }
         // Refresh summary + quota from the gateway every time the account page is
         // shown; existing values stay on screen while the request runs.

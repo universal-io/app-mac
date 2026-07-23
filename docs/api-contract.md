@@ -33,7 +33,7 @@
 }
 ```
 
-主なcodeは `BAD_REQUEST`、`UNAUTHENTICATED`、`PAYMENT_REQUIRED`、
+主なcodeは `BAD_REQUEST`、`UNAUTHENTICATED`、`REAUTH_REQUIRED`、`PAYMENT_REQUIRED`、
 `QUOTA_EXCEEDED`、`RATE_LIMITED`、`PROVIDER_ERROR`、`INTERNAL_ERROR`。
 
 全AI成功応答の `meta` は次のモデル情報を持つ。
@@ -147,10 +147,17 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 ## アカウント・メモリ・管理
 
 - `GET /account`
+- `DELETE /account` — body `{"confirmation":"DELETE"}`。直近10分以内の認証を要求し、
+  有効なsubscriptionがある場合は`ACTIVE_SUBSCRIPTION`で拒否する。
 - `GET|PUT /memory/cards`
 - `GET /admin/overview`
 
 `/memory/cards` の削除状態は `deleted_at` を持つ同期用tombstoneとして表現する。tombstoneは
 `subject: null`、`content_md: ""` を必須とし、削除済みユーザー内容を保持しない。
+
+新クライアントの`PUT /memory/cards`は`cards`（dirty差分、最大100件）と`cursor`を送る。
+各cardの`base_updated_at`がserver版と一致する時だけGateway時刻で更新し、応答は`cards`、
+`synced_ids`、`conflicts`、`cursor`、`has_more`を返す。`cursor`を持たないv0.1.0の全件同期は
+リリース移行期間だけ後方互換として受理する。
 
 各routeの入力検証と認可は `web/app/api` の現行実装を正とする。

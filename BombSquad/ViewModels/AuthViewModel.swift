@@ -7,7 +7,7 @@ final class AuthViewModel: ObservableObject {
     /// the session lives for the app's lifetime, so it must not be re-created per
     /// panel — doing so flashes the login screen (~0.5s) while the async initial
     /// session loads, and re-runs bootstrap/account fetches on every summon.
-    static let shared = AuthViewModel()
+    static let shared = AuthViewModel(startImmediately: !AppRuntime.isRunningUnitTests)
 
     @Published var email: String = ""
     @Published var signedInEmail: String?
@@ -19,12 +19,12 @@ final class AuthViewModel: ObservableObject {
     @Published var statusMessage: String?
     @Published var errorMessage: String?
 
-    private let authClient: BombSquadAuthClient
+    private lazy var authClient = BombSquadAuthClient.shared
     private var authStateTask: Task<Void, Never>?
     private var initializedUserID: UUID?
 
-    init(authClient: BombSquadAuthClient = .shared) {
-        self.authClient = authClient
+    init(startImmediately: Bool = true) {
+        guard startImmediately else { return }
         // Seed from the synchronously-available cached session so the very first
         // render already knows whether we're logged in (no login-screen flash).
         self.hasSession = authClient.currentSession() != nil
@@ -79,7 +79,11 @@ final class AuthViewModel: ObservableObject {
         Task {
             do {
                 let session = try await authClient.signInWithGoogle()
-                try await refreshState(session: session, shouldBootstrap: true)
+                try await refreshState(
+                    session: session,
+                    shouldBootstrap: true,
+                    migrateLegacyData: false
+                )
                 await MainActor.run {
                     self.statusMessage = "Google でログインしました。"
                     self.isBusy = false
@@ -101,7 +105,9 @@ final class AuthViewModel: ObservableObject {
 
         Task {
             do {
+                await MemorySyncService.shared.syncNow()
                 try await authClient.signOut()
+                try await self.activateLocalAccount(userID: nil, migrateLegacyData: false)
                 GatewayQuotaStore.shared.clear()
                 await MainActor.run {
                     self.initializedUserID = nil
@@ -117,6 +123,60 @@ final class AuthViewModel: ObservableObject {
                 await MainActor.run {
                     self.isBusy = false
                 }
+            }
+        }
+    }
+
+    func deleteAccount() {
+        guard !isBusy,
+              let userID = authClient.currentUserID(),
+              let client = GatewayAccountClient.make()
+        else { return }
+        isBusy = true
+        errorMessage = nil
+        statusMessage = nil
+
+        Task {
+            do {
+                try await client.deleteAccount()
+
+                // Close SQLite handles before deleting the account directory.
+                AppSupport.markAccountForDeletion(userID)
+                var localCleanupFailed = false
+                do {
+                    try await self.activateLocalAccount(userID: nil, migrateLegacyData: false)
+                } catch {
+                    localCleanupFailed = true
+                }
+                FoundationComposeDraftStore.removeAccountData(userID: userID)
+                do {
+                    try AppSupport.removeAccountDirectory(for: userID)
+                    AppSupport.clearPendingAccountDeletion(userID)
+                } catch {
+                    localCleanupFailed = true
+                }
+                ScreenshotCaptureService.cleanupTemporaryCaptures()
+                try? await authClient.signOut()
+                GatewayQuotaStore.shared.clear()
+
+                await MainActor.run {
+                    self.initializedUserID = nil
+                    self.tenantID = nil
+                    self.accountSummary = nil
+                    self.signedInEmail = nil
+                    self.authMethodLabel = nil
+                    self.hasSession = false
+                    if localCleanupFailed {
+                        self.statusMessage = nil
+                        self.errorMessage = "アカウントは削除されました。このMacのローカルデータは次回起動時に消去を再試行します。"
+                    } else {
+                        self.statusMessage = "アカウントと、このMacに保存された関連データを削除しました。"
+                    }
+                    self.isBusy = false
+                }
+            } catch {
+                await present(error)
+                await MainActor.run { self.isBusy = false }
             }
         }
     }
@@ -137,7 +197,11 @@ final class AuthViewModel: ObservableObject {
         do {
             switch change.event {
             case .initialSession:
-                try await refreshState(session: change.session, shouldBootstrap: change.session != nil)
+                try await refreshState(
+                    session: change.session,
+                    shouldBootstrap: change.session != nil,
+                    migrateLegacyData: change.session != nil
+                )
                 // Normal launches restore the session asynchronously and emit
                 // .initialSession (not .signedIn), after the launch-time sync
                 // in MemorySyncService.start() has already no-opped without a
@@ -146,15 +210,24 @@ final class AuthViewModel: ObservableObject {
                     Task { await MemorySyncService.shared.syncNow() }
                 }
             case .signedIn:
-                try await refreshState(session: change.session, shouldBootstrap: true)
+                try await refreshState(
+                    session: change.session,
+                    shouldBootstrap: true,
+                    migrateLegacyData: false
+                )
                 statusMessage = authMethodLabel.map { "\($0)でログインしました。" } ?? "ログインしました。"
                 // Gateway access just became available (or a new user signed
                 // in on this device) — sync memory right away rather than
                 // waiting for the next local edit.
                 Task { await MemorySyncService.shared.syncNow() }
             case .tokenRefreshed, .userUpdated, .mfaChallengeVerified, .passwordRecovery:
-                try await refreshState(session: change.session, shouldBootstrap: false)
+                try await refreshState(
+                    session: change.session,
+                    shouldBootstrap: false,
+                    migrateLegacyData: false
+                )
             case .signedOut, .userDeleted:
+                try await activateLocalAccount(userID: nil, migrateLegacyData: false)
                 initializedUserID = nil
                 tenantID = nil
                 accountSummary = nil
@@ -167,8 +240,13 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    private func refreshState(session: Session?, shouldBootstrap: Bool) async throws {
+    private func refreshState(
+        session: Session?,
+        shouldBootstrap: Bool,
+        migrateLegacyData: Bool
+    ) async throws {
         guard let session else {
+            try await activateLocalAccount(userID: nil, migrateLegacyData: false)
             initializedUserID = nil
             tenantID = nil
             signedInEmail = nil
@@ -177,6 +255,10 @@ final class AuthViewModel: ObservableObject {
             return
         }
 
+        try await activateLocalAccount(
+            userID: session.user.id,
+            migrateLegacyData: migrateLegacyData
+        )
         hasSession = true
         signedInEmail = session.user.email ?? authClient.currentUserEmail()
         authMethodLabel = authMethodLabel(for: session)
@@ -191,6 +273,24 @@ final class AuthViewModel: ObservableObject {
         }
 
         accountSummary = try await fetchAccountSummary()
+    }
+
+    private func activateLocalAccount(
+        userID: UUID?,
+        migrateLegacyData: Bool
+    ) async throws {
+        FoundationComposeDraftStore.activateAccount(
+            userID: userID,
+            migrateLegacyDraft: migrateLegacyData
+        )
+        try await LocalHistoryStore.shared.activateAccount(
+            userID: userID,
+            migrateLegacyDatabase: migrateLegacyData
+        )
+        try await MemoryStore.shared.activateAccount(
+            userID: userID,
+            migrateLegacyDatabase: migrateLegacyData
+        )
     }
 
     /// Refreshes the account summary (and the quota bundled with it) from the

@@ -4,7 +4,7 @@ import SQLite3
 extension Notification.Name {
     /// Posted after any local write to `memory_cards` (persona/relationship
     /// create, edit, or delete). `MemorySyncService` debounces on this to
-    /// push the change to the gateway. Never posted by `applyServerState`,
+    /// push the change to the gateway. Server reconciliation does not post it,
     /// since that would re-trigger the sync loop.
     static let memoryCardsDidChange = Notification.Name("BombSquad.memoryCardsDidChange")
 }
@@ -18,6 +18,7 @@ actor MemoryStore {
     static let shared = MemoryStore()
 
     private var database: OpaquePointer?
+    private var activeUserID: UUID?
     private let fileManager: FileManager
 
     init(fileManager: FileManager = .default) {
@@ -26,6 +27,20 @@ actor MemoryStore {
 
     deinit {
         sqlite3_close(database)
+    }
+
+    func activateAccount(userID: UUID?, migrateLegacyDatabase: Bool = false) throws {
+        if activeUserID == userID { return }
+        sqlite3_close(database)
+        database = nil
+        activeUserID = userID
+        if let userID {
+            _ = try AppSupport.accountDirectory(
+                for: userID,
+                migrateLegacyDatabases: migrateLegacyDatabase
+            )
+        }
+        NotificationCenter.default.post(name: .memoryCardsDidSync, object: nil)
     }
 
     // MARK: - Persona
@@ -81,14 +96,21 @@ actor MemoryStore {
         guard !trimmedSubject.isEmpty else { return }
         let dateStamp = Self.dateStamp()
 
-        if let existing = try relationshipCards().first(where: {
-            $0.subject?.compare(trimmedSubject, options: .caseInsensitive) == .orderedSame
+        let normalizedSubject = Self.normalizedRelationshipSubject(trimmedSubject)
+        let relationships = try relationshipCards()
+        if let existing = relationships.first(where: {
+            guard let subject = $0.subject else { return false }
+            return Self.normalizedRelationshipSubject(subject) == normalizedSubject
         }) {
             guard let content = Self.appendingLearnedNote(note, to: existing.contentMD) else {
                 return
             }
             try updateCard(id: existing.id, contentMD: content, source: .distilled)
         } else {
+            // One persona plus at most 199 live relationship cards. Deleted
+            // tombstones are not part of this product limit and incremental
+            // sync no longer sends them on every request.
+            guard relationships.count < 199 else { return }
             let content = """
             # \(trimmedSubject)
 
@@ -116,7 +138,11 @@ actor MemoryStore {
 
     func updateCard(id: String, contentMD: String, source: MemoryCard.Source) throws {
         try openIfNeeded()
-        let sql = "UPDATE memory_cards SET content_md = ?, source = ?, updated_at = ? WHERE id = ?;"
+        let sql = """
+        UPDATE memory_cards
+        SET content_md = ?, source = ?, updated_at = ?, sync_state = 'dirty'
+        WHERE id = ?;
+        """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
             throw databaseError()
@@ -136,7 +162,7 @@ actor MemoryStore {
         try openIfNeeded()
         let sql = """
         UPDATE memory_cards
-        SET subject = NULL, content_md = '', deleted_at = ?, updated_at = ?
+        SET subject = NULL, content_md = '', deleted_at = ?, updated_at = ?, sync_state = 'dirty'
         WHERE id = ?;
         """
         var statement: OpaquePointer?
@@ -161,8 +187,9 @@ actor MemoryStore {
 
     // MARK: - Sync (M3-B)
 
-    /// Every local card, including soft-deleted tombstones — the full state
-    /// pushed to the gateway on each sync.
+    /// Every local card, including soft-deleted tombstones. Kept for local
+    /// inspection and one-time database migration; normal sync sends only
+    /// rows whose `sync_state` is dirty.
     func allCardsIncludingDeleted() throws -> [MemoryCard] {
         try openIfNeeded()
         let sql = """
@@ -185,23 +212,119 @@ actor MemoryStore {
         return cards
     }
 
-    /// Applies the gateway's merged server state (the `PUT` response body)
-    /// back into the local store: inserts cards missing locally, and
-    /// overwrites a local row only when the server copy is strictly newer
-    /// (last-write-wins on `updatedAt`). Never posts `.memoryCardsDidChange`
-    /// — this is the pull side of sync, not a user edit, and posting would
-    /// re-trigger `MemorySyncService`'s debounced push.
-    func applyServerState(_ cards: [MemoryCard]) throws {
+    /// Returns one bounded batch of local changes. `baseServerUpdatedAt` is
+    /// the server version the edit was based on, so the gateway can reject a
+    /// true cross-device conflict without trusting the Mac's wall clock.
+    func pendingSyncRecords(limit: Int = 100) throws -> [MemoryUploadRecord] {
         try openIfNeeded()
-        let localByID = Dictionary(
-            uniqueKeysWithValues: try allCardsIncludingDeleted().map { ($0.id, $0) }
-        )
-        for card in cards {
-            if let local = localByID[card.id] {
-                guard card.updatedAt > local.updatedAt else { continue }
-            }
-            try upsertCard(card)
+        let sql = """
+        SELECT id, kind, subject, content_md, source, created_at, updated_at, deleted_at,
+               server_updated_at
+        FROM memory_cards
+        WHERE sync_state IN ('dirty', 'conflict')
+        ORDER BY updated_at ASC
+        LIMIT ?;
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw databaseError()
         }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_int(statement, 1, Int32(limit))
+
+        var records: [MemoryUploadRecord] = []
+        while sqlite3_step(statement) == SQLITE_ROW {
+            guard let card = card(from: statement) else { continue }
+            let base = sqlite3_column_type(statement, 8) == SQLITE_NULL
+                ? nil
+                : Date(timeIntervalSince1970: sqlite3_column_double(statement, 8))
+            records.append(MemoryUploadRecord(card: card, baseServerUpdatedAt: base))
+        }
+        return records
+    }
+
+    func syncCursor() throws -> Date? {
+        try openIfNeeded()
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "SELECT value FROM memory_sync_state WHERE key = 'cursor';",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK else { throw databaseError() }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let value = string(from: statement, column: 0),
+              let seconds = TimeInterval(value)
+        else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    /// Applies an incremental server page. Dirty rows are never overwritten
+    /// unless the server explicitly acknowledged that exact local upload.
+    func applySyncResponse(_ response: MemorySyncResponse) throws {
+        try openIfNeeded()
+        let acknowledged = Set(response.syncedIDs)
+        for remote in response.cards {
+            if let state = try syncState(for: remote.id),
+               state == "dirty" || state == "conflict",
+               !acknowledged.contains(remote.id) {
+                continue
+            }
+            try upsertCard(remote)
+            try markClean(id: remote.id, serverUpdatedAt: remote.updatedAt)
+        }
+
+        for conflict in response.conflicts {
+            try markConflict(id: conflict.id)
+        }
+
+        if let cursor = response.cursor {
+            try execute(
+                """
+                INSERT INTO memory_sync_state (key, value)
+                VALUES ('cursor', '\(cursor.timeIntervalSince1970)')
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+                """
+            )
+        }
+    }
+
+    /// Explicit conflict resolution: preserve this Mac's edit, but rebase it
+    /// onto the server version returned with the conflict. The next sync can
+    /// then overwrite intentionally instead of doing so silently.
+    func resolveConflictsUsingLocal(_ serverCards: [MemoryCard]) throws {
+        try openIfNeeded()
+        for card in serverCards {
+            let sql = """
+            UPDATE memory_cards
+            SET server_updated_at = ?, sync_state = 'dirty'
+            WHERE id = ? AND sync_state = 'conflict';
+            """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw databaseError()
+            }
+            sqlite3_bind_double(statement, 1, card.updatedAt.timeIntervalSince1970)
+            sqlite3_bind_text(statement, 2, card.id, -1, transientDestructor)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                sqlite3_finalize(statement)
+                throw databaseError()
+            }
+            sqlite3_finalize(statement)
+        }
+    }
+
+    /// Explicit conflict resolution: discard this Mac's edit and apply the
+    /// already-current cloud copy supplied by the gateway.
+    func resolveConflictsUsingCloud(_ serverCards: [MemoryCard]) throws {
+        try openIfNeeded()
+        for card in serverCards {
+            try upsertCard(card)
+            try markClean(id: card.id, serverUpdatedAt: card.updatedAt)
+        }
+        NotificationCenter.default.post(name: .memoryCardsDidSync, object: nil)
     }
 
     // MARK: - Internals
@@ -209,6 +332,14 @@ actor MemoryStore {
     private static let learnedSectionHeader = "## 学習した傾向"
     private static let maxCardChars = 6000
     private static let maxLearnedNotes = 20
+
+    private static func normalizedRelationshipSubject(_ value: String) -> String {
+        value
+            .precomposedStringWithCompatibilityMapping
+            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
 
     private static func dateStamp() -> String {
         let formatter = DateFormatter()
@@ -318,8 +449,9 @@ actor MemoryStore {
     ) throws {
         try openIfNeeded()
         let sql = """
-        INSERT INTO memory_cards (id, kind, subject, content_md, source, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO memory_cards (
+            id, kind, subject, content_md, source, created_at, updated_at, sync_state
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'dirty');
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -392,7 +524,8 @@ actor MemoryStore {
     private func openIfNeeded() throws {
         guard database == nil else { return }
 
-        let directoryURL = try applicationSupportDirectory()
+        guard let activeUserID else { throw LocalAccountDataError.noActiveAccount }
+        let directoryURL = try AppSupport.accountDirectory(for: activeUserID)
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
         let databaseURL = directoryURL.appendingPathComponent("memory.sqlite")
@@ -416,11 +549,22 @@ actor MemoryStore {
                 source TEXT NOT NULL,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL,
-                deleted_at REAL
+                deleted_at REAL,
+                server_updated_at REAL,
+                sync_state TEXT NOT NULL DEFAULT 'dirty'
             );
             """
         )
         try migrateAddDeletedAtColumnIfNeeded()
+        try migrateAddSyncColumnsIfNeeded()
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_sync_state (
+                key TEXT PRIMARY KEY NOT NULL,
+                value TEXT NOT NULL
+            );
+            """
+        )
         try migrateNormalizeIdCaseIfNeeded()
         try scrubDeletedCardContent()
     }
@@ -463,6 +607,78 @@ actor MemoryStore {
         try execute("ALTER TABLE memory_cards ADD COLUMN deleted_at REAL;")
     }
 
+    private func migrateAddSyncColumnsIfNeeded() throws {
+        let columns = try tableColumns("memory_cards")
+        if !columns.contains("server_updated_at") {
+            // Existing clients used the same updated_at value on the server.
+            // Treat it as the initial base version; the first successful new
+            // protocol sync replaces it with an authoritative server clock.
+            try execute("ALTER TABLE memory_cards ADD COLUMN server_updated_at REAL;")
+            try execute("UPDATE memory_cards SET server_updated_at = updated_at;")
+        }
+        if !columns.contains("sync_state") {
+            try execute("ALTER TABLE memory_cards ADD COLUMN sync_state TEXT NOT NULL DEFAULT 'dirty';")
+        }
+    }
+
+    private func tableColumns(_ table: String) throws -> Set<String> {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA table_info(\(table));", -1, &statement, nil) == SQLITE_OK else {
+            throw databaseError()
+        }
+        defer { sqlite3_finalize(statement) }
+        var result = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if let name = string(from: statement, column: 1) { result.insert(name) }
+        }
+        return result
+    }
+
+    private func syncState(for id: String) throws -> String? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "SELECT sync_state FROM memory_cards WHERE id = ?;",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK else { throw databaseError() }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, id, -1, transientDestructor)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        return string(from: statement, column: 0)
+    }
+
+    private func markClean(id: String, serverUpdatedAt: Date) throws {
+        let sql = """
+        UPDATE memory_cards
+        SET server_updated_at = ?, sync_state = 'clean'
+        WHERE id = ?;
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw databaseError()
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_double(statement, 1, serverUpdatedAt.timeIntervalSince1970)
+        sqlite3_bind_text(statement, 2, id, -1, transientDestructor)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError() }
+    }
+
+    private func markConflict(id: String) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(
+            database,
+            "UPDATE memory_cards SET sync_state = 'conflict' WHERE id = ?;",
+            -1,
+            &statement,
+            nil
+        ) == SQLITE_OK else { throw databaseError() }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, id, -1, transientDestructor)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError() }
+    }
+
     /// Older builds retained card content inside deletion tombstones. Scrub
     /// it on first access without changing the logical deletion timestamp.
     private func scrubDeletedCardContent() throws {
@@ -485,10 +701,6 @@ actor MemoryStore {
     private func string(from statement: OpaquePointer?, column: Int32) -> String? {
         guard let text = sqlite3_column_text(statement, column) else { return nil }
         return String(cString: text)
-    }
-
-    private func applicationSupportDirectory() throws -> URL {
-        try AppSupport.directory()
     }
 
     private func databaseError(database: OpaquePointer? = nil) -> NSError {

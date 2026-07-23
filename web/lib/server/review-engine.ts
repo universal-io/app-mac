@@ -74,6 +74,7 @@ function prepareCall(input: EngineInput, target: AIModelTarget): {
   if (target.vendor === "openai") {
     body.max_completion_tokens = 2048;
     body.reasoning_effort = "none";
+    body.store = false;
   } else {
     body.max_tokens = 2048;
   }

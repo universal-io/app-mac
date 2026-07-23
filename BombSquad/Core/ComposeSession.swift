@@ -2,23 +2,48 @@ import Foundation
 
 /// Persisted compose draft. The key retains its pre-rebuild spelling so an
 /// existing user's unfinished draft survives the architecture replacement.
-private enum FoundationComposeDraftStore {
-    private static let key = "ReviewViewModel.composeDraft"
+enum FoundationComposeDraftStore {
+    private static let legacyKey = "ReviewViewModel.composeDraft"
+    private static var activeUserID: UUID?
+
+    static func activateAccount(userID: UUID?, migrateLegacyDraft: Bool = false) {
+        activeUserID = userID
+        guard let userID, migrateLegacyDraft else { return }
+        let scopedKey = key(for: userID)
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: scopedKey) == nil,
+           let legacyDraft = defaults.string(forKey: legacyKey) {
+            defaults.set(legacyDraft, forKey: scopedKey)
+        }
+        defaults.removeObject(forKey: legacyKey)
+    }
+
+    static func removeAccountData(userID: UUID) {
+        UserDefaults.standard.removeObject(forKey: key(for: userID))
+    }
 
     static func load() -> String {
-        UserDefaults.standard.string(forKey: key) ?? ""
+        guard let activeUserID else { return "" }
+        return UserDefaults.standard.string(forKey: key(for: activeUserID)) ?? ""
     }
 
     static func save(_ draft: String) {
         if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            UserDefaults.standard.removeObject(forKey: key)
+            guard let activeUserID else { return }
+            UserDefaults.standard.removeObject(forKey: key(for: activeUserID))
         } else {
-            UserDefaults.standard.set(draft, forKey: key)
+            guard let activeUserID else { return }
+            UserDefaults.standard.set(draft, forKey: key(for: activeUserID))
         }
     }
 
     static func clear() {
-        UserDefaults.standard.removeObject(forKey: key)
+        guard let activeUserID else { return }
+        UserDefaults.standard.removeObject(forKey: key(for: activeUserID))
+    }
+
+    private static func key(for userID: UUID) -> String {
+        "foundation.composeDraft.\(userID.uuidString.lowercased())"
     }
 }
 
@@ -47,6 +72,7 @@ final class ComposeSession: ObservableObject {
     let outputLanguage: OutputLanguage
 
     private let deployer: Deployer
+    private let injectedReviewProvider: ReviewProvider?
     private var contextCaptureTask: Task<SituationalContext?, Never>?
     private var reviewTask: Task<Void, Never>?
     private var hasLoadedHistory = false
@@ -55,9 +81,11 @@ final class ComposeSession: ObservableObject {
 
     init(
         deployer: Deployer,
-        contextCaptureTask: Task<SituationalContext?, Never>
+        contextCaptureTask: Task<SituationalContext?, Never>,
+        provider: ReviewProvider? = nil
     ) {
         self.deployer = deployer
+        self.injectedReviewProvider = provider
         self.contextCaptureTask = contextCaptureTask
         self.outputLanguage = AppSettings.outputLanguage()
         self.draft = FoundationComposeDraftStore.load()
@@ -220,6 +248,30 @@ final class ComposeSession: ObservableObject {
         let context = await resolveContext()
         let memory = await resolveMemory(context: context)
         guard !Task.isCancelled else { return }
+        if let injectedReviewProvider {
+            do {
+                let reviewed = try await injectedReviewProvider.review(
+                    draft: input,
+                    language: language,
+                    context: context,
+                    memory: memory
+                )
+                try Task.checkCancellation()
+                lastDurationMs = Int(Date().timeIntervalSince(started) * 1000)
+                lastModelName = "Test Provider"
+                result = reviewed
+                revisedDraft = reviewed.revisedText
+                reviewedDraft = input
+                reviewedLanguage = language
+                focusedField = .draft
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+            return
+        }
+
         guard let provider = GatewayReviewClient.make() else {
             errorMessage = "入力レビューサービスを利用できません。ログイン状態を確認してください。"
             return

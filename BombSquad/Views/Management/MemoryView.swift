@@ -7,6 +7,7 @@ import SwiftUI
 struct MemoryView: View {
     @StateObject private var viewModel = MemoryViewModel()
     @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
+    @ObservedObject private var syncStatus = MemorySyncStatusStore.shared
     @AppStorage(AppSettings.isMemoryEnabledKey) private var isMemoryEnabled = true
 
     var body: some View {
@@ -25,6 +26,11 @@ struct MemoryView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+
+
+            Section("同期") {
+                memorySyncStatus
             }
 
             Section("あなたのスタイルプロファイル") {
@@ -61,6 +67,48 @@ struct MemoryView: View {
     }
 
     // MARK: - Persona
+
+    @ViewBuilder
+    private var memorySyncStatus: some View {
+        switch syncStatus.status {
+        case .inactive:
+            Label("ログインすると、このアカウントのメモリを端末間で同期します。", systemImage: "icloud.slash")
+                .foregroundStyle(.secondary)
+        case .syncing:
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("メモリを同期中…")
+            }
+        case .synced(let date):
+            Label("同期済み（\(Self.dateFormatter.string(from: date))）", systemImage: "checkmark.icloud")
+                .foregroundStyle(.secondary)
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Label("メモリを同期できませんでした", systemImage: "exclamationmark.icloud")
+                    .foregroundStyle(.red)
+                Text(message).font(.caption).foregroundStyle(.secondary)
+                Button("再試行") {
+                    Task { await MemorySyncService.shared.syncNow() }
+                }
+            }
+        case .conflict(let count):
+            VStack(alignment: .leading, spacing: 8) {
+                Label("\(count)件のメモリが別のMacで同時に変更されています。", systemImage: "arrow.triangle.branch")
+                    .foregroundStyle(.orange)
+                Text("どちらを残すか選ぶまで、該当カードは上書きしません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("このMacの内容を残す") {
+                        Task { await MemorySyncService.shared.resolveConflictsUsingLocal() }
+                    }
+                    Button("クラウドの内容を使う") {
+                        Task { await MemorySyncService.shared.resolveConflictsUsingCloud() }
+                    }
+                }
+            }
+        }
+    }
 
     @ViewBuilder
     private func personaEditor(_ persona: MemoryCard) -> some View {

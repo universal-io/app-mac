@@ -26,3 +26,7 @@ tools/release.env
 web/node_modules/
 web/.next/
 web/.env.local
+
+# Local agent / Supabase CLI state (machine-specific, never repository state)
+.codex/
+supabase/.temp/

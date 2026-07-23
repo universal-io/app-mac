@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var managementWindow: NSWindow?
     private var permissionsWindow: NSWindow?
     private lazy var permissions = PermissionsCoordinator()
-    private let authClient = BombSquadAuthClient.shared
+    private lazy var authClient = BombSquadAuthClient.shared
     private let gesture = ModifierGestureMonitor()
     private let recorder = AudioRecorder()
     private var coreCoordinator: SessionCoordinator?
@@ -30,9 +30,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if AppRuntime.isRunningUnitTests {
+            // Hosted unit tests launch the app executable only as a loader.
+            // Do not start global event monitors, permission windows, or the
+            // single-instance terminator inside the test runner.
+            NSApp.setActivationPolicy(.prohibited)
+            return
+        }
         trace("app.didFinishLaunching")
         terminateOtherRunningCopies()
         ScreenshotCaptureService.cleanupTemporaryCaptures()
+        AppSupport.cleanupPendingAccountDeletions()
         NSApp.setActivationPolicy(.accessory)
 
         // Start shared services before the first summon so authentication and

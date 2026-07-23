@@ -17,11 +17,10 @@ create table if not exists public.bs_memory_cards (
     deleted_at timestamptz
 );
 
--- NOTE: updated_at is the client's own logical clock, used by the sync route
--- for last-write-wins conflict resolution across devices. Unlike the other
--- bs_ tables, this column is set explicitly by the route handler on every
--- write and must NOT be overwritten by a server-side trigger, so no
--- bs_touch_updated_at trigger is attached to this table.
+-- NOTE: updated_at is assigned by the Gateway and used as the server version
+-- for cursor pulls and compare-and-swap conflict detection. It must not be
+-- overwritten by a generic trigger, so no bs_touch_updated_at trigger is
+-- attached to this table.
 
 create index if not exists bs_memory_cards_user_updated_at_idx
     on public.bs_memory_cards (user_id, updated_at desc);

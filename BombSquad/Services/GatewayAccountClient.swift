@@ -39,6 +39,14 @@ struct GatewayAccountClient {
             monthlyReviewLimit: envelope.account.monthlyReviewLimit
         )
     }
+
+    func deleteAccount() async throws {
+        _ = try await client.postJSON(
+            "account",
+            method: "DELETE",
+            body: ["confirmation": "DELETE"]
+        )
+    }
 }
 
 private struct AccountResponse: Decodable {

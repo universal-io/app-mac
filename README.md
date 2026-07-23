@@ -39,16 +39,38 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 
 ## データ保存
 
-- 入力履歴はComposeで実際に送信した原文と最終文だけを、このMacへ最新100件保存する。
+- 入力履歴はComposeで実際に送信した原文と最終文だけを、ログイン中のユーザー専用領域へ
+  最新100件保存する。
   Transformの選択文、解説、返信案、コピー結果は履歴へ保存しない。
-- 未送信のCompose下書きと設定値はこのMacへ保存する。送信した下書きは消去する。
+- 未送信のCompose下書きもユーザー単位でこのMacへ保存する。送信した下書きは消去する。
 - メモリカードはこのMacと、ログイン中のユーザーに紐づくSupabaseへ同期する。削除時は
   同期用tombstoneだけを残し、本文と相手名はローカル・サーバー双方から消去する。
+- 履歴・下書き・メモリはSupabase user IDごとに分離する。ログアウト時はローカルDBを閉じ、
+  別アカウントへ内容を表示・注入・同期しない。旧版の未分離データは、起動時に復元できた既存
+  セッションにだけ一度移行する。
+- SupabaseのログインセッションはUniversal I/O専用のmacOS Keychain領域へ保存する。旧SDK共通
+  キーは一度だけ移行し、テスト起動ではKeychainを開かない。
+- メモリ同期は変更分だけを最大100件ずつ送る。Gatewayの時刻を版として競合を検出し、別Macの
+  同時変更はユーザーが「このMac」「クラウド」のどちらを残すか決めるまで上書きしない。
+  内容を消去したtombstoneは長期オフライン端末からの復活を防ぐため保持するが、毎回は送らない。
 - スクリーンショットと音声は処理用の一時ファイルだけに置く。通常終了時に削除し、異常終了で
   残ったVision画像も次回起動時に削除する。Vision/Copilotの会話は永続化しない。
 - Supabaseのusageには機能、モデル、token／秒数、成功・失敗、処理時間などの運用情報だけを
   記録し、入力本文、回答本文、画像、音声、アプリ名、ウインドウタイトルは保存しない。
-- usageの自動削除期間、アカウント削除、AI事業者のZDRは今後確定が必要な運用項目とする。
+- request単位のusageは90日保持し、期限後はユーザーID・request IDを持たないテナント月次集計へ
+  加算して詳細行を自動削除する。月次利用枠は当月の成功行だけで計算する。
+- アカウント画面から退会できる。直近10分以内の再認証を要求し、Authユーザー、メモリ、usage、
+  profile、個人tenantと、このMacの履歴・下書き・メモリを削除する。有効な契約があれば先に解約する。
+
+### AI事業者側の保持（ZDR）
+
+- OpenAIのResponses / Chat Completionsにはすべて`store: false`を指定する。これはAPIの会話状態を
+  保存しない指定であり、不正利用監視ログも除外するZDRとは別である。
+- OpenAI ZDRは承認後にOrganization / ProjectのData controlsで有効化する。Groq ZDRはData
+  Controlsで有効化する。コードから有効状態は取得できないため、リリース前チェックで両方の
+  管理画面を確認する。
+- 公式仕様: [OpenAI Data controls](https://developers.openai.com/api/docs/guides/your-data)、
+  [Groq Your Data](https://console.groq.com/docs/your-data)。
 
 ## 本番アーキテクチャ
 
@@ -108,6 +130,11 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 `https://dl.universal-io.com/releases/0.1.0/build-2/Universal-IO.dmg`、SHA-256は
 `e0b08385d11cb591019490a93a5bfc2aa3b0f510ef577f116ab768c3f90f2f90`です。
 
+次の候補版は `0.1.1`（build `3`）とする。データ保持、アカウント分離・退会、メモリ差分同期、
+Keychainのアプリ専用化を含め、本番Gatewayを先にdeployした後で署名・notarization済みDMGを作る。
+外部テスターにはこの候補DMGを限定共有し、確認完了後に公開サイトを切り替える。現在の公開DMGを
+Webサイトからインストールするテストは安全だが、それで確認できるのは `0.1.0` build `2` までである。
+
 公開版は長期ブランチではなく、Gitタグと変更しないバージョン／build別DMGで保存します。
 `main`は次のリリースへ進め、公開済みコードへ緊急修正が必要な場合だけタグからfixブランチを
 作成します。versionは公開単位で更新し、build番号は署名・配布ビルドごとに増加させます。
@@ -125,6 +152,11 @@ bash tools/release.sh --publish
 `Universal-IO-<version>.dmg`と互換用latest aliasの`Universal-IO.dmg`も更新します。
 CDNの旧aliasキャッシュを避けるため、WebサイトのCTAは履歴用の不変URLを直接参照します。
 公開成功後、そのソースコミットへ`v<version>`タグを付けます。
+
+ここでいう「旧DMGを上書きしない」は配布サーバー上の履歴管理を指す。ユーザーが新しいDMGから
+Applicationsへコピーし、既存の `Universal IO.app` を置き換えるのは通常のアップデートである。
+XcodeのRunで使うDebugアプリは通常DerivedData内にあり、Applications版とは別のファイルである。
+インストーラー確認時は両方を同時起動せず、Xcode版を終了してApplications版だけを起動する。
 
 ## 設定
 

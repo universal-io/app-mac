@@ -5,9 +5,12 @@ final class ComposeSessionFocusTests: XCTestCase {
     @MainActor
     func testReviewCompletionKeepsDraftAsExplicitDefault() async throws {
         let defaults = UserDefaults.standard
-        let draftKey = "ReviewViewModel.composeDraft"
+        let userID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        let draftKey = "foundation.composeDraft.\(userID.uuidString.lowercased())"
         let previousDraft = defaults.object(forKey: draftKey)
+        FoundationComposeDraftStore.activateAccount(userID: userID)
         defer {
+            FoundationComposeDraftStore.activateAccount(userID: nil)
             if let previousDraft {
                 defaults.set(previousDraft, forKey: draftKey)
             } else {
@@ -40,9 +43,12 @@ final class ComposeSessionFocusTests: XCTestCase {
     @MainActor
     func testRestoringInputHistoryPopulatesDraftWithoutDeploying() {
         let defaults = UserDefaults.standard
-        let draftKey = "ReviewViewModel.composeDraft"
+        let userID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
+        let draftKey = "foundation.composeDraft.\(userID.uuidString.lowercased())"
         let previousDraft = defaults.object(forKey: draftKey)
+        FoundationComposeDraftStore.activateAccount(userID: userID)
         defer {
+            FoundationComposeDraftStore.activateAccount(userID: nil)
             if let previousDraft {
                 defaults.set(previousDraft, forKey: draftKey)
             } else {
