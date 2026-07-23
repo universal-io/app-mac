@@ -154,8 +154,8 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 アカウント分離・退会、メモリ差分同期、Keychainのアプリ専用化、開発/本番のアプリ正体分離、
 初回セットアップのUX改善、アプリアイコンを含む。本番Gatewayとマイグレーションは先に反映済み。
 
-外部テスターにはこの不変URLを限定共有し、確認完了後にWebサイトのCTAを 0.1.1 の不変URLへ切り替える。
-`--publish` は R2 への配置と `latest` alias 更新まで行い、Webサイトの公開CTAの切替は別ステップである。
+公開URL（`Universal-IO.dmg`）は現在 0.1.1 build 3 を配信中である。外部テスターへは不変URLを
+限定共有し、公開に確定する時は `--promote` で公開URLを向け直す（下記）。
 一つ前の `v0.1.0`（build `2`、ソース `700f607`）は
 `https://dl.universal-io.com/releases/0.1.0/build-2/Universal-IO.dmg`、SHA-256
 `e0b08385d11cb591019490a93a5bfc2aa3b0f510ef577f116ab768c3f90f2f90` として不変保存されている。
@@ -168,15 +168,20 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 # Developer ID署名、notarization、staple、Gatekeeper検証、DMG作成まで
 bash tools/release.sh
 
-# 上記に加え、履歴用の不変URLへ保存してWebサイトの最新版を切り替える
+# 上記に加え、不変URLとversion aliasへアップロード（公開URLは変えない）
 bash tools/release.sh --publish
+
+# 検証後、公開URL（Universal-IO.dmg）を選んだビルドへ向ける＝公開確定
+bash tools/release.sh --promote 0.1.1 3
 ```
 
-通常実行は配布物を変更しません。`--publish`だけがR2へアップロードします。公開時は
-`releases/<version>/build-<build>/Universal-IO.dmg`を履歴として保持し、
-`Universal-IO-<version>.dmg`と互換用latest aliasの`Universal-IO.dmg`も更新します。
-CDNの旧aliasキャッシュを避けるため、WebサイトのCTAは履歴用の不変URLを直接参照します。
-公開成功後、そのソースコミットへ`v<version>`タグを付けます。
+**ビルドの公開と「公開ダウンロードにする」を分離する。** `--publish` は
+`releases/<version>/build-<build>/Universal-IO.dmg`（不変）と `Universal-IO-<version>.dmg` だけを
+書き、**公開URL `Universal-IO.dmg` は触らない**。候補を検証したら `--promote <version> <build>` で
+公開URLをそのビルドへ server-side copy する。これにより **WebサイトのCTAは版を持たない
+`https://dl.universal-io.com/Universal-IO.dmg` に固定でき、二度と編集不要**（公開の切替は promote で
+行う）。問題時は旧ビルドへ `--promote` し直せば公開を戻せる。公開成功後、そのソースコミットへ
+`v<version>` タグを付ける。
 
 ここでいう「旧DMGを上書きしない」は配布サーバー上の履歴管理を指す。ユーザーが新しいDMGから
 Applicationsへコピーし、既存の `Universal IO.app` を置き換えるのは通常のアップデートである。
