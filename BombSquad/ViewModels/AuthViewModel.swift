@@ -321,11 +321,20 @@ final class AuthViewModel: ObservableObject {
     }
 
     private func authMethodLabel(for session: Session) -> String? {
-        if let provider = session.user.appMetadata["provider"]?.stringValue {
-            return providerLabel(for: provider)
+        // Show the account's actually-linked identities, not
+        // app_metadata.provider — that field holds only the FIRST provider used,
+        // so an account created with email and later linked to Google would keep
+        // reading "email" even after a Google sign-in. Deduplicated, joined.
+        let providers = session.user.identities?.map(\.provider) ?? []
+        if !providers.isEmpty {
+            var seen = Set<String>()
+            let labels = providers
+                .map(providerLabel(for:))
+                .filter { seen.insert($0).inserted }
+            return labels.joined(separator: "・")
         }
 
-        if let provider = session.user.identities?.first?.provider {
+        if let provider = session.user.appMetadata["provider"]?.stringValue {
             return providerLabel(for: provider)
         }
 
