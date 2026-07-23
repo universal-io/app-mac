@@ -45,11 +45,21 @@ targets:
         optional: true
     settings:
       base:
+        # Production identity (Release inherits this). Debug overrides it below
+        # with a distinct id/name so development builds NEVER share the
+        # production app's Launch Services identity — otherwise a dev build in
+        # DerivedData/tmp can win bundle-id name resolution and hide the real
+        # /Applications app from Launchpad. See docs/dev-prod-app-identity.md.
         PRODUCT_BUNDLE_IDENTIFIER: com.universal-io.mac
         # The .app file name (shown in permission dialogs and the TCC lists).
         # "/" is illegal in file names, so the display name stays "Universal I/O"
         # while the bundle is "Universal IO.app". Code namespace rename is M5.
         PRODUCT_NAME: Universal IO
+        # Pin the Swift module name so it does NOT follow the per-config
+        # PRODUCT_NAME. Without this, the Debug name "Universal IO Dev" would
+        # make the module "Universal_IO_Dev" and break `@testable import
+        # Universal_IO` in the test target.
+        PRODUCT_MODULE_NAME: Universal_IO
         CODE_SIGN_STYLE: Manual
         PROVISIONING_PROFILE_SPECIFIER: ""
         # Microphone entitlement (audio-input). Harmless under Debug too.
@@ -64,6 +74,14 @@ targets:
         # TG68TFXG88. Pointing DEVELOPMENT_TEAM at the free team therefore
         # fails with "No signing certificate 'Mac Development' found".
         Debug:
+          # Distinct dev identity: coexists with the installed production app
+          # instead of colliding with it. TCC (screen recording / accessibility
+          # / microphone) and Keychain "Always Allow" still persist across
+          # rebuilds because the signing identity below is stable — the id split
+          # only changes WHICH app the grants attach to, not their durability.
+          # Grant permissions once to "Universal IO Dev" on first run.
+          PRODUCT_BUNDLE_IDENTIFIER: com.universal-io.mac.dev
+          PRODUCT_NAME: Universal IO Dev
           CODE_SIGN_IDENTITY: "Apple Development"
           DEVELOPMENT_TEAM: TG68TFXG88
           ENABLE_HARDENED_RUNTIME: NO
@@ -88,5 +106,12 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.universal-io.mac.tests
         GENERATE_INFOPLIST_FILE: YES
-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Universal IO.app/Contents/MacOS/Universal IO"
         BUNDLE_LOADER: "$(TEST_HOST)"
+      # TEST_HOST must match the host app's per-configuration PRODUCT_NAME:
+      # "Universal IO Dev" under Debug (where tests run), "Universal IO" under
+      # Release. Keep in sync with the BombSquad target's names above.
+      configs:
+        Debug:
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Universal IO Dev.app/Contents/MacOS/Universal IO Dev"
+        Release:
+          TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Universal IO.app/Contents/MacOS/Universal IO"

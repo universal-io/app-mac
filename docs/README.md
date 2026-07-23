@@ -13,6 +13,7 @@
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョンとリリース・マイルストーン |
 | [api-contract.md](api-contract.md) | macOSクライアントと本番Gatewayの契約 |
 | [manual-golden-paths.md](manual-golden-paths.md) | リリース前の手動検証 |
+| [dev-prod-app-identity.md](dev-prod-app-identity.md) | 開発版と本番版のアプリ正体分離（Launchpad/Launch Services 対策） |
 | [supabase-setup.md](supabase-setup.md) | 認証・データ基盤の設定 |
 | [admin-dashboard-plan.md](admin-dashboard-plan.md) | 本番Admin Console |
 
