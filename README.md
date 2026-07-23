@@ -148,14 +148,17 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 
 ## リリース運用
 
-現行の正式版は `v0.1.0`（build `2`、ソース `700f607`）です。配布DMGは
-`https://dl.universal-io.com/releases/0.1.0/build-2/Universal-IO.dmg`、SHA-256は
-`e0b08385d11cb591019490a93a5bfc2aa3b0f510ef577f116ab768c3f90f2f90`です。
+現行の正式版は `v0.1.1`（build `3`、ソース `7171d35`）です。配布DMGは
+`https://dl.universal-io.com/releases/0.1.1/build-3/Universal-IO.dmg`、SHA-256は
+`9b46618325f296bd78a7e48b75e383454f58ccb457d8617037dfacd887c2afca`です。データ保持、
+アカウント分離・退会、メモリ差分同期、Keychainのアプリ専用化、開発/本番のアプリ正体分離、
+初回セットアップのUX改善、アプリアイコンを含む。本番Gatewayとマイグレーションは先に反映済み。
 
-次の候補版は `0.1.1`（build `3`）とする。データ保持、アカウント分離・退会、メモリ差分同期、
-Keychainのアプリ専用化を含め、本番Gatewayを先にdeployした後で署名・notarization済みDMGを作る。
-外部テスターにはこの候補DMGを限定共有し、確認完了後に公開サイトを切り替える。現在の公開DMGを
-Webサイトからインストールするテストは安全だが、それで確認できるのは `0.1.0` build `2` までである。
+外部テスターにはこの不変URLを限定共有し、確認完了後にWebサイトのCTAを 0.1.1 の不変URLへ切り替える。
+`--publish` は R2 への配置と `latest` alias 更新まで行い、Webサイトの公開CTAの切替は別ステップである。
+一つ前の `v0.1.0`（build `2`、ソース `700f607`）は
+`https://dl.universal-io.com/releases/0.1.0/build-2/Universal-IO.dmg`、SHA-256
+`e0b08385d11cb591019490a93a5bfc2aa3b0f510ef577f116ab768c3f90f2f90` として不変保存されている。
 
 公開版は長期ブランチではなく、Gitタグと変更しないバージョン／build別DMGで保存します。
 `main`は次のリリースへ進め、公開済みコードへ緊急修正が必要な場合だけタグからfixブランチを
