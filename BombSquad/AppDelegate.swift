@@ -172,8 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Presents one focused first-run window for all required macOS grants.
     private func presentPermissionsSetup() {
         if let permissionsWindow {
-            NSApp.activate(ignoringOtherApps: true)
-            permissionsWindow.makeKeyAndOrderFront(nil)
+            bringToFront(permissionsWindow)
             return
         }
 
@@ -185,16 +184,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.title = "Universal I/O"
         window.isReleasedWhenClosed = false
-        window.contentViewController = NSHostingController(
+        let hosting = NSHostingController(
             rootView: PermissionsSetupView(coordinator: permissions) { [weak self] in
                 self?.permissionsWindow?.close()
             }
         )
+        window.contentViewController = hosting
+        // Size to the SwiftUI content so the window is never taller than its
+        // rows — otherwise the hardcoded height throws off the centering.
+        window.setContentSize(hosting.view.fittingSize)
+        // Float above every app (incl. System Settings, which the grant flow
+        // opens) and show on the active Space, so first-run setup is never
+        // buried behind a window that happened to be open first.
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         centerOnActiveScreen(window)
 
         permissionsWindow = window
+        bringToFront(window)
+    }
+
+    /// Activates the app and forces the window to the very front, even when
+    /// another app is currently active.
+    private func bringToFront(_ window: NSWindow) {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 
     private func centerOnActiveScreen(_ window: NSWindow) {

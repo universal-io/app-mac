@@ -14,7 +14,7 @@ struct PermissionsSetupView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Universal I/O のセットアップ")
                     .font(.title2).bold()
-                Text("3つの許可で使えるようになります。初回はキーチェーンの確認が数回出ることがあります — 「常に許可」を選んでください。")
+                Text("Universal I/O を使うには、以下のアクセスを許可してください。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -25,6 +25,7 @@ struct PermissionsSetupView: View {
                     PermissionRow(
                         kind: kind,
                         granted: coordinator.isGranted(kind),
+                        stalled: coordinator.stalled.contains(kind),
                         action: { coordinator.request(kind) },
                         openSettings: { coordinator.openSettings(kind) }
                     )
@@ -54,6 +55,7 @@ struct PermissionsSetupView: View {
 private struct PermissionRow: View {
     let kind: PermissionsCoordinator.Kind
     let granted: Bool
+    let stalled: Bool
     let action: () -> Void
     let openSettings: () -> Void
 
@@ -77,6 +79,15 @@ private struct PermissionRow: View {
                     Button("ダイアログが出ないときはシステム設定を開く", action: openSettings)
                         .buttonStyle(.link)
                         .font(.caption2)
+                }
+                if !granted && stalled {
+                    // Toggle-ON-but-untrusted: the row looks stuck because a
+                    // differently-signed build's entry is already listed. Tell
+                    // the user the one move that revalidates against this app.
+                    Text("設定に「\(kind.title)」が既にある場合は、トグルを一度 OFF→ON にするか、アプリを再起動してください。")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

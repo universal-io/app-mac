@@ -28,11 +28,13 @@ final class PermissionsCoordinator: ObservableObject {
         var reason: String {
             switch self {
             case .accessibility:
-                return "フィールドへの自動入力（⌘V）と\(KeybindingSettings.gestureKey().hintLabel)ジェスチャの検出に使います。"
+                // The gesture is user-configurable, so keep this general and
+                // example-like rather than naming a specific key.
+                return "テキストの自動入力や、ジェスチャなどの操作の検出に使用します。"
             case .screenRecording:
-                return "画面を読む（Vision）ためのスクリーンショット撮影に使います。許可後、アプリが一度だけ再起動します（macOS の仕様）。"
+                return "画面の内容を読み取るために使用します。この許可の反映には、アプリの再起動が一度だけ必要です。"
             case .microphone:
-                return "\(KeybindingSettings.gestureKey().hintLabel)長押しの音声入力に使います。"
+                return "音声入力に使用します。"
             }
         }
 
@@ -46,6 +48,17 @@ final class PermissionsCoordinator: ObservableObject {
     }
 
     @Published private(set) var granted: [Kind: Bool] = [:]
+
+    /// Kinds where the user pressed "許可" but the OS still reports no grant a few
+    /// seconds later. This is the signature-mismatch case: an entry left in
+    /// System Settings by a differently-signed build (e.g. the old shared dev id,
+    /// or a re-signed update) shows its toggle ON, yet AXIsProcessTrusted /
+    /// CGPreflightScreenCaptureAccess validate against THIS app's signature and
+    /// return false — so no fresh dialog appears and the row looks stuck. The
+    /// setup UI surfaces a hint (toggle OFF→ON / relaunch) only for these.
+    @Published private(set) var stalled: Set<Kind> = []
+    private var requestedAt: [Kind: Date] = [:]
+    private let stallThreshold: TimeInterval = 3
 
     /// Fires once, when the microphone transitions to granted (so audio can be
     /// warmed up off the hot path only after access exists).
@@ -75,6 +88,18 @@ final class PermissionsCoordinator: ObservableObject {
             sawMicrophoneGranted = true
             onMicrophoneGranted?()
         }
+
+        // A grant that "takes" clears its request; one that stays false past the
+        // threshold is flagged stalled so the row can explain why.
+        let now = Date()
+        for kind in Kind.allCases {
+            if isGranted(kind) {
+                requestedAt[kind] = nil
+                stalled.remove(kind)
+            } else if let at = requestedAt[kind], now.timeIntervalSince(at) > stallThreshold {
+                stalled.insert(kind)
+            }
+        }
     }
 
     func startMonitoring() {
@@ -101,6 +126,8 @@ final class PermissionsCoordinator: ObservableObject {
     /// button consume it. Microphone completes inline (no Settings trip) unless
     /// already denied, where Settings is the only recourse.
     func request(_ kind: Kind) {
+        requestedAt[kind] = Date()
+        stalled.remove(kind)
         NSApp.activate(ignoringOtherApps: true)
         switch kind {
         case .accessibility:
