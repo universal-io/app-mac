@@ -1,8 +1,13 @@
 # 管理ダッシュボード（Admin Console）— 設計書
 
-作成: 2026-07-06 ／ ステータス: **v0（読み取り専用）実装済み・本番稼働中**
+作成: 2026-07-06 ／ ステータス: **v1 step1-2 実装済み・本番稼働中**
 （2026-07-23 更新: v1以降へアカウント区分、Stripe、テスター監視、APIコスト管理を追加。
-現行実装は`web/app/admin/page.tsx`・`web/lib/server/admin.ts`・`admin-stats.ts`）
+2026-07-24 更新: §10 step1（account model migration）＋ step2（手動運用UI）実装。
+`bs_profiles.role`＋`bs_entitlements.account_class`＋`bs_admin_audit_log`を追加し、
+`assertAdmin`をenv→DBロール化（ADMIN_EMAILSは和集合のブートストラップとして併存）。
+現行実装は`web/app/admin/page.tsx`・`web/lib/server/admin.ts`・`admin-stats.ts`・
+`admin-users.ts`・`web/app/api/admin/users/*`・`supabase/migrations/20260724000000_account_model.sql`。
+step3以降（Stripe・tester監視・cost・alert）とguest modeは未着手）
 
 全体をコントロールするための簡易ダッシュボード。実効モデル設定・利用統計・登録状況を
 一望し、事故（実験用モデルの入れっぱなし等）を可視化で防ぐ。

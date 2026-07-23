@@ -15,8 +15,20 @@ import type {
   OperationStat,
   ModelStat,
 } from "@/lib/server/admin-stats";
+import type { AdminUserRow } from "@/lib/server/admin-users";
 
 type Overview = { config: EffectiveConfig; stats: OverviewStats };
+
+// Runtime option lists kept local to the client (importing the const arrays
+// from admin-users would pull its server-only imports into the browser bundle).
+const ROLE_OPTIONS = ["user", "operator", "admin"] as const;
+const PLAN_OPTIONS = ["free", "standard", "pro", "team", "enterprise"] as const;
+const ACCOUNT_CLASS_OPTIONS = [
+  "standard",
+  "internal",
+  "tester",
+  "complimentary",
+] as const;
 type LoadState =
   | { kind: "loading" }
   | { kind: "forbidden" }
@@ -86,20 +98,21 @@ export default function AdminPage() {
           <Notice>このアカウントには管理者権限がありません。</Notice>
         ) : state.kind === "error" ? (
           <Notice>読み込みに失敗しました: {state.message}</Notice>
-        ) : (
-          <AdminBody data={state.data} />
-        )}
+        ) : session ? (
+          <AdminBody data={state.data} token={session.access_token} />
+        ) : null}
       </div>
     </main>
   );
 }
 
-function AdminBody({ data }: { data: Overview }) {
+function AdminBody({ data, token }: { data: Overview; token: string }) {
   const { config, stats } = data;
   return (
     <div className="flex flex-col gap-8">
       <EffectiveConfigSection config={config} />
       <SummarySection stats={stats} />
+      <UsersSection token={token} />
       <OperationSection operations={stats.operations} />
       <ModelSection models={stats.models} />
       <DailySection daily={stats.daily} />
@@ -171,6 +184,312 @@ function SummarySection({ stats }: { stats: OverviewStats }) {
         />
       </div>
     </Section>
+  );
+}
+
+// --- Users (account model v1, admin-dashboard-plan §10 step 2) --------------
+
+type UsersState =
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "ready"; viewerRole: "operator" | "admin"; users: AdminUserRow[] };
+
+function UsersSection({ token }: { token: string }) {
+  const [state, setState] = useState<UsersState>({ kind: "loading" });
+  const [editing, setEditing] = useState<string | null>(null);
+  // Bump to refetch after a mutation (avoids calling a setState-ful callback
+  // synchronously from the effect — the roster is re-derived from this key).
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/users", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (cancelled) {
+          return;
+        }
+        if (!res.ok) {
+          setState({ kind: "error", message: `HTTP ${res.status}` });
+          return;
+        }
+        const data = (await res.json()) as {
+          viewerRole: "operator" | "admin";
+          users: AdminUserRow[];
+        };
+        if (!cancelled) {
+          setState({ kind: "ready", viewerRole: data.viewerRole, users: data.users });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setState({ kind: "error", message: String(error) });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, reloadKey]);
+
+  return (
+    <Section
+      title="ユーザー"
+      note="権限(role)・plan・account classを変更できます（変更はadminのみ・理由必須で監査記録）。"
+    >
+      {state.kind === "loading" ? (
+        <p className="text-sm text-faint">読み込み中…</p>
+      ) : state.kind === "error" ? (
+        <p className="text-sm text-faint">読み込みに失敗しました: {state.message}</p>
+      ) : state.users.length === 0 ? (
+        <Empty />
+      ) : (
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <Row
+              header
+              cells={["メール", "role", "plan", "class", "今月", "登録日", ""]}
+            />
+          </thead>
+          <tbody>
+            {state.users.map((u) => (
+              <UserRow
+                key={u.userId}
+                user={u}
+                canMutate={state.viewerRole === "admin"}
+                token={token}
+                expanded={editing === u.userId}
+                onToggle={() =>
+                  setEditing((cur) => (cur === u.userId ? null : u.userId))
+                }
+                onSaved={() => {
+                  setEditing(null);
+                  setReloadKey((k) => k + 1);
+                }}
+              />
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Section>
+  );
+}
+
+function UserRow({
+  user,
+  canMutate,
+  token,
+  expanded,
+  onToggle,
+  onSaved,
+}: {
+  user: AdminUserRow;
+  canMutate: boolean;
+  token: string;
+  expanded: boolean;
+  onToggle: () => void;
+  onSaved: () => void;
+}) {
+  return (
+    <>
+      <tr>
+        <Cell>{user.email ?? "—"}</Cell>
+        <Cell mono>{user.role}</Cell>
+        <Cell mono>
+          {user.plan ?? "—"}
+          {user.stripeLinked ? " 🔒" : ""}
+        </Cell>
+        <Cell mono>{user.accountClass ?? "—"}</Cell>
+        <Cell>{user.monthUsage}</Cell>
+        <Cell>{user.createdAt.slice(0, 10)}</Cell>
+        <Cell>
+          {canMutate ? (
+            <button
+              type="button"
+              onClick={onToggle}
+              className="text-iris hover:underline"
+            >
+              {expanded ? "閉じる" : "変更"}
+            </button>
+          ) : null}
+        </Cell>
+      </tr>
+      {expanded && canMutate ? (
+        <tr>
+          <td colSpan={7} className="border-b border-hair px-2 py-3">
+            <UserEditor user={user} token={token} onSaved={onSaved} />
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+function UserEditor({
+  user,
+  token,
+  onSaved,
+}: {
+  user: AdminUserRow;
+  token: string;
+  onSaved: () => void;
+}) {
+  const [role, setRole] = useState<string>(user.role);
+  const [plan, setPlan] = useState<string>(user.plan ?? "free");
+  const [accountClass, setAccountClass] = useState<string>(
+    user.accountClass ?? "standard",
+  );
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const roleChanged = role !== user.role;
+  const planChanged = plan !== (user.plan ?? "free");
+  const classChanged = accountClass !== (user.accountClass ?? "standard");
+  const anyChange = roleChanged || planChanged || classChanged;
+
+  async function mutate(action: string, targetId: string, value: string) {
+    const res = await fetch("/api/admin/users/mutate", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ action, targetId, value, reason }),
+    });
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => null)) as
+        | { error?: { message?: string } }
+        | null;
+      throw new Error(detail?.error?.message ?? `HTTP ${res.status}`);
+    }
+  }
+
+  async function apply() {
+    setError(null);
+    if (!reason.trim()) {
+      setError("理由を入力してください。");
+      return;
+    }
+    setBusy(true);
+    try {
+      // Each axis is a separate audited change; role targets the user, plan and
+      // class target the tenant.
+      if (roleChanged) {
+        await mutate("set_role", user.userId, role);
+      }
+      if ((planChanged || classChanged) && !user.tenantId) {
+        throw new Error("テナントが未解決のためplan/classを変更できません。");
+      }
+      if (planChanged && user.tenantId) {
+        await mutate("set_plan", user.tenantId, plan);
+      }
+      if (classChanged && user.tenantId) {
+        await mutate("set_account_class", user.tenantId, accountClass);
+      }
+      onSaved();
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border border-hair bg-paper p-3">
+      <div className="flex flex-wrap gap-4">
+        <EditField label="role">
+          <SelectBox value={role} options={ROLE_OPTIONS} onChange={setRole} />
+        </EditField>
+        <EditField label="plan">
+          <SelectBox
+            value={plan}
+            options={PLAN_OPTIONS}
+            onChange={setPlan}
+            disabled={user.stripeLinked}
+          />
+        </EditField>
+        <EditField label="account class">
+          <SelectBox
+            value={accountClass}
+            options={ACCOUNT_CLASS_OPTIONS}
+            onChange={setAccountClass}
+          />
+        </EditField>
+      </div>
+      {user.stripeLinked ? (
+        <p className="text-xs text-faint">
+          このテナントはStripe連携中のため、planは管理画面から変更できません。
+        </p>
+      ) : null}
+      <label className="flex flex-col gap-1 text-xs text-slate">
+        理由（監査ログに残ります）
+        <input
+          type="text"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="例: ベータテスター登録、社内利用など"
+          className="rounded border border-line bg-white px-2 py-1 text-sm text-ink"
+        />
+      </label>
+      {error ? <p className="text-xs text-red-600">{error}</p> : null}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={apply}
+          disabled={!anyChange || busy}
+          className="rounded bg-iris px-3 py-1 text-sm text-white disabled:opacity-40"
+        >
+          {busy ? "適用中…" : "適用"}
+        </button>
+        {!anyChange ? (
+          <span className="text-xs text-faint">変更はありません。</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function EditField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-slate">
+      {label}
+      {children}
+    </label>
+  );
+}
+
+function SelectBox({
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  options: readonly string[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded border border-line bg-white px-2 py-1 text-sm text-ink disabled:opacity-40"
+    >
+      {options.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
   );
 }
 
