@@ -193,11 +193,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Size to the SwiftUI content so the window is never taller than its
         // rows — otherwise the hardcoded height throws off the centering.
         window.setContentSize(hosting.view.fittingSize)
-        // Float above every app (incl. System Settings, which the grant flow
-        // opens) and show on the active Space, so first-run setup is never
-        // buried behind a window that happened to be open first.
-        window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // Keep a NORMAL window level. bringToFront() raises it to the front the
+        // moment it appears (over a window that happened to be open first), but
+        // a permanent floating level would trap the system permission dialogs
+        // the grant flow opens *afterward* behind this panel — the user needs
+        // those to come in front. fullScreenAuxiliary only lets it show over a
+        // full-screen app; it does not force it above later dialogs.
+        window.collectionBehavior = [.fullScreenAuxiliary]
         centerOnActiveScreen(window)
 
         permissionsWindow = window
