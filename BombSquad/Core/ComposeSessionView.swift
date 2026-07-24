@@ -214,7 +214,7 @@ struct ComposeSessionView: View {
                     text: $session.suggestedDraft,
                     focusedField: focusedField,
                     field: .revision,
-                    onSend: session.adoptSuggestion
+                    onSend: session.deploySuggestion
                 )
                 .padding(8)
                 .frame(maxHeight: .infinity)
@@ -235,8 +235,10 @@ struct ComposeSessionView: View {
                         Label("破棄", systemImage: "xmark")
                     }
                     .buttonStyle(.borderless)
-                    Button(action: session.adoptSuggestion) {
-                        Label("採用", systemImage: "arrow.up.left")
+                    // Confirming sends straight to the target field — the slot
+                    // is editable here, so there is no draft hop in between.
+                    Button(action: session.deploySuggestion) {
+                        Label("送信", systemImage: "paperplane.fill")
                     }
                     .buttonStyle(.borderedProminent)
                 }

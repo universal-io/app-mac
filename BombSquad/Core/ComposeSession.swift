@@ -235,12 +235,25 @@ final class ComposeSession: ObservableObject {
     /// Move the (possibly edited) suggestion into the user's own draft. Per the
     /// design it never deploys directly — the user stays in control of review
     /// and send.
-    func adoptSuggestion() {
+    /// Send the (possibly edited) suggestion straight to the target field.
+    /// Confirming the focused slot is a single action: the old path adopted the
+    /// text into the draft and then required a second confirm, which is a
+    /// redundant round trip — the slot is editable in place, so there is
+    /// nothing the draft hop added.
+    func deploySuggestion() {
         let text = suggestedDraft
-        suggestionStatus = .idle
-        suggestionNote = nil
-        adoptSuggestedDraft(text)
+        let historyInput = HistoryEntryInput(
+            sourceText: text,
+            finalText: text,
+            modelID: nil,
+            modelName: nil,
+            outputLanguage: outputLanguage.displayName
+        )
+        guard deploy(text: text, historyInput: historyInput) else { return }
         suggestedDraft = ""
+        suggestionNote = nil
+        suggestionStatus = .idle
+        focusedField = .draft
     }
 
     func awaitSituationalContext() async -> SituationalContext? {
