@@ -13,6 +13,7 @@ import {
 import {
   runSuggest,
   SUGGEST_IMAGE_DETAIL,
+  SUGGEST_PROMPT_VERSION,
   SUGGEST_REASONING_EFFORT,
 } from "@/lib/server/suggest-engine";
 
@@ -120,6 +121,8 @@ export async function POST(request: Request): Promise<Response> {
           api: output.modelApi,
           image_detail: SUGGEST_IMAGE_DETAIL,
           reasoning_effort: SUGGEST_REASONING_EFFORT,
+          prompt_version: SUGGEST_PROMPT_VERSION,
+          context_package: output.contextPackageId,
           fallback_used: output.fallbackUsed,
           latency_ms: latencyMs,
           notices: output.notices,

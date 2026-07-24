@@ -167,7 +167,9 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
     "route": "snapshot_suggest",
     "api": "responses",
     "image_detail": "original",
-    "reasoning_effort": "low",
+    "reasoning_effort": "medium",
+    "prompt_version": "speaker-grounding-v2",
+    "context_package": "slack",
     "fallback_used": false,
     "latency_ms": 0,
     "notices": []
@@ -176,6 +178,8 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 ```
 
 `draft` は編集可能な提案で、ユーザーが紙飛行機を確定すると対象欄へ直接入力する。
+`note` は検証中の認知表示で、最新の送信者、宛先、ユーザーの立場、添付所有者、依頼、返信意図を示す。
+`context_package`は適用無しの場合`null`。
 画像・入力本文・回答本文はusageに保存しない（運用情報のみ）。
 
 ## POST /ai/memory/distill

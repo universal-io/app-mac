@@ -244,6 +244,10 @@ Gateway に影響しない）。配布中のDMG（v0.1.1）は別物で、`relea
   ブラウザ版にも適用できる。未知のアプリは共通ルールだけで動作する。
 - アプリ文脈の定義とresolverを`web/lib/server/suggest-context-packages.ts`へ分離した。Slack／Gmailは
   それぞれ独立した既定パッケージで、今後もDocs、Sheets等を製品単位で同じ配列へ追加する。
+- 同じ誤認が続いたため、推論を`medium`へ上げ、話者、宛先、ユーザーの立場、添付所有者、依頼、
+  返信意図をstrict schemaで先に出力してから文案を作る`speaker-grounding-v2`へ変更した。
+  認知結果は検証中の説明欄へ表示し、Gateway応答metaの`prompt_version`と`context_package`で
+  本番実行時に新プロンプトとアプリパッケージの適用有無を確認できる。
 
 ### そのほかの引き継ぎ事項
 
