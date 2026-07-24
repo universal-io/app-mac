@@ -26,6 +26,7 @@ struct PermissionsSetupView: View {
                         kind: kind,
                         granted: coordinator.isGranted(kind),
                         stalled: coordinator.stalled.contains(kind),
+                        opening: coordinator.openingSettings.contains(kind),
                         action: { coordinator.request(kind) },
                         openSettings: { coordinator.openSettings(kind) }
                     )
@@ -56,6 +57,7 @@ private struct PermissionRow: View {
     let kind: PermissionsCoordinator.Kind
     let granted: Bool
     let stalled: Bool
+    let opening: Bool
     let action: () -> Void
     let openSettings: () -> Void
 
@@ -80,7 +82,15 @@ private struct PermissionRow: View {
                         .buttonStyle(.link)
                         .font(.caption2)
                 }
-                if !granted && stalled {
+                if !granted, let steps = kind.manualSetupSteps {
+                    // Kinds whose OS dialog only appears once (screen recording)
+                    // need explicit manual steps, shown whether or not the row
+                    // has stalled yet.
+                    Text(steps)
+                        .font(.caption2)
+                        .foregroundStyle(stalled ? .orange : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if !granted && stalled {
                     // Toggle-ON-but-untrusted: the row looks stuck because a
                     // differently-signed build's entry is already listed. Tell
                     // the user the one move that revalidates against this app.
@@ -97,6 +107,13 @@ private struct PermissionRow: View {
                 Text("許可済み")
                     .font(.caption).bold()
                     .foregroundStyle(.green)
+            } else if opening {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("設定を開いています…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } else {
                 Button("許可", action: action)
             }
