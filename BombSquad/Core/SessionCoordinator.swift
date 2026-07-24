@@ -504,9 +504,12 @@ final class SessionCoordinator {
                 if let attachment {
                     self.maybeStartComposeSuggestion(attachment: attachment, generation: generation)
                 } else if self.composeSession?.suggestionStatus == .preparing {
-                    // Promised a suggestion but the capture failed — resolve the
-                    // placeholder to the clear "none" state instead of spinning.
-                    self.composeSession?.markSuggestionUnavailable()
+                    // Promised a suggestion but the capture produced no image.
+                    // That is a failure, not "no candidate" — say which.
+                    self.composeSession?.markSuggestionFailed(
+                        "画面を取得できなかったため、文案を作れませんでした。",
+                        detail: "compose pre-capture returned no image"
+                    )
                 }
             }
         }
@@ -594,10 +597,25 @@ final class SessionCoordinator {
                           self.composeSession === session,
                           self.stateMachine.mode == .compose else { return }
                     self.suggestionTask = nil
-                    session.markSuggestionUnavailable()
+                    // A failed request is not "the model had nothing to say".
+                    // Surface the real reason — collapsing it into the empty
+                    // state is what made a dead endpoint look like a quiet one.
+                    session.markSuggestionFailed(
+                        UserFacingError.message(for: error),
+                        detail: Self.technicalDetail(for: error)
+                    )
                 }
             }
         }
+    }
+
+    /// Compact technical cause shown under the friendly message, so a real
+    /// failure (missing endpoint, 5xx, transport) is identifiable instead of
+    /// being flattened into generic copy.
+    private static func technicalDetail(for error: Error) -> String {
+        let nsError = error as NSError
+        let raw = error.localizedDescription
+        return "\(nsError.domain) \(nsError.code): \(raw)"
     }
 
     /// Enter Vision reusing the silent pre-capture, skipping the interactive

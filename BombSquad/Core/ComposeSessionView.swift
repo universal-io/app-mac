@@ -242,11 +242,26 @@ struct ComposeSessionView: View {
                 }
 
             case .unavailable, .idle:
-                // Clear, non-jittery "nothing came" state — the slot does not
-                // collapse, so the panel stays stable.
+                // Clear, non-jittery state — the slot does not collapse, so the
+                // panel stays stable. A real failure shows its reason and the
+                // technical cause; only a genuinely empty result gets the plain
+                // "no suggestion" copy. Never dress a failure up as silence.
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("この画面に合わせた文案は出せませんでした。")
-                        .foregroundStyle(.secondary)
+                    if let errorMessage = session.suggestionErrorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let detail = session.suggestionErrorDetail {
+                            Text(detail)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else {
+                        Text("この画面に合わせた文案は出せませんでした。")
+                            .foregroundStyle(.secondary)
+                    }
                     Text("自分で入力して送信できます。")
                         .font(.caption)
                         .foregroundStyle(.tertiary)

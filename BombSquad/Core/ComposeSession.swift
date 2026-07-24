@@ -85,6 +85,14 @@ final class ComposeSession: ObservableObject {
     @Published private(set) var suggestionStatus: ComposeSuggestionStatus = .idle
     @Published var suggestedDraft = ""
     @Published private(set) var suggestionNote: String?
+    /// Set only when the request actually FAILED (capture error, transport
+    /// error, gateway error). Nil means "no candidate", which is a different,
+    /// non-error outcome. Never collapse a failure into the empty case: the
+    /// user must be able to see what went wrong.
+    @Published private(set) var suggestionErrorMessage: String?
+    /// Technical detail behind the failure (status code, endpoint, raw error),
+    /// shown small next to the message so a real cause is never hidden.
+    @Published private(set) var suggestionErrorDetail: String?
 
     let outputLanguage: OutputLanguage
 
@@ -161,6 +169,7 @@ final class ComposeSession: ObservableObject {
         guard result == nil, !isReviewing else { return }
         suggestionStatus = .preparing
         suggestionNote = nil
+        clearSuggestionError()
     }
 
     func applySuggestion(draft suggestion: String, note: String?) {
@@ -175,9 +184,12 @@ final class ComposeSession: ObservableObject {
         }
         suggestedDraft = trimmed
         suggestionNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        clearSuggestionError()
         suggestionStatus = .ready
     }
 
+    /// The request succeeded but the model had no candidate. This is the only
+    /// case that may show the plain "no suggestion" copy.
     func markSuggestionUnavailable() {
         guard result == nil, !isReviewing else {
             suggestionStatus = .idle
@@ -185,7 +197,29 @@ final class ComposeSession: ObservableObject {
         }
         suggestedDraft = ""
         suggestionNote = nil
+        clearSuggestionError()
         suggestionStatus = .unavailable
+    }
+
+    /// The request FAILED. Surfaces the real reason instead of the vague
+    /// "no suggestion" copy — hiding the failure would make a broken endpoint
+    /// look like a model that simply had nothing to say.
+    func markSuggestionFailed(_ message: String, detail: String? = nil) {
+        guard result == nil, !isReviewing else {
+            suggestionStatus = .idle
+            return
+        }
+        suggestedDraft = ""
+        suggestionNote = nil
+        suggestionErrorMessage = message
+        let trimmedDetail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        suggestionErrorDetail = (trimmedDetail?.isEmpty ?? true) ? nil : trimmedDetail
+        suggestionStatus = .unavailable
+    }
+
+    private func clearSuggestionError() {
+        suggestionErrorMessage = nil
+        suggestionErrorDetail = nil
     }
 
     /// User dismissed the suggestion without using it. Collapses the slot.
