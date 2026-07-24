@@ -36,8 +36,11 @@ struct ComposeSessionView: View {
         session.result != nil || session.isReviewing
     }
 
+    /// Once the suggestion starts, the slot stays put through every state
+    /// (loading → result, or → "none"). Only `.idle` hides it, so the panel
+    /// never grows-then-shrinks — it's a stable background area.
     private var hasSuggestionSurface: Bool {
-        session.suggestionStatus == .preparing || session.suggestionStatus == .ready
+        session.suggestionStatus != .idle
     }
 
     private var showsLowerSlot: Bool {
@@ -179,7 +182,7 @@ struct ComposeSessionView: View {
     private var suggestionPane: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Label("文案", systemImage: "sparkles")
+                Label("文案（自動）", systemImage: "sparkles")
                     .font(.headline)
                 Spacer()
                 if session.suggestionStatus == .preparing {
@@ -188,15 +191,25 @@ struct ComposeSessionView: View {
             }
             .background(WindowDragHandle())
 
-            if session.suggestionStatus == .preparing {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("画面を読み取って文案を準備中…").foregroundStyle(.secondary)
+            switch session.suggestionStatus {
+            case .preparing:
+                // Placeholder + loading. Input is never blocked — the draft
+                // editor above keeps focus while this fills in the background.
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("画面を読み取って文案を準備しています…")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("ここに、この画面に合わせた入力候補が表示されます。準備中もそのまま入力できます。")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(16)
                 .background(EditorFocusBackground(isFocused: false))
-            } else {
+
+            case .ready:
                 SendableTextEditor(
                     text: $session.suggestedDraft,
                     focusedField: focusedField,
@@ -227,6 +240,27 @@ struct ComposeSessionView: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
+
+            case .unavailable, .idle:
+                // Clear, non-jittery "nothing came" state — the slot does not
+                // collapse, so the panel stays stable.
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("この画面に合わせた文案は出せませんでした。")
+                        .foregroundStyle(.secondary)
+                    Text("自分で入力して送信できます。")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    HStack {
+                        Spacer()
+                        Button(action: session.dismissSuggestion) {
+                            Label("閉じる", systemImage: "xmark")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(16)
+                .background(EditorFocusBackground(isFocused: false))
             }
         }
         .padding()

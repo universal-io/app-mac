@@ -251,6 +251,16 @@ final class SessionCoordinator {
             summonTargetApp = nil
             return
         }
+        // Reserve the suggestion slot immediately (placeholder + loading) when
+        // we intend to try, so it's present from the moment the panel opens and
+        // the panel doesn't grow-then-shrink later. Resolved to ready/none once
+        // the request completes; retracted if the pre-capture can't run.
+        if AppSettings.isProactiveSuggestEnabled(),
+           composeFocusEditable,
+           ScreenCapturePermission.isGranted,
+           GatewaySuggestClient.make() != nil {
+            session.markSuggestionPreparing()
+        }
         startComposePreCapture()
     }
 
@@ -493,6 +503,10 @@ final class SessionCoordinator {
                 self.composePreCapture = attachment
                 if let attachment {
                     self.maybeStartComposeSuggestion(attachment: attachment, generation: generation)
+                } else if self.composeSession?.suggestionStatus == .preparing {
+                    // Promised a suggestion but the capture failed — resolve the
+                    // placeholder to the clear "none" state instead of spinning.
+                    self.composeSession?.markSuggestionUnavailable()
                 }
             }
         }
@@ -507,16 +521,28 @@ final class SessionCoordinator {
         attachment: ScreenshotAttachment,
         generation: Int
     ) {
+        // If a placeholder was reserved at summon but a precondition no longer
+        // holds, resolve it to the clear "none" state rather than leaving it
+        // spinning forever.
+        func retractPlaceholder() {
+            if self.composeSession?.suggestionStatus == .preparing {
+                self.composeSession?.markSuggestionUnavailable()
+            }
+        }
+
         guard AppSettings.isProactiveSuggestEnabled() else {
             SuggestTrace.log("skip: feature disabled")
+            retractPlaceholder()
             return
         }
         guard let composeSession, composeSession.isEmptyDraft else {
             SuggestTrace.log("skip: no session or draft not empty")
+            retractPlaceholder()
             return
         }
         guard let client = GatewaySuggestClient.make() else {
             SuggestTrace.log("skip: gateway client unavailable (signed in?)")
+            retractPlaceholder()
             return
         }
 
@@ -526,6 +552,7 @@ final class SessionCoordinator {
         // don't spend a model call with no target field.
         guard composeFocusEditable else {
             SuggestTrace.log("skip: no editable field focused at summon")
+            retractPlaceholder()
             return
         }
 
