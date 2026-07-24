@@ -6,6 +6,7 @@ import {
   type AIModelTarget,
 } from "@/lib/server/ai-routing";
 import type { OperationalNotice } from "@/lib/server/operational-notice";
+import { resolveSuggestContextAttachment } from "@/lib/server/suggest-context-packages";
 
 // The proactive compose suggestion reads the same immutable screenshot Vision
 // uses, but its job is the opposite of Vision's: instead of only interpreting
@@ -26,11 +27,6 @@ export type SuggestContext = {
   bundleId?: string;
   windowTitle?: string;
   conversationExcerpt?: string;
-};
-
-type ApplicationContextAttachment = {
-  name: string;
-  instructions: string;
 };
 
 export type SuggestResult = {
@@ -143,7 +139,7 @@ async function callSuggestModel(
 
 function requestBody(input: SuggestEngineInput, target: AIModelTarget): Record<string, unknown> {
   const languageName = input.language === "japanese" ? "Japanese" : "English";
-  const applicationAttachment = applicationContextAttachment(input.context);
+  const applicationAttachment = resolveSuggestContextAttachment(input.context);
 
   return {
     model: target.modelId,
@@ -216,44 +212,6 @@ Return an empty draft only when the focused field cannot be identified or the vi
       },
     ],
   };
-}
-
-function applicationContextAttachment(
-  context: SuggestContext | undefined,
-): ApplicationContextAttachment | null {
-  if (!context) return null;
-  const bundleID = context.bundleId?.trim().toLowerCase() ?? "";
-  const visibleIdentity = [context.appName, context.windowTitle]
-    .filter(Boolean)
-    .join(" ");
-
-  if (
-    bundleID === "com.tinyspeck.slackmacgap"
-    || /(^|\W)slack(\W|$)/i.test(visibleIdentity)
-  ) {
-    return {
-      name: "Slack",
-      instructions: `Slack-specific reading rules:
-- The name and avatar attached to a message block identify its sender.
-- A highlighted @mention inside a message identifies an addressee. An orange or yellow mention of the current user means the sender is addressing the user; it does not mean the user authored the message.
-- The reply composer belongs to the current user. In a channel or thread, the lowest relevant human message nearest that composer is normally the newest.
-- Files displayed inside or directly below a message belong to that message and its sender unless the screen clearly shows otherwise.
-- Notices and controls such as "Only visible to you", mention warnings, Add Them, Let Them Know, and Dismiss are interface chrome, not human conversation turns.`,
-    };
-  }
-
-  if (/(^|\W)gmail(\W|$)/i.test(visibleIdentity)) {
-    return {
-      name: "Gmail",
-      instructions: `Gmail-specific reading rules:
-- In an expanded message header, From identifies the sender and To identifies the addressee. A reply composer belongs to the current user.
-- The newest expanded message nearest the reply composer is normally the message being answered; quoted or collapsed earlier mail is context, not the newest turn.
-- Attachments shown within a message belong to that message's sender unless the screen clearly shows otherwise.
-- Draft from the current user's perspective and do not claim that the user sent, created, or attached something shown in the incoming message.`,
-    };
-  }
-
-  return null;
 }
 
 function contextText(context: SuggestContext | undefined): string {

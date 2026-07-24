@@ -242,6 +242,8 @@ Gateway に影響しない）。配布中のDMG（v0.1.1）は別物で、`relea
   色付きmention＝宛先、下側＝最新、添付の所属、システムnotice除外）とGmail（From／To、
   thread順、引用部、添付の所属）。bundle IDに加えアプリ名・window titleでも判定するため、
   ブラウザ版にも適用できる。未知のアプリは共通ルールだけで動作する。
+- アプリ文脈の定義とresolverを`web/lib/server/suggest-context-packages.ts`へ分離した。Slack／Gmailは
+  それぞれ独立した既定パッケージで、今後もDocs、Sheets等を製品単位で同じ配列へ追加する。
 
 ### そのほかの引き継ぎ事項
 
