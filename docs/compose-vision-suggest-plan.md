@@ -216,6 +216,18 @@ Gateway に影響しない）。配布中のDMG（v0.1.1）は別物で、`relea
 - **自動テスト**: suggestion の state 遷移（preparing→ready/unavailable/failed、送信後のクリア）。
 - **文案の質**: プロンプト（`suggest-engine`）は初版。実利用での手応えを見て調整する。
 
+### 2026-07-24 ブラッシュアップ
+
+- `suggest-engine` の推論を `none` から `low` へ変更した。画面上の根拠だけを機械的に埋めるのではなく、
+  表示中の会話、作業状態、入力欄の役割から「このユーザーなら次に何を書くか」を合理的に推論する。
+  短さを固定せず、状況に対して簡潔だが十分な1案を返す。
+- 共通の判断プロンプトとPersona添付を分離した。現行の既定Personaは、事業開発とソフトウェア開発を
+  横断するFounder／Engineer／Designer／Business professional。将来はアカウントプロフィール由来の
+  Personaでこの添付だけを置換できる構造とした。
+- Visionを明示的に閉じた後、呼び出し元アプリを再アクティブ化する。従来はUniversal I/Oが前面に残り、
+  次回Shift×2の編集可能判定が自アプリPIDに対してfalseとなり、直接Visionへ誤ルーティングしていた。
+  別アプリのクリックによる`resignActive`終了と、送信時の`PasteDeployer`経路ではフォーカスを奪い返さない。
+
 ### そのほかの引き継ぎ事項
 
 - **Keychain 保存プロンプト**: データ保護キーチェーン（access group 無し）は実行時に壊れ、PKCE の

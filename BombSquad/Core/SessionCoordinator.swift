@@ -287,6 +287,17 @@ final class SessionCoordinator {
 
     private func close(reason: String) {
         guard stateMachine.mode != .idle else { return }
+        // Explicit dismissal should put the user back where the panel was
+        // summoned from. Without this, Universal I/O can remain the frontmost
+        // accessory app after its last window is ordered out; the next summon
+        // then sees our own pid, concludes that no editable field is focused,
+        // and incorrectly routes straight to Vision. Never steal focus back
+        // when the panel closed because the user activated another app, and let
+        // PasteDeployer own the timed activation used by an actual send.
+        let appToRestore: NSRunningApplication? =
+            reason == "resignActive" || reason == "composeDeploy"
+            ? nil
+            : summonTargetApp
         stopActiveWork()
         discardComposePreCapture()
         stateMachine.transition(to: .idle, reason: reason)
@@ -298,6 +309,9 @@ final class SessionCoordinator {
         visionSession?.tearDown()
         visionSession = nil
         summonTargetApp = nil
+        if let appToRestore, !appToRestore.isTerminated {
+            appToRestore.activate()
+        }
     }
 
     // MARK: - Dictation
