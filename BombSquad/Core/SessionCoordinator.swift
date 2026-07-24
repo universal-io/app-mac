@@ -402,7 +402,10 @@ final class SessionCoordinator {
     /// a permission prompt.
     private func startComposePreCapture() {
         discardComposePreCapture()
-        guard ScreenCapturePermission.isGranted else { return }
+        guard ScreenCapturePermission.isGranted else {
+            SuggestTrace.log("pre-capture skipped: screen recording not granted")
+            return
+        }
         composeGeneration += 1
         let generation = composeGeneration
         composePreCaptureTask = Task { [weak self] in
@@ -441,9 +444,18 @@ final class SessionCoordinator {
         attachment: ScreenshotAttachment,
         generation: Int
     ) {
-        guard AppSettings.isProactiveSuggestEnabled() else { return }
-        guard let composeSession, composeSession.isEmptyDraft else { return }
-        guard let client = GatewaySuggestClient.make() else { return }
+        guard AppSettings.isProactiveSuggestEnabled() else {
+            SuggestTrace.log("skip: feature disabled")
+            return
+        }
+        guard let composeSession, composeSession.isEmptyDraft else {
+            SuggestTrace.log("skip: no session or draft not empty")
+            return
+        }
+        guard let client = GatewaySuggestClient.make() else {
+            SuggestTrace.log("skip: gateway client unavailable (signed in?)")
+            return
+        }
 
         let session = composeSession
         let captureID = attachment.id
@@ -451,10 +463,15 @@ final class SessionCoordinator {
         suggestionTask = Task { [weak self] in
             guard let self else { return }
             let context = await session.awaitSituationalContext()
+            SuggestTrace.log(
+                "context app=\(context?.appName ?? "nil") "
+                + "editableFocus=\(String(describing: context?.focusedFieldEditable))"
+            )
             // Only spend a model call when an editable field is actually
             // focused. A compose summon with no field focused is likely a
             // transit to Vision — the pre-capture already ran for that.
             guard context?.focusedFieldEditable == true else {
+                SuggestTrace.log("skip: no editable field focused")
                 await MainActor.run {
                     guard self.composeGeneration == generation,
                           self.composeSession === session else { return }
@@ -462,6 +479,7 @@ final class SessionCoordinator {
                 }
                 return
             }
+            SuggestTrace.log("requesting suggestion…")
             await MainActor.run {
                 guard self.composeGeneration == generation,
                       self.composeSession === session,
@@ -481,11 +499,13 @@ final class SessionCoordinator {
                           self.stateMachine.mode == .compose else { return }
                     self.suggestionTask = nil
                     guard suggestion.captureID == captureID else { return }
+                    SuggestTrace.log("ready: draftChars=\(suggestion.draft.count)")
                     session.applySuggestion(draft: suggestion.draft, note: suggestion.note)
                 }
             } catch is CancellationError {
                 return
             } catch {
+                SuggestTrace.log("failed: \(error.localizedDescription)")
                 await MainActor.run {
                     guard self.composeGeneration == generation,
                           self.composeSession === session,
@@ -691,6 +711,16 @@ final class SessionCoordinator {
         }
     }
 
+}
+
+/// Debug-only trace for the proactive-suggestion path, so a tester can see in
+/// Console.app exactly why a suggestion did or did not appear.
+enum SuggestTrace {
+    static func log(_ message: String) {
+        #if DEBUG
+        NSLog("[Suggest] %@", message)
+        #endif
+    }
 }
 
 /// Phase 1 placeholder content: proves on device that gestures drive the
