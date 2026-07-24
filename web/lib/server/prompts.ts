@@ -8,6 +8,7 @@ export type OutputLanguageCode = "japanese" | "english";
 
 export type SituationalContextPayload = {
   app_name?: string;
+  bundle_id?: string;
   window_title?: string;
   conversation_excerpt?: string;
 };

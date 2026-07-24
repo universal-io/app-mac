@@ -146,7 +146,8 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 - `operation`: `suggest`
 - `input.capture_id`: 必須
 - `input.image_base64`: 必須、PNG/JPEG
-- `input.context`: 任意（`app_name` / `window_title` / `conversation_excerpt`）。参照専用で保存しない
+- `input.context`: 任意（`app_name` / `bundle_id` / `window_title` / `conversation_excerpt`）。
+  参照専用で保存しない。`bundle_id`等から該当するアプリ文脈添付を選ぶ
 - 実装: `web/app/api/ai/suggest/route.ts`
 - クライアント: `GatewaySuggestClient`
 
@@ -166,7 +167,7 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
     "route": "snapshot_suggest",
     "api": "responses",
     "image_detail": "original",
-    "reasoning_effort": "none",
+    "reasoning_effort": "low",
     "fallback_used": false,
     "latency_ms": 0,
     "notices": []
@@ -174,7 +175,7 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 }
 ```
 
-`draft` は編集可能な提案で、採用するとユーザーの下書き欄に入る（自動送信はしない）。
+`draft` は編集可能な提案で、ユーザーが紙飛行機を確定すると対象欄へ直接入力する。
 画像・入力本文・回答本文はusageに保存しない（運用情報のみ）。
 
 ## POST /ai/memory/distill

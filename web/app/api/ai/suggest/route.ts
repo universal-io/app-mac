@@ -29,6 +29,7 @@ type SuggestRequestBody = {
     media_type?: string;
     context?: {
       app_name?: string;
+      bundle_id?: string;
       window_title?: string;
       conversation_excerpt?: string;
     };
@@ -58,6 +59,7 @@ export async function POST(request: Request): Promise<Response> {
     const context = rawContext
       ? {
           appName: rawContext.app_name,
+          bundleId: rawContext.bundle_id,
           windowTitle: rawContext.window_title,
           conversationExcerpt: rawContext.conversation_excerpt,
         }
@@ -201,7 +203,12 @@ function validateBody(
     if (typeof context !== "object" || context === null || Array.isArray(context)) {
       return errorResponse(400, "BAD_REQUEST", "input.context is invalid.", requestId);
     }
-    const fields = [context.app_name, context.window_title, context.conversation_excerpt];
+    const fields = [
+      context.app_name,
+      context.bundle_id,
+      context.window_title,
+      context.conversation_excerpt,
+    ];
     if (fields.some((field) =>
       field !== undefined
       && (typeof field !== "string" || field.length > MAX_CONTEXT_FIELD_CHARS)

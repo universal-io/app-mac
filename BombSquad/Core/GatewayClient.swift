@@ -117,6 +117,7 @@ struct GatewayClient {
     /// builds the prompt from it and stores nothing (see the API contract).
     static func contextPayload(_ context: SituationalContext) -> [String: Any] {
         var payload: [String: Any] = ["app_name": context.appName]
+        if let bundleID = context.bundleID { payload["bundle_id"] = bundleID }
         if let title = context.windowTitle { payload["window_title"] = title }
         if let excerpt = context.conversationExcerpt { payload["conversation_excerpt"] = excerpt }
         return payload
