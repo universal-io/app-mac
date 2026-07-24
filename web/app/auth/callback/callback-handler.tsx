@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ensureBombSquadUser } from "@/lib/supabase/bootstrap";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { safeInternalPath } from "@/lib/auth/next-path";
 
 type CallbackState = "checking" | "error";
 type EmailOtpType =
@@ -37,6 +38,7 @@ export function AuthCallbackHandler() {
       const supabase = getSupabaseBrowserClient();
       const code = searchParams.get("code");
       const provider = searchParams.get("provider") ?? "email";
+      const nextPath = safeInternalPath(searchParams.get("next"));
       const tokenHash = searchParams.get("token_hash");
       const type = parseEmailOtpType(searchParams.get("type"));
 
@@ -73,7 +75,12 @@ export function AuthCallbackHandler() {
           return;
         }
 
-        router.replace(`/auth?status=complete&provider=${encodeURIComponent(provider)}`);
+        // Forward to the originally requested page (e.g. /admin) when present;
+        // otherwise land on the account view with a completion notice.
+        router.replace(
+          nextPath ??
+            `/auth?status=complete&provider=${encodeURIComponent(provider)}`,
+        );
       } catch (error) {
         if (!isMounted) {
           return;

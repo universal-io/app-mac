@@ -4,6 +4,7 @@ type AuthPageProps = {
   searchParams?: Promise<{
     provider?: string;
     status?: string;
+    next?: string;
   }>;
 };
 
@@ -18,7 +19,11 @@ export default async function AuthPage({ searchParams }: AuthPageProps) {
             I<span className="io-scan">{"//"}</span>O
           </span>
         </div>
-        <AuthShell initialProvider={params?.provider} initialStatus={params?.status} />
+        <AuthShell
+          initialProvider={params?.provider}
+          initialStatus={params?.status}
+          next={params?.next}
+        />
       </div>
     </main>
   );

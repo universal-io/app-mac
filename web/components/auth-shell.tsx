@@ -1,21 +1,36 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getPublicEnv } from "@/lib/env";
 import { ensureBombSquadUser } from "@/lib/supabase/bootstrap";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { useBrowserSession } from "@/lib/supabase/use-browser-session";
+import { safeInternalPath } from "@/lib/auth/next-path";
 
 const env = getPublicEnv();
 
 type AuthShellProps = {
   initialProvider?: string;
   initialStatus?: string;
+  /** Where to send the user after login, e.g. "/admin". Ignored unless it is a
+   * safe internal path (open-redirect guard). */
+  next?: string;
 };
 
-export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
+export function AuthShell({ initialProvider, initialStatus, next }: AuthShellProps) {
+  const router = useRouter();
+  const nextPath = safeInternalPath(next);
   const [email, setEmail] = useState("");
   const { isConfigured, session } = useBrowserSession();
+
+  // Already signed in on this origin with a pending destination (e.g. arrived
+  // via /admin -> /auth?next=/admin): bounce straight there.
+  useEffect(() => {
+    if (session && nextPath) {
+      router.replace(nextPath);
+    }
+  }, [session, nextPath, router]);
   const [notice, setNotice] = useState<string | null>(messageForStatus(initialStatus, initialProvider));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -59,7 +74,7 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?provider=email`,
+          emailRedirectTo: `${window.location.origin}/auth/callback${callbackQuery("email", nextPath)}`,
         },
       });
 
@@ -89,7 +104,7 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
       const supabase = getSupabaseBrowserClient();
       const { error } = await supabase.auth.signInWithOAuth({
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?provider=google`,
+          redirectTo: `${window.location.origin}/auth/callback${callbackQuery("google", nextPath)}`,
         },
         provider: "google",
       });
@@ -148,7 +163,7 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
           <p className="mt-3 text-sm leading-6 text-body">
             {session
               ? "このブラウザで Universal I/O にログインできています。"
-              : "メールアドレスまたは Google アカウントでログインできます。"}
+              : "Google アカウントまたはメールアドレスでログインできます。"}
           </p>
         </div>
         <div className="rounded-full border border-line px-3 py-1 text-xs text-slate">
@@ -192,6 +207,21 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
         </div>
       ) : (
         <div className="mt-8">
+          <button
+            className="w-full rounded-xl bg-ink px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-iris disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={isGoogleSigningIn}
+            onClick={signInWithGoogle}
+            type="button"
+          >
+            {isGoogleSigningIn ? "Google に移動しています..." : "Google でログイン"}
+          </button>
+
+          <div className="my-6 flex items-center gap-3">
+            <div className="h-px flex-1 bg-line" />
+            <span className="text-sm text-slate">または</span>
+            <div className="h-px flex-1 bg-line" />
+          </div>
+
           <form className="space-y-5" onSubmit={sendMagicLink}>
             <div>
               <label className="mb-2 block text-sm font-medium text-body" htmlFor="email">
@@ -215,32 +245,27 @@ export function AuthShell({ initialProvider, initialStatus }: AuthShellProps) {
             </div>
 
             <button
-              className="w-full rounded-xl bg-ink px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-iris disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-xl border border-edge bg-white px-5 py-3 text-sm font-medium text-ink transition-colors hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
               disabled={isSending || !email.trim()}
               type="submit"
             >
               {isSending ? "送信中..." : hasSentLink ? "ログインリンクを再送" : "ログインリンクを送信"}
             </button>
           </form>
-
-          <div className="my-6 flex items-center gap-3">
-            <div className="h-px flex-1 bg-line" />
-            <span className="text-sm text-slate">または</span>
-            <div className="h-px flex-1 bg-line" />
-          </div>
-
-          <button
-            className="w-full rounded-xl border border-edge bg-white px-5 py-3 text-sm font-medium text-ink transition-colors hover:border-ink disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={isGoogleSigningIn}
-            onClick={signInWithGoogle}
-            type="button"
-          >
-            {isGoogleSigningIn ? "Google に移動しています..." : "Google でログイン"}
-          </button>
         </div>
       )}
     </section>
   );
+}
+
+/** Builds the callback query string, carrying the post-login destination so
+ * the callback handler can forward there after the session is established. */
+function callbackQuery(provider: string, nextPath: string | null): string {
+  const params = new URLSearchParams({ provider });
+  if (nextPath) {
+    params.set("next", nextPath);
+  }
+  return `?${params.toString()}`;
 }
 
 function messageForStatus(status: string | undefined, provider: string | undefined) {
