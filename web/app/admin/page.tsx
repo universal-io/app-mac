@@ -86,7 +86,7 @@ export default function AdminPage() {
             I<span className="text-iris">{"//"}</span>O Admin
           </span>
           <p className="mt-1 text-sm text-slate">
-            実効設定と利用統計（読み取り専用）
+            利用統計・ユーザー運用・モデル設定
           </p>
         </header>
 
@@ -106,18 +106,65 @@ export default function AdminPage() {
   );
 }
 
+type AdminTab = "dashboard" | "users" | "models";
+
+const ADMIN_TABS: { id: AdminTab; label: string }[] = [
+  { id: "dashboard", label: "ダッシュボード" },
+  { id: "users", label: "ユーザー" },
+  { id: "models", label: "モデル設定" },
+];
+
 function AdminBody({ data, token }: { data: Overview; token: string }) {
   const { config, stats } = data;
+  const [tab, setTab] = useState<AdminTab>("dashboard");
   return (
-    <div className="flex flex-col gap-8">
-      <EffectiveConfigSection config={config} />
-      <SummarySection stats={stats} />
-      <UsersSection token={token} />
-      <OperationSection operations={stats.operations} />
-      <ModelSection models={stats.models} />
-      <DailySection daily={stats.daily} />
-      <LinksSection />
+    <div>
+      <TabBar tab={tab} onChange={setTab} />
+      {tab === "dashboard" ? (
+        <div className="flex flex-col gap-8">
+          <SummarySection stats={stats} />
+          <OperationSection operations={stats.operations} />
+          <ModelSection models={stats.models} />
+          <DailySection daily={stats.daily} />
+          <LinksSection />
+        </div>
+      ) : tab === "users" ? (
+        <UsersSection token={token} />
+      ) : (
+        <EffectiveConfigSection config={config} />
+      )}
     </div>
+  );
+}
+
+function TabBar({
+  tab,
+  onChange,
+}: {
+  tab: AdminTab;
+  onChange: (tab: AdminTab) => void;
+}) {
+  return (
+    <nav className="mb-8 flex gap-1 border-b border-line">
+      {ADMIN_TABS.map((t) => {
+        const active = t.id === tab;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onChange(t.id)}
+            aria-current={active ? "page" : undefined}
+            className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+              active
+                ? "border-iris text-ink"
+                : "border-transparent text-slate hover:text-ink"
+            }`}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
