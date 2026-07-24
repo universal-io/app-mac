@@ -139,31 +139,62 @@
 3. **Phase 3（周回・ゲート・磨き）**: Shift×2 の周回（閉→コンポーズ→Vision→閉、レビューはボタンのみ）、
    発火ゲート（`SituationalContext` に編集可能フォーカス判定を追加）、ヘルプ文言・設定トグルUI・テスト。
 
-## 7. 進捗 / 残タスク
+## 7. 現在の状態と次セッションへの引き継ぎ（2026-07-24）
 
-Phase 1〜3 実装済み（`feature/compose-vision-suggest`）:
+**作業ブランチは `dev` に一本化**（`main` から 4 本を統合済み。細別ブランチは廃止）。以降の作業は `dev`。
+検証状況: `xcodebuild build`＋テスト7件グリーン、web `lint`＋`tsc --noEmit` グリーン。
+※ web の本番 `npm run build`（next build）は今セッションでは未実行——Vercel デプロイに頼る前に一度回すこと。
 
-- [x] コンポーズ起動時の無音プリキャプチャと Vision 再利用（Phase 1）。
-- [x] `/api/ai/suggest` ＋ `suggest-engine` ＋ `ai-routing` の `suggest` ＋ `GatewaySuggestClient`（Phase 2）。
-- [x] `ComposeSession` の自動文案 state（preparing/ready/unavailable）と下部スロットの排他表示・採用・編集（Phase 2）。
-- [x] `AppSettings.isProactiveSuggestEnabled` ＋ `GeneralSettingsView` のトグル（Phase 3）。
-- [x] `SituationalContext.focusedFieldEditable` による発火ゲート（Phase 3）。
-- [x] Shift×2 周回（コンポーズ→Vision常時、レビューはボタン）＋ヘルプ文言・`needsReReview` ヒント・README 操作（Phase 3）。
+### 実装済み（dev）
 
-残タスク（要検討）:
+- 先回り文案（Compose Vision Suggest）: 起動時の無音プリキャプチャ→Vision 再利用、`/api/ai/suggest`
+  （`suggest-engine` ＋ `ai-routing` の `suggest`）＋ `GatewaySuggestClient`、下部スロット排他表示、
+  `AppSettings.isProactiveSuggestEnabled` ＋設定トグル。
+- フォーカス判定を**同期化**（`SituationalContextService.focusedFieldIsEditable(pid:)`）——パネル前面化前に
+  読むので `editableFocus=false` 誤判定を解消。判定結果 `composeFocusEditable` で文案ゲート。
+- ルーティング: idle で Shift×2 →「選択あり=変換／編集欄フォーカスあり=コンポーズ／無し=最初から Vision」。
+  `AppMode` に `idle→capturing` を追加。`handleVisionCaptureCompletion` は composeSession を optional 化。
+- 下部スロットを**安定表示**（preparing プレースホルダ＋ローディング→ready/none、畳まない＝伸縮しない）。
+  `[Suggest]` の DEBUG ログを各判定点に追加（Console で発火理由が見える）。
+- Google ログイン: `prompt=select_account` でアカウント選択毎回、キャンセルは `infoMessage` で穏当化。
+- エラー文言: `UserFacingError` ＋ `UserPresentableError` マーカー（自前エラーのみ日本語温存、SDK 英語は非露出）。
+- 画面収録許可: 「許可」で毎回 設定の該当ペインを直接オープン＋押下フィードバック＋正しい名称の案内。
+- Keychain: データ保護キーチェーン化は**revert 済み**（下記）。
 
-- [ ] 実機での体感確認（発火タイミング、文案品質、`suggest` の遅延）。まだ手動 golden path 未追加。
-- [ ] 発火ゲートの精度（Web/Electron の編集可能判定、`isContextCaptureEnabled` オフ時は文案も出ない依存の是非）。
-- [ ] 採用/不採用シグナルのメモリ還元（将来）。
-- [ ] 自動テスト追加（suggestion state 遷移、排他表示）。
+### 🔴 最重要ブロッカー: `/api/ai/suggest` が本番 Gateway 未デプロイ
+
+- アプリは固定で `https://api.universal-io.com` を呼ぶ。新ルートは `web/` にあるが**本番未デプロイ**→ **HTTP 404**。
+  そのため文案は現状「出せません」表示になる（コードは正しく動作、サーバーが無いだけ）。
+- **デプロイルール（ユーザー確認済み）**: `main` にコミット＝本番デプロイ。ブランチ push＝Vercel プレビュー
+  （プレビュー URL は別ドメインなので、**アプリからは使えない**＝アプリで文案を実検証するには main/本番が要る）。
+- `vercel` CLI 不在・`.vercel` リンク無し・CI workflow 無し。デプロイは Vercel の git 連携と推定。
+
+### 🔴 次にやる予定だった作業（未着手）: エラーを隠さない
+
+ユーザー原則:「**問題を隠さない／安易なフォールバックをしない／何が起きているかエラーで見せる**」。
+現状、文案リクエストの失敗（404 等）を `.unavailable`＝「文案は出せませんでした」に丸めて**問題を隠している**。
+
+- 次タスク: 失敗（例外）と 空（モデルが候補無し）を**区別**し、失敗は**実エラーを表示**する。
+  - `ComposeSession` に `suggestionErrorMessage` / `suggestionErrorDetail` を追加、`markSuggestionFailed(_:detail:)`。
+  - `SessionCoordinator` の catch → `markSuggestionFailed(UserFacingError.message(for:), detail: technicalDetail)`。
+    キャプチャ失敗も同様に理由を出す。空（`applySuggestion` の空）だけ従来の「候補無し」表示。
+  - `ComposeSessionView` の `.unavailable` 分岐で、エラーがあれば警告アイコン＋文言＋技術詳細（小）を表示。
+- 同原則で見直す候補: `presentVisionFromIdle` の「画面収録なし→compose に無言フォールバック」、
+  各所の `try?`。安易に握りつぶさず、必要な所は理由を見せる。
+
+### そのほかの引き継ぎ事項
+
+- **Keychain 保存プロンプト**: データ保護キーチェーン（access group 無し）は実行時に壊れ、PKCE の
+  code_verifier を失って Google ログインが失敗した → **login キーチェーンへ revert 済み**（commit ef84673）。
+  プロンプト問題は未解決だが、これは**開発環境固有**（署名が毎ビルド変わるため）で**本番（Developer ID 安定署名）
+  では出ない**。本気で消すなら `keychain-access-groups` entitlement＋プロビジョニングプロファイルが必要（署名
+  インフラ変更＝ユーザー判断）。同じ access-group 無しデータ保護方式は**再挑戦しないこと**。詳細 memory
+  `signing-tcc-identity`。
+- **リリース/パッチは不要**（公開版 v0.1.1 は身内のみ利用、まだ実ユーザーなし）。今は技術検証優先。
+  main と v0.1.1 タグは auth/permissions 系ファイルが同一＝UX 修正は将来そのまま効く。
+- 発火ゲート精度（Web/Electron の編集可能判定）と自動テスト（suggestion state 遷移）は将来課題。
 
 ## 8. パージ手順
 
-ボツ時は以下でクリーンに戻す。
-
-```bash
-git checkout main
-git branch -D feature/compose-vision-suggest
-```
-
-本計画の内容・コード・設定はすべて本ブランチ内に閉じるため、上記だけで作業ツリーから消える。
+本機能を含む dev の巻き戻しは Git 履歴から。dev は単一開発ブランチのため、個別機能だけの purge は
+`git revert <commit>` で行う（ブランチ削除での一括 purge は前提としない）。
