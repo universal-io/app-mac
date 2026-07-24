@@ -63,6 +63,13 @@ final class SessionCoordinator {
     private var transcriptionTask: Task<Void, Never>?
     private var captureTask: Task<Void, Never>?
     private var captureGeneration = 0
+    /// Full-screen shot taken silently the moment compose is summoned, so a
+    /// later Shift double-tap into Vision reuses it with zero capture latency.
+    /// Owned here until it is either handed to a VisionSession (which deletes
+    /// it on teardown) or discarded when compose exits without using it.
+    private var composePreCapture: ScreenshotAttachment?
+    private var composePreCaptureTask: Task<Void, Never>?
+    private var composeGeneration = 0
 
     init() {
         panelController.onCloseRequested = { [weak self] in
@@ -121,7 +128,11 @@ final class SessionCoordinator {
             // A double-tap belongs to the draft editor only.
             guard composeSession.focusedField == .draft else { return }
             if composeSession.isEmptyDraft {
-                beginVisionCaptureFromCompose()
+                // Reuse the silent pre-capture for an instant Vision entry;
+                // fall back to the interactive capture when none is ready.
+                if !enterVisionReusingPreCapture() {
+                    beginVisionCaptureFromCompose()
+                }
             } else {
                 composeSession.requestReview()
             }
@@ -180,6 +191,7 @@ final class SessionCoordinator {
             summonTargetApp = nil
             return
         }
+        startComposePreCapture()
     }
 
     /// Transform summon shares the same summon-time context capture, but the
@@ -206,6 +218,7 @@ final class SessionCoordinator {
     private func close(reason: String) {
         guard stateMachine.mode != .idle else { return }
         stopActiveWork()
+        discardComposePreCapture()
         stateMachine.transition(to: .idle, reason: reason)
         screenshotSelection.cancel()
         composeSession?.tearDown()
@@ -383,9 +396,74 @@ final class SessionCoordinator {
         visionSession?.isTranscribing = false
     }
 
+    // MARK: - Compose pre-capture (shared with Vision)
+
+    /// The user summoning compose is already an intent to use the tool, so we
+    /// grab the screen the moment the panel opens. The shot is silent (no
+    /// selection overlay) and excludes our own windows. It is only started
+    /// when screen recording is already granted — summoning must never trigger
+    /// a permission prompt.
+    private func startComposePreCapture() {
+        discardComposePreCapture()
+        guard ScreenCapturePermission.isGranted else { return }
+        composeGeneration += 1
+        let generation = composeGeneration
+        composePreCaptureTask = Task { [weak self] in
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+            let displayID = screen?.deviceDescription[
+                NSDeviceDescriptionKey("NSScreenNumber")
+            ] as? CGDirectDisplayID
+            let attachment = try? await ScreenshotCaptureService().captureFullScreen(displayID: displayID)
+            await MainActor.run {
+                guard let self else {
+                    if let attachment { try? FileManager.default.removeItem(at: attachment.url) }
+                    return
+                }
+                self.composePreCaptureTask = nil
+                // A slow shot must not land into a newer session or a mode the
+                // pre-capture no longer serves.
+                guard self.composeGeneration == generation, self.stateMachine.mode == .compose else {
+                    if let attachment { try? FileManager.default.removeItem(at: attachment.url) }
+                    return
+                }
+                self.composePreCapture = attachment
+            }
+        }
+    }
+
+    /// Enter Vision reusing the silent pre-capture, skipping the interactive
+    /// overlay entirely. Ownership of the image transfers to the VisionSession.
+    /// Returns false when no pre-capture is ready (caller falls back).
+    private func enterVisionReusingPreCapture() -> Bool {
+        guard let composeSession, let attachment = composePreCapture else { return false }
+        composePreCapture = nil
+        composePreCaptureTask?.cancel()
+        composePreCaptureTask = nil
+        guard stateMachine.transition(to: .capturing(returnTo: .compose), reason: "composePreCaptureVision")
+        else {
+            try? FileManager.default.removeItem(at: attachment.url)
+            return false
+        }
+        handleVisionCaptureCompletion(.attachment(attachment), composeSession: composeSession)
+        return true
+    }
+
+    /// Drop an unused pre-capture: cancel a still-running shot and delete a
+    /// finished one so no temporary image outlives its compose session.
+    private func discardComposePreCapture() {
+        composePreCaptureTask?.cancel()
+        composePreCaptureTask = nil
+        if let attachment = composePreCapture {
+            try? FileManager.default.removeItem(at: attachment.url)
+            composePreCapture = nil
+        }
+    }
+
     // MARK: - Vision capture
 
     private func beginVisionCaptureFromCompose() {
+        discardComposePreCapture()
         guard let composeSession else { return }
         guard ScreenCapturePermission.isGranted || ScreenCapturePermission.request() else {
             composeSession.errorMessage = "スクリーンショットには画面収録の許可が必要です。"
