@@ -149,6 +149,12 @@ struct AccountView: View {
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
         }
+        if let infoMessage = viewModel.infoMessage {
+            Label(infoMessage, systemImage: "info.circle")
+                .foregroundStyle(.secondary)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+        }
         if let errorMessage = viewModel.errorMessage {
             Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)

@@ -45,6 +45,16 @@ enum UserFacingError {
         return "問題が発生しました。もう一度お試しください。"
     }
 
+    /// Whether the error is the user intentionally backing out (closing the
+    /// web sign-in sheet, cancelling a request) — a normal action, not a
+    /// failure, so callers can avoid an alarming red banner.
+    static func isUserCancellation(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == webAuthDomain, nsError.code == 1 { return true }
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled { return true }
+        return false
+    }
+
     /// The raw underlying string, for a small secondary line beneath `message`.
     /// Nil when it is empty or would only repeat the primary message.
     static func technicalDetail(for error: Error) -> String? {

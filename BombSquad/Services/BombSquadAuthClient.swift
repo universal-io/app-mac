@@ -274,7 +274,12 @@ final class BombSquadAuthClient {
 
         return try await client.auth.signInWithOAuth(
             provider: .google,
-            redirectTo: Self.redirectURL
+            redirectTo: Self.redirectURL,
+            // Always show Google's account chooser. Without this the web session
+            // silently reuses whichever Google account it already holds, forcing
+            // a user with several accounts to cancel and retry to switch; the
+            // chooser (with "Use another account") lets them pick every time.
+            queryParams: [(name: "prompt", value: "select_account")]
         )
     }
 

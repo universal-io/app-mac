@@ -19,6 +19,11 @@ struct LoginRequiredView: View {
                     .foregroundStyle(.green).font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let infoMessage = viewModel.infoMessage {
+                Label(infoMessage, systemImage: "info.circle")
+                    .foregroundStyle(.secondary).font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let errorMessage = viewModel.errorMessage {
                 VStack(alignment: .leading, spacing: 3) {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")

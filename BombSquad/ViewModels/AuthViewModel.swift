@@ -21,6 +21,9 @@ final class AuthViewModel: ObservableObject {
     /// The raw underlying error, shown small beneath `errorMessage`. Only ever
     /// set alongside a friendly `errorMessage`.
     @Published var errorDetail: String?
+    /// A neutral, non-alarming note (e.g. after the user cancels Google
+    /// sign-in). Shown in secondary style, never red.
+    @Published var infoMessage: String?
 
     private lazy var authClient = BombSquadAuthClient.shared
     private var authStateTask: Task<Void, Never>?
@@ -55,6 +58,7 @@ final class AuthViewModel: ObservableObject {
         isBusy = true
         errorMessage = nil
         errorDetail = nil
+        infoMessage = nil
         statusMessage = nil
 
         Task {
@@ -79,6 +83,7 @@ final class AuthViewModel: ObservableObject {
         isBusy = true
         errorMessage = nil
         errorDetail = nil
+        infoMessage = nil
         statusMessage = nil
 
         Task {
@@ -107,6 +112,7 @@ final class AuthViewModel: ObservableObject {
         isBusy = true
         errorMessage = nil
         errorDetail = nil
+        infoMessage = nil
         statusMessage = nil
 
         Task {
@@ -141,6 +147,7 @@ final class AuthViewModel: ObservableObject {
         isBusy = true
         errorMessage = nil
         errorDetail = nil
+        infoMessage = nil
         statusMessage = nil
 
         Task {
@@ -324,8 +331,18 @@ final class AuthViewModel: ObservableObject {
 
     private func present(_ error: Error) async {
         await MainActor.run {
-            self.errorMessage = UserFacingError.message(for: error)
-            self.errorDetail = UserFacingError.technicalDetail(for: error)
+            if UserFacingError.isUserCancellation(error) {
+                // Backing out of the sign-in sheet is intentional, not a
+                // failure. Guide the retry instead of alarming with red.
+                self.errorMessage = nil
+                self.errorDetail = nil
+                self.infoMessage =
+                    "ログインを中断しました。もう一度「Google で続ける」を押すと、アカウントを選び直せます。"
+            } else {
+                self.errorMessage = UserFacingError.message(for: error)
+                self.errorDetail = UserFacingError.technicalDetail(for: error)
+                self.infoMessage = nil
+            }
         }
     }
 
