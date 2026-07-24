@@ -21,7 +21,7 @@ enum AXActionService {
         let isTextInput: Bool
     }
 
-    enum ActionError: LocalizedError {
+    enum ActionError: UserPresentableError {
         case notPermitted
         case notFound(String)
         case actionFailed(String)

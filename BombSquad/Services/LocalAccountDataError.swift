@@ -1,6 +1,6 @@
 import Foundation
 
-enum LocalAccountDataError: LocalizedError {
+enum LocalAccountDataError: UserPresentableError {
     case noActiveAccount
 
     var errorDescription: String? {

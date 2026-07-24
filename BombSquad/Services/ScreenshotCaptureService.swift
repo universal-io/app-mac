@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import ScreenCaptureKit
 
-enum ScreenshotCaptureError: LocalizedError {
+enum ScreenshotCaptureError: UserPresentableError {
     case cancelled
     case desktopUnavailable
     case failed(status: Int32)

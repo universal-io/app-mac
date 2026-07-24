@@ -5,7 +5,7 @@ import Foundation
 /// hot path, so a failed call must never surface as a user-facing error
 /// that blocks sending. The shared operational notice may still report it.
 enum MemoryDistiller {
-    enum DistillerError: LocalizedError {
+    enum DistillerError: UserPresentableError {
         case badResponse(String)
 
         var errorDescription: String? {

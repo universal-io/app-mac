@@ -1,6 +1,6 @@
 import AVFoundation
 
-enum AudioRecorderError: LocalizedError {
+enum AudioRecorderError: UserPresentableError {
     case couldNotStart
     var errorDescription: String? {
         "録音を開始できませんでした（マイクの権限を確認してください）。"

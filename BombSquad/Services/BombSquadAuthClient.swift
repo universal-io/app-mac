@@ -48,7 +48,7 @@ private struct UniversalIOAuthLocalStorage: AuthLocalStorage {
     }
 }
 
-enum BombSquadAuthError: LocalizedError {
+enum BombSquadAuthError: UserPresentableError {
     case missingConfiguration
     case invalidSupabaseURL(String)
     case invalidEmail

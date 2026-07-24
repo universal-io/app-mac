@@ -1,5 +1,11 @@
 import Foundation
 
+/// Marks an error type whose `errorDescription` is already written for end
+/// users (Japanese, actionable). `UserFacingError` trusts these as the primary
+/// message; every other `LocalizedError` (e.g. an SDK error carrying an English
+/// string) is treated as opaque and shown a friendly line instead.
+protocol UserPresentableError: LocalizedError {}
+
 /// Maps internal and system errors to messages a person can actually act on.
 ///
 /// `message` is the main, human-readable line; `technicalDetail` is the raw
@@ -32,12 +38,12 @@ enum UserFacingError {
             break
         }
 
-        // Our own error types (ProviderError, BombSquadAuthError,
-        // ScreenshotCaptureError, …) already carry ready-to-show Japanese copy.
-        // Bridged system errors are not LocalizedError, so this does not leak
-        // their opaque strings.
-        if let localized = error as? LocalizedError,
-           let description = localized.errorDescription,
+        // Only our own error types carry ready-to-show Japanese copy. SDK
+        // errors (Supabase AuthError/Postgrest, …) are LocalizedError too but
+        // hold English strings, so trusting bare LocalizedError would leak
+        // them; require the explicit marker instead.
+        if let presentable = error as? UserPresentableError,
+           let description = presentable.errorDescription,
            !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return description
         }

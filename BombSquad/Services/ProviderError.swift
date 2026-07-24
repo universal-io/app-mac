@@ -2,7 +2,7 @@ import Foundation
 
 /// Provider-neutral errors surfaced to the UI. Shared by all `ReviewProvider`
 /// implementations so the view layer handles one error type.
-enum ProviderError: LocalizedError {
+enum ProviderError: UserPresentableError {
     case missingAPIKey
     case http(status: Int, body: String)
     case noStructuredOutput
