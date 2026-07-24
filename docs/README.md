@@ -17,6 +17,7 @@
 | [macos-ux-polish-checklist.md](macos-ux-polish-checklist.md) | リリース前 UX 磨き込みチェックリスト（TCC/ウィンドウ/署名） |
 | [supabase-setup.md](supabase-setup.md) | 認証・データ基盤の設定 |
 | [admin-dashboard-plan.md](admin-dashboard-plan.md) | 本番Admin Console |
+| [compose-vision-suggest-plan.md](compose-vision-suggest-plan.md) | 【実験ブランチ】先回り文案（Compose Vision Suggest）開発計画 |
 
 ## 参照資料
 

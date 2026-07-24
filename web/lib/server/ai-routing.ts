@@ -14,6 +14,7 @@ export type AIFeature =
   | "review"
   | "transform"
   | "vision"
+  | "suggest"
   | "transcribe"
   | "memory";
 
@@ -42,6 +43,11 @@ export const AI_MODEL_ROUTES: Readonly<Record<AIFeature, AIModelRoute>> = {
   },
   vision: {
     label: "Vision / Copilot",
+    primary: { vendor: "openai", modelId: "gpt-5.6-luna", api: "responses" },
+    secondary: { vendor: "openai", modelId: "gpt-5.4-mini", api: "responses" },
+  },
+  suggest: {
+    label: "Compose suggestion",
     primary: { vendor: "openai", modelId: "gpt-5.6-luna", api: "responses" },
     secondary: { vendor: "openai", modelId: "gpt-5.4-mini", api: "responses" },
   },

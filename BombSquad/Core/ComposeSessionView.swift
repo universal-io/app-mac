@@ -30,8 +30,18 @@ struct ComposeSessionView: View {
         Binding(get: { session.focusedField }, set: { session.focusedField = $0 })
     }
 
-    private var hasResultSurface: Bool {
+    /// The lower slot is shared by the review result and the proactive
+    /// suggestion — mutually exclusive, so a review always wins the space.
+    private var hasReviewSurface: Bool {
         session.result != nil || session.isReviewing
+    }
+
+    private var hasSuggestionSurface: Bool {
+        session.suggestionStatus == .preparing || session.suggestionStatus == .ready
+    }
+
+    private var showsLowerSlot: Bool {
+        hasReviewSurface || hasSuggestionSurface
     }
 
     var body: some View {
@@ -39,14 +49,14 @@ struct ComposeSessionView: View {
             globalMessages
 
             draftPane
-                .frame(maxHeight: hasResultSurface ? 190 : .infinity)
+                .frame(maxHeight: showsLowerSlot ? 190 : .infinity)
 
-            if hasResultSurface {
-                resultPane
+            if showsLowerSlot {
+                lowerSlot
                     .frame(maxHeight: .infinity)
             }
         }
-        .animation(.spring(duration: 0.35), value: hasResultSurface)
+        .animation(.spring(duration: 0.35), value: showsLowerSlot)
         .frame(minWidth: 620, minHeight: 640)
         .task { await session.loadRecentHistoryIfNeeded() }
         .onAppear {
@@ -86,9 +96,13 @@ struct ComposeSessionView: View {
                         Text("使い方").font(.headline)
                         shortcut("Enter", "確定")
                         shortcut("Shift+Enter", "改行")
-                        shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×2", "起動 / レビュー")
+                        shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×1", "文案とフォーカス切替")
+                        shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×2", "起動 / ビジョン / 閉じる")
                         shortcut("\(KeybindingSettings.gestureKey().hintLabel) 長押し", "音声")
                         shortcut("Esc", "閉じる")
+                        Text("レビューは「レビュー」ボタンで実行します。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(12)
                 }
@@ -153,7 +167,72 @@ struct ComposeSessionView: View {
         }
     }
 
-    private var resultPane: some View {
+    @ViewBuilder
+    private var lowerSlot: some View {
+        if hasReviewSurface {
+            reviewPane
+        } else {
+            suggestionPane
+        }
+    }
+
+    private var suggestionPane: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Label("文案", systemImage: "sparkles")
+                    .font(.headline)
+                Spacer()
+                if session.suggestionStatus == .preparing {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .background(WindowDragHandle())
+
+            if session.suggestionStatus == .preparing {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("画面を読み取って文案を準備中…").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(16)
+                .background(EditorFocusBackground(isFocused: false))
+            } else {
+                SendableTextEditor(
+                    text: $session.suggestedDraft,
+                    focusedField: focusedField,
+                    field: .revision,
+                    onSend: session.adoptSuggestion
+                )
+                .padding(8)
+                .frame(maxHeight: .infinity)
+                .background(EditorFocusBackground(isFocused: session.focusedField == .revision))
+
+                if let note = session.suggestionNote, !note.isEmpty {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Text("使わなければ保存されません。")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    Button(action: session.dismissSuggestion) {
+                        Label("破棄", systemImage: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                    Button(action: session.adoptSuggestion) {
+                        Label("採用", systemImage: "arrow.up.left")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding()
+    }
+
+    private var reviewPane: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Label("レビュー", systemImage: "checkmark.shield")
@@ -188,7 +267,7 @@ struct ComposeSessionView: View {
     private func reviewedResult(_ result: ReviewResult) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if session.needsReReview {
-                Label("原文が変更されました。原文で\(KeybindingSettings.gestureKey().hintLabel)2回すると再レビューします。",
+                Label("原文が変更されました。「レビュー」ボタンで再レビューできます。",
                       systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption)
                     .foregroundStyle(.orange)

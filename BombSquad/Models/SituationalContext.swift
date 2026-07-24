@@ -18,6 +18,11 @@ struct SituationalContext {
     /// in rough reading order, trimmed to a budget. Nil when nothing readable
     /// was found via Accessibility.
     let conversationExcerpt: String?
+    /// True when the app's focused element is an editable, non-secure text
+    /// control. The proactive suggestion gates on this: without a field to
+    /// write into, a compose summon is likely just a transit to Vision, so no
+    /// model call is spent. Secure (password) fields are always false.
+    let focusedFieldEditable: Bool
     let capturedAt: Date
 
     var hasConversation: Bool {
