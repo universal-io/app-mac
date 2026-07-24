@@ -9,13 +9,8 @@ struct LoginRequiredView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("ログイン / 新規登録")
-                    .font(.title2.weight(.semibold))
-                Text("初回利用はフリーアカウントから始まります。")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text("ログイン / 新規登録")
+                .font(.title2.weight(.semibold))
 
             SignInForm(viewModel: viewModel)
 
@@ -25,9 +20,17 @@ struct LoginRequiredView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let errorMessage = viewModel.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red).font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red).font(.callout)
+                    if let detail = viewModel.errorDetail {
+                        Text(detail)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .textSelection(.enabled)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(28)

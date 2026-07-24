@@ -287,7 +287,7 @@ final class MemoryViewModel: ObservableObject {
                 uniqueKeysWithValues: relationshipCards.map { ($0.id, $0.contentMD) }
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -302,7 +302,7 @@ final class MemoryViewModel: ObservableObject {
             bootstrapSamples = ""
             await reload()
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -314,7 +314,7 @@ final class MemoryViewModel: ObservableObject {
             )
             await reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -328,7 +328,7 @@ final class MemoryViewModel: ObservableObject {
             try await MemoryStore.shared.deleteCard(id: card.id)
             await reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -345,7 +345,7 @@ final class MemoryViewModel: ObservableObject {
             try await MemoryStore.shared.updateCard(id: card.id, contentMD: draft, source: .userEdited)
             await reload()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 }

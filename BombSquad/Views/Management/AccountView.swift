@@ -104,7 +104,7 @@ struct AccountView: View {
         VStack(alignment: .leading, spacing: 20) {
             header(
                 title: "ログイン / 新規登録",
-                subtitle: "初回利用はフリーアカウントから始まります。"
+                subtitle: nil
             )
 
             SignInForm(viewModel: viewModel)

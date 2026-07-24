@@ -18,6 +18,9 @@ final class AuthViewModel: ObservableObject {
     @Published var hasSession = false
     @Published var statusMessage: String?
     @Published var errorMessage: String?
+    /// The raw underlying error, shown small beneath `errorMessage`. Only ever
+    /// set alongside a friendly `errorMessage`.
+    @Published var errorDetail: String?
 
     private lazy var authClient = BombSquadAuthClient.shared
     private var authStateTask: Task<Void, Never>?
@@ -51,6 +54,7 @@ final class AuthViewModel: ObservableObject {
         guard !isBusy else { return }
         isBusy = true
         errorMessage = nil
+        errorDetail = nil
         statusMessage = nil
 
         Task {
@@ -74,6 +78,7 @@ final class AuthViewModel: ObservableObject {
         guard !isBusy else { return }
         isBusy = true
         errorMessage = nil
+        errorDetail = nil
         statusMessage = nil
 
         Task {
@@ -101,6 +106,7 @@ final class AuthViewModel: ObservableObject {
         guard !isBusy else { return }
         isBusy = true
         errorMessage = nil
+        errorDetail = nil
         statusMessage = nil
 
         Task {
@@ -134,6 +140,7 @@ final class AuthViewModel: ObservableObject {
         else { return }
         isBusy = true
         errorMessage = nil
+        errorDetail = nil
         statusMessage = nil
 
         Task {
@@ -168,6 +175,7 @@ final class AuthViewModel: ObservableObject {
                     self.hasSession = false
                     if localCleanupFailed {
                         self.statusMessage = nil
+                        self.errorDetail = nil
                         self.errorMessage = "アカウントは削除されました。このMacのローカルデータは次回起動時に消去を再試行します。"
                     } else {
                         self.statusMessage = "アカウントと、このMacに保存された関連データを削除しました。"
@@ -316,7 +324,8 @@ final class AuthViewModel: ObservableObject {
 
     private func present(_ error: Error) async {
         await MainActor.run {
-            self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            self.errorMessage = UserFacingError.message(for: error)
+            self.errorDetail = UserFacingError.technicalDetail(for: error)
         }
     }
 

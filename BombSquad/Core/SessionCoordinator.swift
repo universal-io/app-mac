@@ -233,8 +233,7 @@ final class SessionCoordinator {
             } catch {
                 isDictating = false
                 composeSession.isRecording = false
-                composeSession.errorMessage =
-                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                composeSession.errorMessage = UserFacingError.message(for: error)
             }
         case .vision:
             guard let visionSession else { return }
@@ -248,8 +247,7 @@ final class SessionCoordinator {
             } catch {
                 isDictating = false
                 visionSession.isRecording = false
-                visionSession.errorMessage =
-                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                visionSession.errorMessage = UserFacingError.message(for: error)
             }
         case .navigator, .copilot:
             return
@@ -353,12 +351,12 @@ final class SessionCoordinator {
                     guard self.composeSession === composeSession else { return }
                     composeSession.isTranscribing = false
                     composeSession.errorMessage =
-                        "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                        "文字起こしに失敗しました。もう一度お試しください。"
                 case .vision(let session):
                     guard self.visionSession === session else { return }
                     session.isTranscribing = false
                     session.errorMessage =
-                        "文字起こしに失敗: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                        "文字起こしに失敗しました。もう一度お試しください。"
                 }
             }
         }
@@ -415,9 +413,7 @@ final class SessionCoordinator {
             } catch ScreenshotCaptureError.cancelled {
                 completion = .cancelled
             } catch {
-                completion = .failed(
-                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                )
+                completion = .failed(UserFacingError.message(for: error))
             }
 
             guard !Task.isCancelled else { return }
