@@ -101,6 +101,21 @@ enum SituationalContextService {
         )
     }
 
+    /// Synchronous, fast check of whether the given app currently has an
+    /// editable text field focused. Read this at summon *before* our panel
+    /// activates — once our window becomes key the source app resigns first
+    /// responder and its `kAXFocusedUIElementAttribute` no longer reports the
+    /// field, which is exactly why the async context walk saw no focus. One
+    /// focused-element read (+ role/subrole), so it is safe on the hot path.
+    static func focusedFieldIsEditable(pid: pid_t) -> Bool {
+        guard AXIsProcessTrusted(),
+              pid != ProcessInfo.processInfo.processIdentifier else { return false }
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, Budget.axMessagingTimeout)
+        guard let focused = copyElement(appElement, kAXFocusedUIElementAttribute) else { return false }
+        return isEditableField(focused)
+    }
+
     /// Whether the focused element is an editable text control we could
     /// responsibly propose text for. Secure (password) fields are never
     /// eligible — the proactive suggestion must not target them.

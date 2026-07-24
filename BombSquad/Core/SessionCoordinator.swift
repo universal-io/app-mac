@@ -71,6 +71,10 @@ final class SessionCoordinator {
     private var composePreCaptureTask: Task<Void, Never>?
     private var suggestionTask: Task<Void, Never>?
     private var composeGeneration = 0
+    /// Whether an editable field was focused in the source app at the moment
+    /// compose was summoned — captured synchronously before our panel steals
+    /// focus, so the proactive suggestion gate is reliable.
+    private var composeFocusEditable = false
 
     init() {
         panelController.onCloseRequested = { [weak self] in
@@ -142,17 +146,71 @@ final class SessionCoordinator {
         }
     }
 
-    /// Right-Shift double-tap from idle: if text is selected in the front app,
-    /// open the receiving-side transform flow; otherwise open compose.
+    /// Right-Shift double-tap from idle. Text selected in the front app opens
+    /// the receiving-side transform flow. Otherwise the decision is by focus:
+    /// an editable field focused → compose (write into it); nothing focused →
+    /// Vision from the start (there is no field to write to, so read the screen
+    /// instead). Focus is read synchronously here, before our panel activates.
     private func summonSelectionAware() {
         SelectionGrabber.grab { [weak self] selection in
             Task { @MainActor [weak self] in
                 guard let self, self.stateMachine.mode == .idle else { return }
                 if let selection {
                     self.presentTransformSession(with: selection)
-                } else {
-                    self.presentComposeSession()
+                    return
                 }
+                let editable = NSWorkspace.shared.frontmostApplication.map {
+                    SituationalContextService.focusedFieldIsEditable(pid: $0.processIdentifier)
+                } ?? false
+                if editable {
+                    self.presentComposeSession()
+                } else {
+                    self.presentVisionFromIdle()
+                }
+            }
+        }
+    }
+
+    /// No selection and no editable field focused: go straight to Vision on the
+    /// current screen (silent full-screen capture, no selection overlay). Falls
+    /// back to compose when screen recording is unavailable, so the summon is
+    /// never a dead end.
+    private func presentVisionFromIdle() {
+        guard stateMachine.mode == .idle else { return }
+        guard ScreenCapturePermission.isGranted else {
+            presentComposeSession()
+            return
+        }
+        summonTargetApp = NSWorkspace.shared.frontmostApplication
+        composeSession?.tearDown()
+        composeSession = nil
+        transformSession?.tearDown()
+        transformSession = nil
+        guard stateMachine.transition(to: .capturing(returnTo: .idle), reason: "idleVisionSummon")
+        else { return }
+
+        captureGeneration += 1
+        let generation = captureGeneration
+        captureTask?.cancel()
+        captureTask = Task { [weak self] in
+            guard let self else { return }
+            let mouse = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
+            let displayID = screen?.deviceDescription[
+                NSDeviceDescriptionKey("NSScreenNumber")
+            ] as? CGDirectDisplayID
+            let completion: CaptureCompletion
+            do {
+                let attachment = try await self.screenshotCapture.captureFullScreen(displayID: displayID)
+                completion = .attachment(attachment)
+            } catch {
+                completion = .failed(UserFacingError.message(for: error))
+            }
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard self.captureGeneration == generation else { return }
+                self.captureTask = nil
+                self.handleVisionCaptureCompletion(completion, composeSession: nil)
             }
         }
     }
@@ -169,6 +227,11 @@ final class SessionCoordinator {
     private func presentComposeSession() {
         let target = NSWorkspace.shared.frontmostApplication
         summonTargetApp = target
+        // Capture focus editability synchronously, before the panel activates
+        // and the source app loses first responder.
+        composeFocusEditable = target.map {
+            SituationalContextService.focusedFieldIsEditable(pid: $0.processIdentifier)
+        } ?? false
         let rootContextTask = SituationalContextService.captureTask()
         let deployer = PasteDeployer(targetApp: target) { [weak self] in
             self?.close(reason: "composeDeploy")
@@ -457,29 +520,22 @@ final class SessionCoordinator {
             return
         }
 
+        // Focus was read synchronously at summon (composeFocusEditable); with
+        // the new routing, compose is normally only reached when a field was
+        // focused, but guard here too so other summon paths (menu, hold-to-talk)
+        // don't spend a model call with no target field.
+        guard composeFocusEditable else {
+            SuggestTrace.log("skip: no editable field focused at summon")
+            return
+        }
+
         let session = composeSession
         let captureID = attachment.id
         suggestionTask?.cancel()
         suggestionTask = Task { [weak self] in
             guard let self else { return }
             let context = await session.awaitSituationalContext()
-            SuggestTrace.log(
-                "context app=\(context?.appName ?? "nil") "
-                + "editableFocus=\(String(describing: context?.focusedFieldEditable))"
-            )
-            // Only spend a model call when an editable field is actually
-            // focused. A compose summon with no field focused is likely a
-            // transit to Vision — the pre-capture already ran for that.
-            guard context?.focusedFieldEditable == true else {
-                SuggestTrace.log("skip: no editable field focused")
-                await MainActor.run {
-                    guard self.composeGeneration == generation,
-                          self.composeSession === session else { return }
-                    self.suggestionTask = nil
-                }
-                return
-            }
-            SuggestTrace.log("requesting suggestion…")
+            SuggestTrace.log("context app=\(context?.appName ?? "nil"); requesting suggestion…")
             await MainActor.run {
                 guard self.composeGeneration == generation,
                       self.composeSession === session,
@@ -592,7 +648,7 @@ final class SessionCoordinator {
 
     private func handleVisionCaptureCompletion(
         _ completion: CaptureCompletion,
-        composeSession: ComposeSession
+        composeSession: ComposeSession?
     ) {
         // Any entry into a VisionSession retires the pending compose suggestion.
         suggestionTask?.cancel()
@@ -627,7 +683,7 @@ final class SessionCoordinator {
         case .cancelled:
             _ = stateMachine.transition(to: returnTo, reason: "captureCancelled")
         case .failed(let message):
-            composeSession.errorMessage = message
+            composeSession?.errorMessage = message
             _ = stateMachine.transition(to: returnTo, reason: "captureFailed")
         }
     }

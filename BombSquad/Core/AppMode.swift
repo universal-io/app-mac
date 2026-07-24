@@ -50,6 +50,10 @@ enum AppMode: Equatable, CustomStringConvertible {
         // Summon: selection present → transform, otherwise compose.
         case (.idle, .compose), (.idle, .transform):
             return true
+        // No selection and no field focused: summon goes straight to Vision,
+        // capturing the current screen first.
+        case (.idle, .capturing):
+            return true
         // Empty draft double-tap enters capture; capture yields vision.
         case (.compose, .capturing), (.capturing, .vision):
             return true
