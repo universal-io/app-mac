@@ -109,8 +109,7 @@ final class TransformSession: ObservableObject {
         } catch is CancellationError {
             return
         } catch {
-            errorMessage =
-                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -124,7 +123,7 @@ final class TransformSession: ObservableObject {
                 self?.didCopy = false
             }
         } catch {
-            errorMessage = "コピーに失敗しました: \(error.localizedDescription)"
+            errorMessage = "コピーに失敗しました。もう一度お試しください。"
         }
     }
 

@@ -20,7 +20,7 @@ final class HistoryViewModel: ObservableObject {
         do {
             entries = try await historyStore.fetchEntries(limit: AppSettings.localHistoryLimit)
         } catch {
-            errorMessage = "履歴の読み込みに失敗しました: \(error.localizedDescription)"
+            errorMessage = "履歴の読み込みに失敗しました。時間をおいて、もう一度お試しください。"
         }
     }
 
@@ -30,7 +30,7 @@ final class HistoryViewModel: ObservableObject {
             try await historyStore.clear()
             entries = []
         } catch {
-            errorMessage = "履歴の削除に失敗しました: \(error.localizedDescription)"
+            errorMessage = "履歴の削除に失敗しました。もう一度お試しください。"
         }
     }
 }

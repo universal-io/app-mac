@@ -267,7 +267,7 @@ final class ComposeSession: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
-                errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                errorMessage = UserFacingError.message(for: error)
             }
             return
         }
@@ -312,7 +312,7 @@ final class ComposeSession: ObservableObject {
         } catch is CancellationError {
             return
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            errorMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -354,7 +354,7 @@ final class ComposeSession: ObservableObject {
             }
             return true
         } catch {
-            errorMessage = "デプロイに失敗しました: \(error.localizedDescription)"
+            errorMessage = "送信に失敗しました。もう一度お試しください。"
             return false
         }
     }
