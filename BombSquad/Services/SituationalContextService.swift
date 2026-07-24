@@ -85,6 +85,9 @@ enum SituationalContextService {
             excerpt = collectConversation(appElement: appElement, window: window)
         }
 
+        let focused = copyElement(appElement, kAXFocusedUIElementAttribute)
+        let focusedFieldEditable = focused.map(isEditableField) ?? false
+
         // App identity alone still tells the review where the draft is going,
         // so a context without conversation text is still worth returning.
         return SituationalContext(
@@ -93,8 +96,33 @@ enum SituationalContextService {
             pid: pid,
             windowTitle: windowTitle,
             conversationExcerpt: excerpt,
+            focusedFieldEditable: focusedFieldEditable,
             capturedAt: Date()
         )
+    }
+
+    /// Whether the focused element is an editable text control we could
+    /// responsibly propose text for. Secure (password) fields are never
+    /// eligible — the proactive suggestion must not target them.
+    private static func isEditableField(_ element: AXUIElement) -> Bool {
+        let subrole = copyString(element, kAXSubroleAttribute) ?? ""
+        if subrole == "AXSecureTextField" { return false }
+        if subrole == "AXSearchField" { return true }
+
+        let role = copyString(element, kAXRoleAttribute) ?? ""
+        if role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox" {
+            return true
+        }
+
+        // Web/other text-ish controls: a settable string value is a reliable,
+        // generic signal of an editable field.
+        var settable: DarwinBoolean = false
+        if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
+           settable.boolValue,
+           copyString(element, kAXValueAttribute) != nil {
+            return true
+        }
+        return false
     }
 
     /// Expanding-scope search: collect text at each ancestor level of the

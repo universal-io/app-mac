@@ -96,9 +96,13 @@ struct ComposeSessionView: View {
                         Text("使い方").font(.headline)
                         shortcut("Enter", "確定")
                         shortcut("Shift+Enter", "改行")
-                        shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×2", "起動 / レビュー")
+                        shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×1", "文案とフォーカス切替")
+                        shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×2", "起動 / ビジョン / 閉じる")
                         shortcut("\(KeybindingSettings.gestureKey().hintLabel) 長押し", "音声")
                         shortcut("Esc", "閉じる")
+                        Text("レビューは「レビュー」ボタンで実行します。")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                     .padding(12)
                 }
@@ -263,7 +267,7 @@ struct ComposeSessionView: View {
     private func reviewedResult(_ result: ReviewResult) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if session.needsReReview {
-                Label("原文が変更されました。原文で\(KeybindingSettings.gestureKey().hintLabel)2回すると再レビューします。",
+                Label("原文が変更されました。「レビュー」ボタンで再レビューできます。",
                       systemImage: "arrow.triangle.2.circlepath")
                     .font(.caption)
                     .foregroundStyle(.orange)

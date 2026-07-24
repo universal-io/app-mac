@@ -139,13 +139,23 @@
 3. **Phase 3（周回・ゲート・磨き）**: Shift×2 の周回（閉→コンポーズ→Vision→閉、レビューはボタンのみ）、
    発火ゲート（`SituationalContext` に編集可能フォーカス判定を追加）、ヘルプ文言・設定トグルUI・テスト。
 
-## 7. 未決事項 / TODO
+## 7. 進捗 / 残タスク
 
-- [ ] `SituationalContext` に「編集可能フォーカス判定」を追加して発火ゲートにする（Phase 3）。
-- [ ] 下部スロットで自動文案とレビュー結果を排他表示する state 設計の最終形（Phase 2）。
-- [ ] 設定トグルUIの置き場所（`GeneralSettingsView`）。
-- [ ] 自動文案「準備中」表示（プレースホルダ/スピナー）。
-- [ ] Shift×2 の周回変更に伴うヘルプ文言・`needsReReview` ヒントの見直し（Phase 3）。
+Phase 1〜3 実装済み（`feature/compose-vision-suggest`）:
+
+- [x] コンポーズ起動時の無音プリキャプチャと Vision 再利用（Phase 1）。
+- [x] `/api/ai/suggest` ＋ `suggest-engine` ＋ `ai-routing` の `suggest` ＋ `GatewaySuggestClient`（Phase 2）。
+- [x] `ComposeSession` の自動文案 state（preparing/ready/unavailable）と下部スロットの排他表示・採用・編集（Phase 2）。
+- [x] `AppSettings.isProactiveSuggestEnabled` ＋ `GeneralSettingsView` のトグル（Phase 3）。
+- [x] `SituationalContext.focusedFieldEditable` による発火ゲート（Phase 3）。
+- [x] Shift×2 周回（コンポーズ→Vision常時、レビューはボタン）＋ヘルプ文言・`needsReReview` ヒント・README 操作（Phase 3）。
+
+残タスク（要検討）:
+
+- [ ] 実機での体感確認（発火タイミング、文案品質、`suggest` の遅延）。まだ手動 golden path 未追加。
+- [ ] 発火ゲートの精度（Web/Electron の編集可能判定、`isContextCaptureEnabled` オフ時は文案も出ない依存の是非）。
+- [ ] 採用/不採用シグナルのメモリ還元（将来）。
+- [ ] 自動テスト追加（suggestion state 遷移、排他表示）。
 
 ## 8. パージ手順
 

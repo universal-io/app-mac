@@ -4,6 +4,7 @@ struct GeneralSettingsView: View {
     @AppStorage(AppSettings.isHistoryEnabledKey) private var isHistoryEnabled = true
     @AppStorage(AppSettings.isContextCaptureEnabledKey) private var isContextCaptureEnabled = true
     @AppStorage(AppSettings.isMemoryEnabledKey) private var isMemoryEnabled = true
+    @AppStorage(AppSettings.isProactiveSuggestEnabledKey) private var isProactiveSuggestEnabled = true
     @AppStorage(AppSettings.outputLanguageKey) private var outputLanguageID = OutputLanguage.japanese.rawValue
 
     let config: BombSquadConfig.Snapshot
@@ -30,6 +31,14 @@ struct GeneralSettingsView: View {
 
             Section("周辺コンテクスト") {
                 Toggle("呼び出し時に画面の文脈を読み取る", isOn: $isContextCaptureEnabled)
+            }
+
+            Section("先回り文案") {
+                Toggle("入力パネルを開いたら画面から文案を自動生成する", isOn: $isProactiveSuggestEnabled)
+                Text("フォーカス中のフォームに入れる文案を、レビュー欄と同じ位置に自動表示します。毎回AIを使うため、オフにできます。オフでも画面の先読みは続くのでビジョンは速いままです。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("メモリ") {

@@ -125,17 +125,13 @@ final class SessionCoordinator {
         case .vision, .navigator, .copilot:
             close(reason: "doubleTapOnVision")
         case .compose:
-            guard let composeSession else { return }
-            // A double-tap belongs to the draft editor only.
-            guard composeSession.focusedField == .draft else { return }
-            if composeSession.isEmptyDraft {
-                // Reuse the silent pre-capture for an instant Vision entry;
-                // fall back to the interactive capture when none is ready.
-                if !enterVisionReusingPreCapture() {
-                    beginVisionCaptureFromCompose()
-                }
-            } else {
-                composeSession.requestReview()
+            // The cycle is 閉 → コンポーズ → Vision → 閉: a double-tap always
+            // advances compose to Vision. Review is an explicit button, never
+            // this gesture. Reuse the silent pre-capture for an instant entry;
+            // fall back to the interactive capture when none is ready.
+            guard composeSession != nil else { return }
+            if !enterVisionReusingPreCapture() {
+                beginVisionCaptureFromCompose()
             }
         case .transform:
             close(reason: "doubleTapTransform")
@@ -451,13 +447,29 @@ final class SessionCoordinator {
         guard let composeSession, composeSession.isEmptyDraft else { return }
         guard let client = GatewaySuggestClient.make() else { return }
 
-        composeSession.markSuggestionPreparing()
         let session = composeSession
         let captureID = attachment.id
         suggestionTask?.cancel()
         suggestionTask = Task { [weak self] in
             guard let self else { return }
             let context = await session.awaitSituationalContext()
+            // Only spend a model call when an editable field is actually
+            // focused. A compose summon with no field focused is likely a
+            // transit to Vision — the pre-capture already ran for that.
+            guard context?.focusedFieldEditable == true else {
+                await MainActor.run {
+                    guard self.composeGeneration == generation,
+                          self.composeSession === session else { return }
+                    self.suggestionTask = nil
+                }
+                return
+            }
+            await MainActor.run {
+                guard self.composeGeneration == generation,
+                      self.composeSession === session,
+                      self.stateMachine.mode == .compose else { return }
+                session.markSuggestionPreparing()
+            }
             do {
                 let suggestion = try await client.suggest(
                     attachment: attachment,
