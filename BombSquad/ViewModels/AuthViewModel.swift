@@ -338,6 +338,14 @@ final class AuthViewModel: ObservableObject {
                 self.errorDetail = nil
                 self.infoMessage =
                     "ログインを中断しました。もう一度「Google で続ける」を押すと、アカウントを選び直せます。"
+            } else if error is AuthError {
+                // Supabase's AuthError is a LocalizedError carrying an English
+                // string (e.g. "invalid request: both auth code and code
+                // verifier should be non-empty"). Never show that as the main
+                // message — a friendly line, with the raw text kept small.
+                self.errorMessage = "ログインに失敗しました。時間をおいて、もう一度お試しください。"
+                self.errorDetail = (error as NSError).localizedDescription
+                self.infoMessage = nil
             } else {
                 self.errorMessage = UserFacingError.message(for: error)
                 self.errorDetail = UserFacingError.technicalDetail(for: error)

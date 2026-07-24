@@ -1,162 +1,50 @@
 import Foundation
-import Security
 import Supabase
 
-/// Minimal wrapper over the macOS *data-protection* keychain
-/// (`kSecUseDataProtectionKeychain`). Unlike the legacy file (login) keychain
-/// the Supabase SDK's `KeychainLocalStorage` uses, data-protection items are
-/// authorized by the app's `keychain-access-groups` entitlement — not by an
-/// ACL bound to a specific code signature. As a result macOS never shows the
-/// "wants to use the login keychain" save prompt, and a rebuild (new CDHash)
-/// or a stray ad-hoc build can never invalidate access. Device-only and not
-/// synced to iCloud.
-private enum DataProtectionKeychain {
-    struct Error: Swift.Error { let status: OSStatus }
-
-    private static func baseQuery(
-        service: String,
-        account: String,
-        accessGroup: String?
-    ) -> [String: Any] {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecUseDataProtectionKeychain as String: true,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        // A non-sandboxed macOS app can use the data-protection keychain
-        // without an explicit access group (the item then belongs to the app's
-        // own default group). An explicit team group would need the
-        // keychain-access-groups entitlement, which requires a provisioning
-        // profile under this project's manual signing — deliberately avoided.
-        if let accessGroup {
-            query[kSecAttrAccessGroup as String] = accessGroup
-        }
-        return query
-    }
-
-    static func set(
-        _ data: Data,
-        service: String,
-        account: String,
-        accessGroup: String?
-    ) throws {
-        let base = baseQuery(service: service, account: account, accessGroup: accessGroup)
-        var addQuery = base
-        addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-
-        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
-        switch addStatus {
-        case errSecSuccess:
-            return
-        case errSecDuplicateItem:
-            let updateStatus = SecItemUpdate(
-                base as CFDictionary,
-                [kSecValueData as String: data] as CFDictionary
-            )
-            guard updateStatus == errSecSuccess else { throw Error(status: updateStatus) }
-        default:
-            throw Error(status: addStatus)
-        }
-    }
-
-    static func get(
-        service: String,
-        account: String,
-        accessGroup: String?
-    ) throws -> Data? {
-        var query = baseQuery(service: service, account: account, accessGroup: accessGroup)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        switch status {
-        case errSecSuccess:
-            return result as? Data
-        case errSecItemNotFound:
-            return nil
-        default:
-            throw Error(status: status)
-        }
-    }
-
-    static func delete(
-        service: String,
-        account: String,
-        accessGroup: String?
-    ) throws {
-        let query = baseQuery(service: service, account: account, accessGroup: accessGroup)
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw Error(status: status)
-        }
-    }
-}
-
-/// Keeps the Supabase session in the data-protection keychain (team-scoped
-/// access group), so the auth item is prompt-free and durable across rebuilds.
-///
-/// This replaces the earlier login-keychain storage. Switching keychains is a
-/// one-way move: a session that lived only in the old login keychain is not
-/// migrated (the old item was the source of the recurring prompt), so an
-/// existing user signs in once after this ships.
+/// Keeps the Supabase session in a Universal I/O-specific Keychain service.
+/// Older builds used the SDK-wide default item; import it at most once, then
+/// never consult it again so signing in/out cannot resurrect a stale session.
 private struct UniversalIOAuthLocalStorage: AuthLocalStorage {
     static let storageKey = "com.universal-io.mac.auth.skcsbcyivjcvevxntvqa"
 
-    private static let service = "com.universal-io.mac.supabase"
-    // No explicit access group: avoids the keychain-access-groups entitlement
-    // (and thus a provisioning profile) while still using the prompt-free
-    // data-protection keychain.
-    private static let accessGroup: String? = nil
-
-    // Safety net: if this build is ever denied the data-protection keychain
-    // (errSecMissingEntitlement), fall back to the SDK's login-keychain storage
-    // so auth still works — no worse than before this change. Expected to stay
-    // unused on a normally signed build.
-    private let fileFallback = KeychainLocalStorage(service: service)
+    private static let migrationFlag = "auth.keychainScopedMigration.v1"
+    private let scoped = KeychainLocalStorage(service: "com.universal-io.mac.supabase")
+    private let legacy = KeychainLocalStorage()
 
     func store(key: String, value: Data) throws {
-        do {
-            try DataProtectionKeychain.set(
-                value, service: Self.service, account: key, accessGroup: Self.accessGroup
-            )
-        } catch let error as DataProtectionKeychain.Error
-            where error.status == errSecMissingEntitlement {
-            Self.logFallback("store")
-            try fileFallback.store(key: key, value: value)
+        try scoped.store(key: key, value: value)
+        if key == Self.storageKey {
+            UserDefaults.standard.set(true, forKey: Self.migrationFlag)
         }
     }
 
     func retrieve(key: String) throws -> Data? {
-        do {
-            return try DataProtectionKeychain.get(
-                service: Self.service, account: key, accessGroup: Self.accessGroup
-            )
-        } catch let error as DataProtectionKeychain.Error
-            where error.status == errSecMissingEntitlement {
-            Self.logFallback("retrieve")
-            return try? fileFallback.retrieve(key: key)
+        if let data = try? scoped.retrieve(key: key) {
+            return data
         }
+        guard key == Self.storageKey,
+              !UserDefaults.standard.bool(forKey: Self.migrationFlag)
+        else { return nil }
+
+        // Current SDK default first, then the oldest pre-migration key.
+        for legacyKey in ["supabase.auth.token", "supabase.session"] {
+            if let data = try? legacy.retrieve(key: legacyKey) {
+                try scoped.store(key: key, value: data)
+                UserDefaults.standard.set(true, forKey: Self.migrationFlag)
+                return data
+            }
+        }
+        UserDefaults.standard.set(true, forKey: Self.migrationFlag)
+        return nil
     }
 
     func remove(key: String) throws {
-        try? DataProtectionKeychain.delete(
-            service: Self.service, account: key, accessGroup: Self.accessGroup
-        )
-        // Clear the fallback backend too, so sign-out leaves nothing behind
-        // regardless of which one holds the session.
-        try? fileFallback.remove(key: key)
-    }
-
-    private static func logFallback(_ operation: String) {
-        #if DEBUG
-        NSLog(
-            "BombSquad auth: data-protection keychain unavailable (%@); using login-keychain fallback.",
-            operation
-        )
-        #endif
+        // Mark first: even if the scoped item is already absent, sign-out must
+        // never fall back to the old shared SDK item on the next launch.
+        if key == Self.storageKey {
+            UserDefaults.standard.set(true, forKey: Self.migrationFlag)
+        }
+        try? scoped.remove(key: key)
     }
 }
 
