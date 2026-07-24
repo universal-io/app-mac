@@ -4,11 +4,15 @@ import SwiftUI
 struct FoundationComposeRootView: View {
     @ObservedObject var session: ComposeSession
     @ObservedObject private var authViewModel = AuthViewModel.shared
+    let onExpansionChange: (Bool) -> Void
 
     var body: some View {
         Group {
             if authViewModel.hasSession {
-                ComposeSessionView(session: session)
+                ComposeSessionView(
+                    session: session,
+                    onExpansionChange: onExpansionChange
+                )
             } else {
                 LoginRequiredView(
                     viewModel: authViewModel,
@@ -23,8 +27,10 @@ struct FoundationComposeRootView: View {
 struct ComposeSessionView: View {
     @ObservedObject var session: ComposeSession
     @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHelp = false
     @State private var isInputHistoryExpanded = false
+    let onExpansionChange: (Bool) -> Void
 
     private var focusedField: Binding<FocusField?> {
         Binding(get: { session.focusedField }, set: { session.focusedField = $0 })
@@ -33,14 +39,13 @@ struct ComposeSessionView: View {
     /// The lower slot is shared by the review result and the proactive
     /// suggestion — mutually exclusive, so a review always wins the space.
     private var hasReviewSurface: Bool {
-        session.result != nil || session.isReviewing
+        session.result != nil || !(session.streamingRevision ?? "").isEmpty
     }
 
-    /// Once the suggestion starts, the slot stays put through every state
-    /// (loading → result, or → "none"). Only `.idle` hides it, so the panel
-    /// never grows-then-shrinks — it's a stable background area.
+    /// Preparing stays compact in the draft toolbar. The lower surface appears
+    /// only when there is content (or an error) worth reading.
     private var hasSuggestionSurface: Bool {
-        session.suggestionStatus != .idle
+        session.suggestionStatus == .ready || session.suggestionStatus == .unavailable
     }
 
     private var showsLowerSlot: Bool {
@@ -59,11 +64,15 @@ struct ComposeSessionView: View {
                     .frame(maxHeight: .infinity)
             }
         }
-        .animation(.spring(duration: 0.35), value: showsLowerSlot)
-        .frame(minWidth: 620, minHeight: 640)
+        .animation(reduceMotion ? nil : .spring(duration: 0.28), value: showsLowerSlot)
+        .frame(minWidth: 620, minHeight: showsLowerSlot ? 640 : 360)
         .task { await session.loadRecentHistoryIfNeeded() }
         .onAppear {
             DispatchQueue.main.async { session.focusedField = .draft }
+            onExpansionChange(showsLowerSlot)
+        }
+        .onChange(of: showsLowerSlot) { _, expanded in
+            onExpansionChange(expanded)
         }
     }
 
@@ -97,7 +106,7 @@ struct ComposeSessionView: View {
                 .popover(isPresented: $showHelp, arrowEdge: .bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("使い方").font(.headline)
-                        shortcut("Enter", "確定")
+                        shortcut("Enter", "送信")
                         shortcut("Shift+Enter", "改行")
                         shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×1", "文案とフォーカス切替")
                         shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×2", "起動 / ビジョン / 閉じる")
@@ -126,22 +135,27 @@ struct ComposeSessionView: View {
                 } else if session.isTranscribing {
                     ProgressView().controlSize(.small)
                     Text("文字起こし中…").font(.caption).foregroundStyle(.secondary)
-                } else if session.isReviewing {
-                    ProgressView().controlSize(.small)
                 }
 
-                Spacer()
+                Spacer(minLength: 12)
+
+                if session.isReviewing {
+                    processingStatus("レビュー中")
+                } else if session.suggestionStatus == .preparing {
+                    processingStatus("画面分析中")
+                }
 
                 Button(action: session.requestReview) {
                     Label("レビュー", systemImage: "checkmark.shield")
                 }
                 .disabled(!session.canReview)
 
-                Button(action: session.deployDraft) {
-                    Label("確定", systemImage: "paperplane.fill")
-                }
-                .disabled(!session.canDeployDraft)
-                .buttonStyle(.borderedProminent)
+                PanelSendButton(
+                    accessibilityLabel: "入力文を送信",
+                    help: "入力文を送信（Enter）",
+                    isEnabled: session.canDeployDraft,
+                    action: session.deployDraft
+                )
             }
 
             if session.isEmptyDraft, !session.recentHistoryEntries.isEmpty {
@@ -185,29 +199,12 @@ struct ComposeSessionView: View {
                 Label("文案（自動）", systemImage: "sparkles")
                     .font(.headline)
                 Spacer()
-                if session.suggestionStatus == .preparing {
-                    ProgressView().controlSize(.small)
-                }
             }
             .background(WindowDragHandle())
 
             switch session.suggestionStatus {
             case .preparing:
-                // Placeholder + loading. Input is never blocked — the draft
-                // editor above keeps focus while this fills in the background.
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("画面を読み取って文案を準備しています…")
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("ここに、この画面に合わせた入力候補が表示されます。準備中もそのまま入力できます。")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(16)
-                .background(EditorFocusBackground(isFocused: false))
+                EmptyView()
 
             case .ready:
                 SendableTextEditor(
@@ -226,28 +223,21 @@ struct ComposeSessionView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 8) {
-                    Text("使わなければ保存されません。")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                HStack {
                     Spacer()
-                    Button(action: session.dismissSuggestion) {
-                        Label("破棄", systemImage: "xmark")
-                    }
-                    .buttonStyle(.borderless)
                     // Confirming sends straight to the target field — the slot
                     // is editable here, so there is no draft hop in between.
-                    Button(action: session.deploySuggestion) {
-                        Label("送信", systemImage: "paperplane.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
+                    PanelSendButton(
+                        accessibilityLabel: "AI文案を送信",
+                        help: "AI文案を送信（Enter）",
+                        isEnabled: session.hasSuggestion,
+                        action: session.deploySuggestion
+                    )
                 }
 
             case .unavailable, .idle:
-                // Clear, non-jittery state — the slot does not collapse, so the
-                // panel stays stable. A real failure shows its reason and the
-                // technical cause; only a genuinely empty result gets the plain
-                // "no suggestion" copy. Never dress a failure up as silence.
+                // A real failure shows its reason and technical cause; only a
+                // genuinely empty result gets the plain "no suggestion" copy.
                 VStack(alignment: .leading, spacing: 8) {
                     if let errorMessage = session.suggestionErrorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
@@ -267,13 +257,6 @@ struct ComposeSessionView: View {
                     Text("自分で入力して送信できます。")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                    HStack {
-                        Spacer()
-                        Button(action: session.dismissSuggestion) {
-                            Label("閉じる", systemImage: "xmark")
-                        }
-                        .buttonStyle(.borderless)
-                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(16)
@@ -302,14 +285,6 @@ struct ComposeSessionView: View {
                 reviewedResult(result)
             } else if let streaming = session.streamingRevision, !streaming.isEmpty {
                 streamingResult(streaming)
-            } else if session.isReviewing {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("レビュー中…").foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(16)
-                .background(EditorFocusBackground(isFocused: false))
             }
         }
         .padding()
@@ -336,10 +311,14 @@ struct ComposeSessionView: View {
 
             HStack {
                 Spacer()
-                Button(action: session.deployRevision) {
-                    Label("確定", systemImage: "paperplane.fill")
-                }
-                .buttonStyle(.borderedProminent)
+                PanelSendButton(
+                    accessibilityLabel: "レビュー文案を送信",
+                    help: "レビュー文案を送信（Enter）",
+                    isEnabled: !session.revisedDraft.trimmingCharacters(
+                        in: .whitespacesAndNewlines
+                    ).isEmpty,
+                    action: session.deployRevision
+                )
             }
 
             Divider()
@@ -430,6 +409,18 @@ struct ComposeSessionView: View {
             Text(key).font(.caption.monospaced()).frame(width: 96, alignment: .leading)
             Text(action).font(.caption)
         }
+    }
+
+    private func processingStatus(_ title: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.small)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title)です")
     }
 }
 

@@ -22,7 +22,13 @@ struct PanelSpec: Equatable {
         switch mode {
         case .idle, .capturing:
             return nil
-        case .compose, .transform:
+        case .compose:
+            return PanelSpec(
+                size: CGSize(width: 680, height: 420),
+                placement: .centered,
+                closesOnResignActive: true
+            )
+        case .transform:
             return PanelSpec(
                 size: CGSize(width: 680, height: 660),
                 placement: .centered,
@@ -58,6 +64,9 @@ final class PanelController {
 
     var isVisible: Bool { panel?.isVisible == true }
 
+    private static let compactComposeSize = CGSize(width: 680, height: 420)
+    private static let expandedComposeSize = CGSize(width: 680, height: 660)
+
     /// Shows the panel with the given SwiftUI content, shaped for `mode`.
     /// Reuses the existing window when one is up (content swap + relayout).
     func present<Content: View>(_ content: Content, for mode: AppMode) {
@@ -77,6 +86,27 @@ final class PanelController {
         apply(spec, to: panel)
         if activate {
             reveal(panel, activating: true)
+        }
+    }
+
+    /// Compose reserves no empty result area. It grows downward only after a
+    /// suggestion/review surface has content worth showing.
+    func setComposeExpanded(_ expanded: Bool) {
+        guard let panel else { return }
+        let contentSize = expanded
+            ? Self.expandedComposeSize
+            : Self.compactComposeSize
+        let currentFrame = panel.frame
+        var targetFrame = panel.frameRect(
+            forContentRect: NSRect(origin: .zero, size: contentSize)
+        )
+        targetFrame.origin.x = currentFrame.midX - targetFrame.width / 2
+        targetFrame.origin.y = currentFrame.maxY - targetFrame.height
+        guard currentFrame != targetFrame else { return }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.2
+            panel.animator().setFrame(targetFrame, display: true)
         }
     }
 

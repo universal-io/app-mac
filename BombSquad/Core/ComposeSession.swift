@@ -49,8 +49,8 @@ enum FoundationComposeDraftStore {
 
 /// Lifecycle of the proactive, Vision-grounded draft suggestion that shares
 /// the compose panel's lower slot with the review result (the two are mutually
-/// exclusive). `.idle` means nothing is shown; `.unavailable` collapses the
-/// slot after a request that produced nothing usable.
+/// exclusive). `.idle` and `.preparing` keep the panel compact; `.ready` and
+/// `.unavailable` open the lower surface for useful content or a visible error.
 enum ComposeSuggestionStatus: Equatable {
     case idle
     case preparing
@@ -222,19 +222,6 @@ final class ComposeSession: ObservableObject {
         suggestionErrorDetail = nil
     }
 
-    /// User dismissed the suggestion without using it. Collapses the slot.
-    func dismissSuggestion() {
-        if focusedField == .revision, result == nil {
-            focusedField = .draft
-        }
-        suggestedDraft = ""
-        suggestionNote = nil
-        suggestionStatus = .idle
-    }
-
-    /// Move the (possibly edited) suggestion into the user's own draft. Per the
-    /// design it never deploys directly — the user stays in control of review
-    /// and send.
     /// Send the (possibly edited) suggestion straight to the target field.
     /// Confirming the focused slot is a single action: the old path adopted the
     /// text into the draft and then required a second confirm, which is a

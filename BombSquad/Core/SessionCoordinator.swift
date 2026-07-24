@@ -798,7 +798,12 @@ final class SessionCoordinator {
         if mode.hasPanel {
             if mode == .compose, let composeSession {
                 panelController.present(
-                    FoundationComposeRootView(session: composeSession),
+                    FoundationComposeRootView(
+                        session: composeSession,
+                        onExpansionChange: { [weak self] expanded in
+                            self?.panelController.setComposeExpanded(expanded)
+                        }
+                    ),
                     for: mode
                 )
             } else if mode == .transform, let transformSession {

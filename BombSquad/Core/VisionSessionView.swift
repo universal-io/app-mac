@@ -193,12 +193,12 @@ struct VisionSessionView: View {
                 .frame(minHeight: 52, maxHeight: 96)
                 .background(EditorFocusBackground(isFocused: session.focusedField == .navigator))
 
-                Button(action: session.sendQuestion) {
-                    Image(systemName: "paperplane.fill")
-                }
-                .disabled(!session.canSend)
-                .help("質問を送る（Enter）")
-                .accessibilityLabel("質問を送る")
+                PanelSendButton(
+                    accessibilityLabel: "Visionへの質問を送信",
+                    help: "質問を送信（Enter）",
+                    isEnabled: session.canSend,
+                    action: session.sendQuestion
+                )
             }
             if session.canStartCopilot {
                 Button {

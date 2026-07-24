@@ -159,7 +159,8 @@ Gateway に影響しない）。配布中のDMG（v0.1.1）は別物で、`relea
   読むので `editableFocus=false` 誤判定を解消。判定結果 `composeFocusEditable` で文案ゲート。
 - ルーティング: idle で Shift×2 →「選択あり=変換／編集欄フォーカスあり=コンポーズ／無し=最初から Vision」。
   `AppMode` に `idle→capturing` を追加。`handleVisionCaptureCompletion` は composeSession を optional 化。
-- 下部スロットを**安定表示**（preparing プレースホルダ＋ローディング→ready/none、畳まない＝伸縮しない）。
+- 下部スロットは文案・レビュー結果・表示すべきエラーが届いた時だけ開く。preparing中はコンパクトな
+  Compose操作列に「画面分析中」または「レビュー中」とスピナーを表示し、空の結果領域を予約しない。
   `[Suggest]` の DEBUG ログを各判定点に追加（Console で発火理由が見える）。
 - Google ログイン: `prompt=select_account` でアカウント選択毎回、キャンセルは `infoMessage` で穏当化。
 - エラー文言: `UserFacingError` ＋ `UserPresentableError` マーカー（自前エラーのみ日本語温存、SDK 英語は非露出）。
@@ -227,6 +228,10 @@ Gateway に影響しない）。配布中のDMG（v0.1.1）は別物で、`relea
 - Visionを明示的に閉じた後、呼び出し元アプリを再アクティブ化する。従来はUniversal I/Oが前面に残り、
   次回Shift×2の編集可能判定が自アプリPIDに対してfalseとなり、直接Visionへ誤ルーティングしていた。
   別アプリのクリックによる`resignActive`終了と、送信時の`PasteDeployer`経路ではフォーカスを奪い返さない。
+- Composeは通常`680×420`で開き、文案・レビュー結果・エラーの表示時だけ`680×660`へ下方向に拡張する。
+  画面分析／レビューの待機中は操作列のスピナーだけを表示する。Reduce Motion時はサイズ変更をアニメーション
+  しない。Compose原文、AI文案、レビュー文案、Vision質問は共通の紙飛行機ボタンへ統一し、AI文案の
+  「破棄」は削除した。各アイコンには用途別のVoiceOverラベルとEnterのhelpを付ける。
 
 ### そのほかの引き継ぎ事項
 

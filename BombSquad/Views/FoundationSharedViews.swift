@@ -1,5 +1,25 @@
 import SwiftUI
 
+/// One consistent send affordance across every transient panel surface.
+/// Callers provide a context-specific accessible name for the icon-only button.
+struct PanelSendButton: View {
+    let accessibilityLabel: String
+    let help: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "paperplane.fill")
+                .frame(width: 18, height: 18)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(!isEnabled)
+        .help(help)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
 /// Selectable error text shared by all transient panel modes.
 struct ErrorBanner: View {
     let message: String
@@ -163,18 +183,22 @@ private struct FoundationSuggestedActionCard: View {
                         .help("文案を原文エディタに引き継いで編集します")
                     }
 
-                    Button(action: onApprove) {
-                        Label(
-                            isTransform
-                                ? "承認してコピー"
-                                : action.kind == .reply ? "承認して送信" : "承認して入力",
-                            systemImage: isTransform ? "doc.on.clipboard.fill" : "paperplane.fill"
+                    if isTransform {
+                        Button(action: onApprove) {
+                            Label("承認してコピー", systemImage: "doc.on.clipboard.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .help("この文案をクリップボードにコピーします（相手には送信されません）")
+                    } else {
+                        PanelSendButton(
+                            accessibilityLabel: action.kind == .reply
+                                ? "返信文案を送信"
+                                : "文案を入力",
+                            help: "この文案を呼び出し元のフィールドへ入力します",
+                            isEnabled: true,
+                            action: onApprove
                         )
                     }
-                    .buttonStyle(.borderedProminent)
-                    .help(isTransform
-                            ? "この文案をクリップボードにコピーします（相手には送信されません）"
-                            : "この文案をそのまま呼び出し元のフィールドへ入力します")
                 }
             }
         }
