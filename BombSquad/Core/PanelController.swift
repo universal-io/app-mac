@@ -155,9 +155,11 @@ final class PanelController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        // Dragging belongs to the content (text selection, image pan);
-        // header rows expose an explicit drag handle instead.
-        panel.isMovableByWindowBackground = false
+        // Every summon still starts centered, but after presentation the user
+        // can drag from any non-interactive background/padding. Editors,
+        // buttons, and screenshot tools keep their own pointer handling, while
+        // result headers continue to provide an explicit generous drag target.
+        panel.isMovableByWindowBackground = true
         return panel
     }
 
