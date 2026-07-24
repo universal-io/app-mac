@@ -161,25 +161,33 @@
 - 画面収録許可: 「許可」で毎回 設定の該当ペインを直接オープン＋押下フィードバック＋正しい名称の案内。
 - Keychain: データ保護キーチェーン化は**revert 済み**（下記）。
 
-### 🔴 最重要ブロッカー: `/api/ai/suggest` が本番 Gateway 未デプロイ
+### ✅ 解消済み: `/api/ai/suggest` の本番未デプロイ（2026-07-24）
 
-- アプリは固定で `https://api.universal-io.com` を呼ぶ。新ルートは `web/` にあるが**本番未デプロイ**→ **HTTP 404**。
-  そのため文案は現状「出せません」表示になる（コードは正しく動作、サーバーが無いだけ）。
-- **デプロイルール（ユーザー確認済み）**: `main` にコミット＝本番デプロイ。ブランチ push＝Vercel プレビュー
-  （プレビュー URL は別ドメインなので、**アプリからは使えない**＝アプリで文案を実検証するには main/本番が要る）。
-- `vercel` CLI 不在・`.vercel` リンク無し・CI workflow 無し。デプロイは Vercel の git 連携と推定。
+**これが「何度やっても文案が出ない」の唯一の根本原因だった。** クライアントは正しく動いていたが、
+呼び先が本番に存在しなかった。
 
-### 🔴 次にやる予定だった作業（未着手）: エラーを隠さない
+- 症状の確定: 本番 `POST /api/ai/suggest` が **HTTP 404（HTML の 404 ページ＝ルート自体が無い）**。
+  同時に `POST /api/ai/vision` は 400 を返す＝ Gateway 自体は正常。ルートファイルは `dev` にのみ存在し
+  `main` に無かった。本番は `main` からデプロイされるため、届いていなかった。
+- 対処: `dev` → `main` を fast-forward マージして push（Gateway への差分は
+  `api/ai/suggest/route.ts`・`suggest-engine.ts`・`ai-routing` の `suggest` 追加のみ＝**純粋な追加**、
+  既存ルート不変）。事前に `npm run build` を通し、ルート表に `ƒ /api/ai/suggest` が出ることを確認済み。
+- 結果: 本番が **404 → 400 `{"error":{"code":"BAD_REQUEST"}}`** に変化＝**ルート稼働**。
+- **デプロイルール**: `main` にコミット＝本番デプロイ。ブランチ push＝Vercel プレビュー（別ドメインなので
+  アプリからは使えない＝実検証には main/本番が要る）。`vercel` CLI 不在・CI workflow 無し＝ git 連携。
+
+### ✅ 完了: エラーを隠さない（2026-07-24）
 
 ユーザー原則:「**問題を隠さない／安易なフォールバックをしない／何が起きているかエラーで見せる**」。
-現状、文案リクエストの失敗（404 等）を `.unavailable`＝「文案は出せませんでした」に丸めて**問題を隠している**。
+失敗（例外）と 空（モデルが候補無し）を**区別**し、失敗は実エラーを表示するようにした。
 
-- 次タスク: 失敗（例外）と 空（モデルが候補無し）を**区別**し、失敗は**実エラーを表示**する。
-  - `ComposeSession` に `suggestionErrorMessage` / `suggestionErrorDetail` を追加、`markSuggestionFailed(_:detail:)`。
-  - `SessionCoordinator` の catch → `markSuggestionFailed(UserFacingError.message(for:), detail: technicalDetail)`。
-    キャプチャ失敗も同様に理由を出す。空（`applySuggestion` の空）だけ従来の「候補無し」表示。
-  - `ComposeSessionView` の `.unavailable` 分岐で、エラーがあれば警告アイコン＋文言＋技術詳細（小）を表示。
-- 同原則で見直す候補: `presentVisionFromIdle` の「画面収録なし→compose に無言フォールバック」、
+- `ComposeSession`: `suggestionErrorMessage` / `suggestionErrorDetail` ＋ `markSuggestionFailed(_:detail:)`。
+  `markSuggestionUnavailable()` は「候補無し」専用として残す。成功・再試行時はエラーを消す。
+- `SessionCoordinator`: リクエストの catch と**プリキャプチャ失敗**の両方を `markSuggestionFailed` へ。
+  技術詳細は `technicalDetail(for:)`（domain/code + 生メッセージ）。
+- `ComposeSessionView`: `.unavailable` 分岐でエラーがあれば警告アイコン＋文言＋技術詳細（小・選択可）。
+
+- 同原則で**残っている見直し候補**: `presentVisionFromIdle` の「画面収録なし→compose に無言フォールバック」、
   各所の `try?`。安易に握りつぶさず、必要な所は理由を見せる。
 
 ### そのほかの引き継ぎ事項
