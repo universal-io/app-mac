@@ -136,6 +136,47 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 クライアントはcapture ID、route、画像detail、reasoning設定を検証する。モデルIDと
 `fallback_used` はGatewayのSSOTを受け入れ、fallback時はnoticeを表示する。
 
+## POST /ai/suggest
+
+コンポーズ起動時に前倒しで撮った同一スクリーンショットを読み、いまフォーカス中の
+入力フォームに入れるべき文案を1件返す（先回りサジェスト）。Visionが「画面の解釈」なのに対し
+本ルートは「入力すべき本文の生成」で、目的が逆。1回の試行につきモデル呼び出しは1回、
+一次失敗時だけ共通ルーターが二次モデルを1回試す。
+
+- `operation`: `suggest`
+- `input.capture_id`: 必須
+- `input.image_base64`: 必須、PNG/JPEG
+- `input.context`: 任意（`app_name` / `window_title` / `conversation_excerpt`）。参照専用で保存しない
+- 実装: `web/app/api/ai/suggest/route.ts`
+- クライアント: `GatewaySuggestClient`
+
+成功応答:
+
+```json
+{
+  "request_id": "uuid",
+  "capture_id": "uuid",
+  "result": {
+    "draft": "フォームに入れるべき文案（提案できない時は空文字）",
+    "note": "検出したフォームと提案意図の一言"
+  },
+  "meta": {
+    "model_vendor": "openai",
+    "model_id": "gpt-5.6-luna",
+    "route": "snapshot_suggest",
+    "api": "responses",
+    "image_detail": "original",
+    "reasoning_effort": "none",
+    "fallback_used": false,
+    "latency_ms": 0,
+    "notices": []
+  }
+}
+```
+
+`draft` は編集可能な提案で、採用するとユーザーの下書き欄に入る（自動送信はしない）。
+画像・入力本文・回答本文はusageに保存しない（運用情報のみ）。
+
 ## POST /ai/memory/distill
 
 送信差分またはユーザー提供サンプルから、保存候補となるスタイル情報を抽出する。

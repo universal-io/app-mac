@@ -69,6 +69,7 @@ final class SessionCoordinator {
     /// it on teardown) or discarded when compose exits without using it.
     private var composePreCapture: ScreenshotAttachment?
     private var composePreCaptureTask: Task<Void, Never>?
+    private var suggestionTask: Task<Void, Never>?
     private var composeGeneration = 0
 
     init() {
@@ -381,6 +382,8 @@ final class SessionCoordinator {
         captureGeneration += 1
         captureTask?.cancel()
         captureTask = nil
+        suggestionTask?.cancel()
+        suggestionTask = nil
         transcriptionTask?.cancel()
         transcriptionTask = nil
         if isDictating {
@@ -428,6 +431,58 @@ final class SessionCoordinator {
                     return
                 }
                 self.composePreCapture = attachment
+                if let attachment {
+                    self.maybeStartComposeSuggestion(attachment: attachment, generation: generation)
+                }
+            }
+        }
+    }
+
+    /// Ask the Gateway for a proactive draft for the focused external field,
+    /// reusing the shared pre-capture. Gated by the user setting; the image
+    /// pre-capture itself always runs (it also serves Vision speed). The image
+    /// file stays owned here — the suggest client only reads its bytes — so a
+    /// later Vision entry can still reuse it.
+    private func maybeStartComposeSuggestion(
+        attachment: ScreenshotAttachment,
+        generation: Int
+    ) {
+        guard AppSettings.isProactiveSuggestEnabled() else { return }
+        guard let composeSession, composeSession.isEmptyDraft else { return }
+        guard let client = GatewaySuggestClient.make() else { return }
+
+        composeSession.markSuggestionPreparing()
+        let session = composeSession
+        let captureID = attachment.id
+        suggestionTask?.cancel()
+        suggestionTask = Task { [weak self] in
+            guard let self else { return }
+            let context = await session.awaitSituationalContext()
+            do {
+                let suggestion = try await client.suggest(
+                    attachment: attachment,
+                    context: context,
+                    language: AppSettings.outputLanguage()
+                )
+                try Task.checkCancellation()
+                await MainActor.run {
+                    guard self.composeGeneration == generation,
+                          self.composeSession === session,
+                          self.stateMachine.mode == .compose else { return }
+                    self.suggestionTask = nil
+                    guard suggestion.captureID == captureID else { return }
+                    session.applySuggestion(draft: suggestion.draft, note: suggestion.note)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    guard self.composeGeneration == generation,
+                          self.composeSession === session,
+                          self.stateMachine.mode == .compose else { return }
+                    self.suggestionTask = nil
+                    session.markSuggestionUnavailable()
+                }
             }
         }
     }
@@ -511,6 +566,9 @@ final class SessionCoordinator {
         _ completion: CaptureCompletion,
         composeSession: ComposeSession
     ) {
+        // Any entry into a VisionSession retires the pending compose suggestion.
+        suggestionTask?.cancel()
+        suggestionTask = nil
         guard case .capturing(let returnTo) = stateMachine.mode else { return }
 
         switch completion {

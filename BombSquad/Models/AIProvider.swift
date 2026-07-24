@@ -4,6 +4,7 @@ enum AppSettings {
     static let isHistoryEnabledKey = "isHistoryEnabled"
     static let isContextCaptureEnabledKey = "isContextCaptureEnabled"
     static let isMemoryEnabledKey = "isMemoryEnabled"
+    static let isProactiveSuggestEnabledKey = "isProactiveSuggestEnabled"
     static let outputLanguageKey = "outputLanguage"
     static let localHistoryLimit = 100
 
@@ -31,5 +32,12 @@ enum AppSettings {
             return true
         }
         return UserDefaults.standard.bool(forKey: isMemoryEnabledKey)
+    }
+
+    static func isProactiveSuggestEnabled() -> Bool {
+        if UserDefaults.standard.object(forKey: isProactiveSuggestEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: isProactiveSuggestEnabledKey)
     }
 }

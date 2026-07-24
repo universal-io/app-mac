@@ -47,6 +47,17 @@ enum FoundationComposeDraftStore {
     }
 }
 
+/// Lifecycle of the proactive, Vision-grounded draft suggestion that shares
+/// the compose panel's lower slot with the review result (the two are mutually
+/// exclusive). `.idle` means nothing is shown; `.unavailable` collapses the
+/// slot after a request that produced nothing usable.
+enum ComposeSuggestionStatus: Equatable {
+    case idle
+    case preparing
+    case ready
+    case unavailable
+}
+
 /// Outgoing-message session state. It owns review, deployment, history, and
 /// dictation insertion while depending only on leaf services.
 @MainActor
@@ -68,6 +79,12 @@ final class ComposeSession: ObservableObject {
     @Published private(set) var isLoadingHistory = false
     @Published private(set) var situationalContext: SituationalContext?
     @Published private(set) var isContextExcluded = false
+    /// Proactive Vision-grounded draft suggestion for the focused external
+    /// field. Shares the lower slot with the review result; a review takes it
+    /// over. Ephemeral: it is never persisted and disappears when unused.
+    @Published private(set) var suggestionStatus: ComposeSuggestionStatus = .idle
+    @Published var suggestedDraft = ""
+    @Published private(set) var suggestionNote: String?
 
     let outputLanguage: OutputLanguage
 
@@ -107,6 +124,11 @@ final class ComposeSession: ObservableObject {
 
     var canFocusRevision: Bool { result != nil }
 
+    var hasSuggestion: Bool {
+        suggestionStatus == .ready
+            && !suggestedDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var isEmptyDraft: Bool {
         draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -120,11 +142,75 @@ final class ComposeSession: ObservableObject {
     }
 
     func toggleFocusedField() {
-        guard canFocusRevision else {
+        // The lower slot (`.revision`) is the switch target whether it holds a
+        // review result or a proactive suggestion; the two never coexist.
+        let secondFieldAvailable = canFocusRevision || suggestionStatus == .ready
+        guard secondFieldAvailable else {
             focusedField = .draft
             return
         }
         focusedField = focusedField == .revision ? .draft : .revision
+    }
+
+    // MARK: - Proactive suggestion
+
+    /// Coordinator drives these once the shared pre-capture resolves. A review
+    /// owns the lower slot outright, so suggestion transitions no-op while a
+    /// review is present or in flight.
+    func markSuggestionPreparing() {
+        guard result == nil, !isReviewing else { return }
+        suggestionStatus = .preparing
+        suggestionNote = nil
+    }
+
+    func applySuggestion(draft suggestion: String, note: String?) {
+        guard result == nil, !isReviewing else {
+            suggestionStatus = .idle
+            return
+        }
+        let trimmed = suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            markSuggestionUnavailable()
+            return
+        }
+        suggestedDraft = trimmed
+        suggestionNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        suggestionStatus = .ready
+    }
+
+    func markSuggestionUnavailable() {
+        guard result == nil, !isReviewing else {
+            suggestionStatus = .idle
+            return
+        }
+        suggestedDraft = ""
+        suggestionNote = nil
+        suggestionStatus = .unavailable
+    }
+
+    /// User dismissed the suggestion without using it. Collapses the slot.
+    func dismissSuggestion() {
+        if focusedField == .revision, result == nil {
+            focusedField = .draft
+        }
+        suggestedDraft = ""
+        suggestionNote = nil
+        suggestionStatus = .idle
+    }
+
+    /// Move the (possibly edited) suggestion into the user's own draft. Per the
+    /// design it never deploys directly — the user stays in control of review
+    /// and send.
+    func adoptSuggestion() {
+        let text = suggestedDraft
+        suggestionStatus = .idle
+        suggestionNote = nil
+        adoptSuggestedDraft(text)
+        suggestedDraft = ""
+    }
+
+    func awaitSituationalContext() async -> SituationalContext? {
+        await resolveContext()
     }
 
     func appendTranscription(_ text: String) {
@@ -236,6 +322,10 @@ final class ComposeSession: ObservableObject {
         result = nil
         revisedDraft = ""
         streamingRevision = nil
+        // The review claims the lower slot; drop any pending/ready suggestion.
+        suggestionStatus = .idle
+        suggestedDraft = ""
+        suggestionNote = nil
         isReviewing = true
         let input = draft
         let language = outputLanguage
