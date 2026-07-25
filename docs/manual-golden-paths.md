@@ -102,4 +102,5 @@
   （2026-07-25、Apple notary Accepted）。
 - [x] 公開DMGを再ダウンロード・マウントし、署名、staple、Gatekeeper、`0.2.0` build `4`、
   Universal binary、SHA-256一致を再検証した。
-- [x] 公開URLを`0.2.0` build `4`へpromoteした。Gitタグはリリース記録コミットへ付与する。
+- [x] 公開URLを`0.2.0` build `4`へpromoteし、リリース記録コミット`3ce1690`へ
+  Gitタグ`v0.2.0`を付与した。
