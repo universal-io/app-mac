@@ -56,6 +56,19 @@ type Skill = {
 ツールを増やすたびに両方へ手を入れることになる。Salesforce の Skill を1ファイル足せば、
 読み方・作法・機能・注意点と「そこで何を覚えるべきか」が同時に定義される。
 
+### セクションと用途の対応
+
+Skillの利用者は2種類あり、必要なセクションが違う。全部を全員に渡すと、トークンを使って
+それぞれを少しずつ悪くする。
+
+| 用途 | 渡すセクション | 向いているツール |
+|---|---|---|
+| 先回り文案（suggest） | reading / conventions | Slack、Gmail — 会話が主 |
+| Vision・Copilot | reading / affordances / attention | GA4、Adobe — 操作が主 |
+
+会話系のSkillはconventionsが厚くaffordancesが薄い。操作系はその逆になる。
+どのセクションを持つかはSkill側の任意で、無いセクションは単に注入されない。
+
 ### 検出について
 
 大半のB2B SaaSはブラウザ内で動くため、bundle ID はどれも Chrome になる。

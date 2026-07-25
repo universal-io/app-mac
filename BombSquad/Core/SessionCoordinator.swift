@@ -646,7 +646,11 @@ final class SessionCoordinator {
                     self.suggestionTask = nil
                     guard suggestion.captureID == captureID else { return }
                     SuggestTrace.log("ready: draftChars=\(suggestion.draft.count)")
-                    session.applySuggestion(draft: suggestion.draft, note: suggestion.note)
+                    session.applySuggestion(
+                        draft: suggestion.draft,
+                        note: suggestion.note,
+                        skillName: suggestion.skillName
+                    )
                 }
             } catch is CancellationError {
                 return

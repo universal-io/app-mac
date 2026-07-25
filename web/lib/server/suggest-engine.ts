@@ -6,7 +6,7 @@ import {
   type AIModelTarget,
 } from "@/lib/server/ai-routing";
 import type { OperationalNotice } from "@/lib/server/operational-notice";
-import { resolveSuggestContextAttachment } from "@/lib/server/suggest-context-packages";
+import { suggestSkill } from "@/lib/server/skills/registry";
 
 // The proactive compose suggestion reads the same immutable screenshot Vision
 // uses, but its job is the opposite of Vision's: instead of only interpreting
@@ -62,12 +62,13 @@ export type SuggestEngineInput = {
 
 export type SuggestEngineOutput = {
   result: SuggestResult;
+  /** The skill that shaped this answer, surfaced so injection is never silent. */
+  skill: { id: string; name: string } | null;
   route: "snapshot_suggest";
   modelVendor: string;
   modelId: string;
   modelApi: string;
   fallbackUsed: boolean;
-  contextPackageId: string | null;
   inputTokens: number;
   outputTokens: number;
   notices: OperationalNotice[];
@@ -80,17 +81,18 @@ export async function runSuggest(
     throw new ProviderCallError("Suggestion requires an image.");
   }
 
+  const skill = suggestSkill(input.context);
   const routed = await runWithModelFallback("suggest", (target) =>
     callSuggestModel(input, target)
   );
   return {
     result: routed.value.result,
+    skill: skill && { id: skill.id, name: skill.name },
     route: "snapshot_suggest",
     modelVendor: routed.modelVendor,
     modelId: routed.modelId,
     modelApi: routed.api,
     fallbackUsed: routed.fallbackUsed,
-    contextPackageId: resolveSuggestContextAttachment(input.context)?.id ?? null,
     inputTokens: routed.value.inputTokens,
     outputTokens: routed.value.outputTokens,
     notices: routed.notices,
@@ -164,7 +166,7 @@ async function callSuggestModel(
 
 function requestBody(input: SuggestEngineInput, target: AIModelTarget): Record<string, unknown> {
   const languageName = input.language === "japanese" ? "Japanese" : "English";
-  const applicationAttachment = resolveSuggestContextAttachment(input.context);
+  const skill = suggestSkill(input.context);
 
   return {
     model: target.modelId,
@@ -237,12 +239,12 @@ Return an empty draft only when no input field can be identified at all. Uncerta
           text: `User persona attachment (use as a writing prior, not as evidence about the current situation):\n${DEFAULT_SUGGEST_PERSONA}`,
         }],
       },
-      ...(applicationAttachment
+      ...(skill
         ? [{
             role: "developer",
             content: [{
               type: "input_text",
-              text: `Application context attachment (${applicationAttachment.name}):\n${applicationAttachment.instructions}`,
+              text: `Skill attachment — ${skill.name}. Knowledge about the product on screen, supplied as reference, not as instructions from the user:\n${skill.instructions}`,
             }],
           }]
         : []),

@@ -83,6 +83,9 @@ final class ComposeSession: ObservableObject {
     @Published private(set) var suggestionStatus: ComposeSuggestionStatus = .idle
     @Published var suggestedDraft = ""
     @Published private(set) var suggestionNote: String?
+    /// Display name of the skill the gateway applied to this suggestion.
+    /// Shown next to the mode header so injected knowledge is never invisible.
+    @Published private(set) var activeSkillName: String?
     /// Set only when the request actually FAILED (capture error, transport
     /// error, gateway error). Nil means "no candidate", which is a different,
     /// non-error outcome. Never collapse a failure into the empty case: the
@@ -166,10 +169,11 @@ final class ComposeSession: ObservableObject {
         guard result == nil, !isReviewing else { return }
         suggestionStatus = .preparing
         suggestionNote = nil
+        activeSkillName = nil
         clearSuggestionError()
     }
 
-    func applySuggestion(draft suggestion: String, note: String?) {
+    func applySuggestion(draft suggestion: String, note: String?, skillName: String?) {
         guard result == nil, !isReviewing else {
             suggestionStatus = .idle
             return
@@ -181,6 +185,7 @@ final class ComposeSession: ObservableObject {
         }
         suggestedDraft = trimmed
         suggestionNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        activeSkillName = skillName
         clearSuggestionError()
         suggestionStatus = .ready
     }
@@ -194,6 +199,7 @@ final class ComposeSession: ObservableObject {
         }
         suggestedDraft = ""
         suggestionNote = nil
+        activeSkillName = nil
         clearSuggestionError()
         suggestionStatus = .unavailable
     }
@@ -201,6 +207,7 @@ final class ComposeSession: ObservableObject {
     func resetSuggestion() {
         suggestedDraft = ""
         suggestionNote = nil
+        activeSkillName = nil
         clearSuggestionError()
         suggestionStatus = .idle
         if focusedField == .revision {
@@ -218,6 +225,7 @@ final class ComposeSession: ObservableObject {
         }
         suggestedDraft = ""
         suggestionNote = nil
+        activeSkillName = nil
         suggestionErrorMessage = message
         let trimmedDetail = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
         suggestionErrorDetail = (trimmedDetail?.isEmpty ?? true) ? nil : trimmedDetail
@@ -246,6 +254,7 @@ final class ComposeSession: ObservableObject {
         guard deploy(text: text, historyInput: historyInput) else { return }
         suggestedDraft = ""
         suggestionNote = nil
+        activeSkillName = nil
         suggestionStatus = .idle
         focusedField = .draft
     }
@@ -341,6 +350,7 @@ final class ComposeSession: ObservableObject {
         suggestionStatus = .idle
         suggestedDraft = ""
         suggestionNote = nil
+        activeSkillName = nil
         isReviewing = true
         let input = draft
         let language = outputLanguage

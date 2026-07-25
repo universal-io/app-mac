@@ -155,7 +155,7 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 - `input.capture_id`: 必須
 - `input.image_base64`: 必須、PNG/JPEG
 - `input.context`: 任意（`app_name` / `bundle_id` / `window_title` / `conversation_excerpt`）。
-  参照専用で保存しない。`bundle_id`等から該当するアプリ文脈添付を選ぶ
+  参照専用で保存しない。`bundle_id`・`app_name`・`window_title`から該当するSkillを判定する
 - 実装: `web/app/api/ai/suggest/route.ts`
 - クライアント: `GatewaySuggestClient`
 
@@ -167,7 +167,8 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
   "capture_id": "uuid",
   "result": {
     "draft": "フォームに入れるべき文案（提案できない時は空文字）",
-    "note": "検出したフォームと提案意図の一言"
+    "note": "検出したフォームと提案意図の一言",
+    "skill": { "id": "slack", "name": "Slack" }
   },
   "meta": {
     "model_vendor": "openai",
@@ -176,8 +177,8 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
     "api": "responses",
     "image_detail": "original",
     "reasoning_effort": "medium",
-    "prompt_version": "speaker-grounding-v2",
-    "context_package": "slack",
+    "prompt_version": "responder-mission-v3",
+    "skill": "slack",
     "fallback_used": false,
     "latency_ms": 0,
     "notices": []
@@ -186,8 +187,12 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 ```
 
 `draft` は編集可能な提案で、ユーザーが紙飛行機を確定すると対象欄へ直接入力する。
-`note` は検証中の認知表示で、最新の送信者、宛先、ユーザーの立場、添付所有者、依頼、返信意図を示す。
-`context_package`は適用無しの場合`null`。
+`note` は検証中の認知表示で、最新の送信者、宛先、ユーザーの立場、添付所有者、依頼、
+依頼の実行者、返信意図を示す。
+
+`result.skill` は適用したSkill（画面上の製品に関する注入知識）で、該当が無ければ`null`。
+macOSはこの名前をパネルに表示する。Skillのサイレント注入は禁止で、クライアントが表示できない
+形で知識を注入しない。`meta.skill`は同じものをusage用にidだけで持つ。
 画像・入力本文・回答本文はusageに保存しない（運用情報のみ）。
 
 ## アカウント・管理

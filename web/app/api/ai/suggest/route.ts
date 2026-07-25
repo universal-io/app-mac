@@ -115,6 +115,7 @@ export async function POST(request: Request): Promise<Response> {
         result: {
           draft: output.result.draft,
           note: output.result.note,
+          skill: output.skill,
         },
         meta: {
           output_language: language,
@@ -125,7 +126,7 @@ export async function POST(request: Request): Promise<Response> {
           image_detail: SUGGEST_IMAGE_DETAIL,
           reasoning_effort: SUGGEST_REASONING_EFFORT,
           prompt_version: SUGGEST_PROMPT_VERSION,
-          context_package: output.contextPackageId,
+          skill: output.skill?.id ?? null,
           fallback_used: output.fallbackUsed,
           latency_ms: latencyMs,
           notices: output.notices,

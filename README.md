@@ -162,10 +162,19 @@ Enter は下書きを送信します。レビュー案を使う場合だけ明�
 言い換えません。検証中はこの認知結果を文案下の説明に表示します。
 
 共通の判断指示とユーザーPersonaは別レイヤーで渡し、現行の既定Personaは事業開発とソフトウェア開発を
-横断するFounder／Engineer／Designer／Business professionalです。アプリ識別情報に応じて独立した
-アプリ文脈添付を追加でき、現行はSlackとGmailの会話順・メンション・添付の読み方を補足します。
-各製品の検出条件と指示は独立した既定パッケージとして管理し、Googleのような広い提供元単位ではなく、
-Gmail、Docs、SheetsのようにUIの意味が異なる製品単位で追加します。
+横断するFounder／Engineer／Designer／Business professionalです。
+
+画面上の製品を判定すると、その製品のSkillを添付します。Skillは1製品1ファイルで、画面の読み方
+（reading）、その製品での自然な書き方（conventions）、使える機能（affordances）、注意すべき状態
+（attention）、そこで学ぶ価値のあるユーザーファクトのキー語彙を持ちます。用途に応じて渡す
+セクションを変え、文案生成にはreadingとconventions、Vision／Copilotにはreading・affordances・
+attentionを渡します。現行はSlackとGmailです。Googleのような提供元単位ではなく、Gmail、Docs、
+SheetsのようにUIの意味が異なる製品単位で追加します。
+
+**適用中のSkillは必ずパネルに表示します。** ユーザーが見えない知識は、疑うことも直すこともできない
+ためです。Skillはデータであり制御フローに触れないので、該当するSkillが無い画面でも汎用の経路が
+そのまま動きます。
+
 明示的にパネルを閉じた時は呼び出し元アプリへフォーカスを戻し、
 次回起動のCompose／Vision判定がUniversal I/O自身を前面アプリとして誤認しないようにします。
 

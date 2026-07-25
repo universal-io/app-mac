@@ -160,9 +160,11 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
   助けを求めており、入力欄の手前はユーザー宛の依頼である可能性が高い、を既定の姿勢とする。
   認識フィールドへ「依頼を実行するのは誰か」を追加し、ユーザーが実行者の依頼を相手への指示として
   返す失敗を塞ぐ。文脈不足を理由に生成を控えない。この前提は各Skillを書くときも共有する。
-- **M1** Skills基盤（`web/lib/server/skills/`、1ツール1ファイル、registry、階層合成、
+- **M1（完了）** Skills基盤（`web/lib/server/skills/`、1ツール1ファイル、registry、階層合成、
   有効Skillの可視化）とSlack / Gmailの移植。各Skillはreading / conventions / affordances /
-  attentionと、そのツールで学ぶ価値のあるfactキー語彙を宣言する。
+  attentionと、そのツールで学ぶ価値のあるfactキー語彙を宣言する。用途ごとに渡すセクションを
+  変え、suggestはreading + conventions、Visionはreading + affordances + attentionを受け取る。
+  適用中のSkill名はsuggest応答に含めてパネルへ表示する。
 - **M2** SkillsをVisionへ供給する。アプリ識別子は`candidate_diagnostics`で既に届いており、
   API契約とmacOSクライアントの変更は不要。attentionは抑制側を明示する。
 - **M3** ファクトストア（`scope`/`key`/`value`のupsert、Skill宣言の語彙のみ受理、

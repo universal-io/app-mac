@@ -191,6 +191,16 @@ struct ComposeSessionView: View {
                     .help(isProactiveSuggestEnabled ? "自動返信モードをオフにする" : "自動返信モードをオンにする")
                     .accessibilityLabel("自動返信モード")
                 Spacer()
+                if let skillName = session.activeSkillName {
+                    // A skill is injected knowledge about the app on screen. It
+                    // is always named here, because knowledge the user cannot
+                    // see is knowledge they cannot correct or distrust.
+                    Label(skillName, systemImage: "puzzlepiece.extension")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("\(skillName) の知識を参照して文案を作成しました")
+                        .accessibilityLabel("適用中のスキル: \(skillName)")
+                }
             }
             .background(WindowDragHandle())
             .onChange(of: isProactiveSuggestEnabled) { _, enabled in

@@ -9,6 +9,9 @@ struct ComposeSuggestion: Equatable {
     let draft: String
     /// One short Japanese sentence describing what was detected / proposed.
     let note: String
+    /// Display name of the skill the gateway applied, or nil when no skill
+    /// matched the screen. Shown in the panel: a skill never acts silently.
+    let skillName: String?
 }
 
 /// Gateway-backed client for `POST /ai/suggest`. Mirrors `GatewayVisionClient`:
@@ -85,10 +88,18 @@ struct GatewaySuggestClient {
         else {
             throw ProviderError.decoding("The suggestion response did not match its contract.")
         }
+        let skill = result["skill"] as? [String: Any]
         return ComposeSuggestion(
             captureID: captureID,
             draft: draft.trimmingCharacters(in: .whitespacesAndNewlines),
-            note: note.trimmingCharacters(in: .whitespacesAndNewlines)
+            note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+            skillName: (skill?["name"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilWhenEmpty
         )
     }
+}
+
+private extension String {
+    var nilWhenEmpty: String? { isEmpty ? nil : self }
 }
