@@ -48,10 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = AuthViewModel.shared
         Task { await MemorySyncService.shared.start() }
         Task {
-            await GatewayTranscriber.warmUp()
+            await GatewayAIWarmup.warmAll()
             // The local Supabase session may publish just after launch.
             try? await Task.sleep(for: .seconds(2))
-            await GatewayTranscriber.warmUp()
+            await GatewayAIWarmup.warmAll()
         }
         SoundFeedback.prepare()
 

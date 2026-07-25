@@ -10,7 +10,8 @@ import {
   errorResponse,
   gatewayErrorResponse,
   GatewayError,
-  recordUsage,
+  recordUsageAfterResponse,
+  warmAIRequest,
 } from "@/lib/server/gateway";
 import {
   aiModelFailureContract,
@@ -36,6 +37,8 @@ type DistillRequestBody = {
     app_version?: string;
   };
 };
+
+export const GET = warmAIRequest;
 
 export async function POST(request: Request): Promise<Response> {
   let requestId: string | null = null;
@@ -97,7 +100,7 @@ export async function POST(request: Request): Promise<Response> {
         `[/api/ai/memory/distill] provider error (request ${requestId}):`,
         failure.detail,
       );
-      await recordUsage(tenantId, userId, {
+      recordUsageAfterResponse(tenantId, userId, {
         operation: "memory_distill",
         unitType: "call",
         requestId,
@@ -110,7 +113,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     const latencyMs = Date.now() - started;
 
-    await recordUsage(tenantId, userId, {
+    recordUsageAfterResponse(tenantId, userId, {
       operation: "memory_distill",
       unitType: "call",
       requestId,

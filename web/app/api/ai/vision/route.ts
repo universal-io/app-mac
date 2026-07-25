@@ -4,7 +4,8 @@ import {
   errorResponse,
   gatewayErrorResponse,
   GatewayError,
-  recordUsage,
+  recordUsageAfterResponse,
+  warmAIRequest,
 } from "@/lib/server/gateway";
 import {
   aiModelFailureContract,
@@ -63,6 +64,8 @@ type VisionRequestBody = {
   preferences?: { output_language?: string };
   client?: { platform?: string; app_version?: string };
 };
+
+export const GET = warmAIRequest;
 
 export async function POST(request: Request): Promise<Response> {
   let requestId: string | null = null;
@@ -130,7 +133,7 @@ export async function POST(request: Request): Promise<Response> {
         language,
       });
       const latencyMs = Date.now() - started;
-      await recordUsage(tenantId, userId, {
+      recordUsageAfterResponse(tenantId, userId, {
         operation: "vision",
         unitType: "call",
         requestId: requestId!,
@@ -179,7 +182,7 @@ export async function POST(request: Request): Promise<Response> {
       );
       const primary = AI_MODEL_ROUTES.vision.primary;
       const secondary = AI_MODEL_ROUTES.vision.secondary;
-      await recordUsage(tenantId, userId, {
+      recordUsageAfterResponse(tenantId, userId, {
         operation: "vision",
         unitType: "call",
         requestId: requestId!,

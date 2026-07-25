@@ -20,11 +20,6 @@ struct GatewayTranscriber: Transcriber {
         self.client = client
     }
 
-    static func warmUp() async {
-        guard let client = GatewayClient.make() else { return }
-        _ = try? await client.get("ai/transcribe")
-    }
-
     func transcribe(fileURL: URL) async throws -> String {
         let totalStarted = ContinuousClock.now
         let audioData = try Data(contentsOf: fileURL)

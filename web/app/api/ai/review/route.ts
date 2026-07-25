@@ -11,6 +11,8 @@ import {
   GatewayError,
   quotaInfo,
   recordUsage,
+  recordUsageAfterResponse,
+  warmAIRequest,
   type QuotaInfo,
 } from "@/lib/server/gateway";
 import {
@@ -52,6 +54,8 @@ type ReviewRequestBody = {
     device_id?: string;
   };
 };
+
+export const GET = warmAIRequest;
 
 export async function POST(request: Request): Promise<Response> {
   let requestId: string | null = null;
@@ -131,7 +135,7 @@ export async function POST(request: Request): Promise<Response> {
       // Log only the sanitized provider failure detail; upstream bodies may contain user data.
       const failure = aiModelFailureContract(error);
       console.error(`[/api/ai/review] provider error (request ${requestId}):`, failure.detail);
-      await recordUsage(tenantId, userId, {
+      recordUsageAfterResponse(tenantId, userId, {
         operation: "review",
         unitType: "review",
         requestId,
@@ -144,7 +148,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     const latencyMs = Date.now() - started;
 
-    await recordUsage(tenantId, userId, {
+    recordUsageAfterResponse(tenantId, userId, {
       operation: "review",
       unitType: "review",
       requestId,
@@ -209,6 +213,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      let responseClosed = false;
       const send = (event: string, data: unknown) => {
         controller.enqueue(
           encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
@@ -227,21 +232,6 @@ function streamingResponse(input: StreamingResponseInput): Response {
           throw new ProviderCallError("Provider stream ended without a result.");
         }
         const latencyMs = Date.now() - started;
-        await recordUsage(input.tenantId, input.userId, {
-          operation: "review",
-          unitType: "review",
-          requestId: input.requestId,
-          status: "success",
-          modelVendor: finalOutput.modelVendor,
-          modelId: finalOutput.modelId,
-          inputUnits: finalOutput.inputTokens,
-          outputUnits: finalOutput.outputTokens,
-          latencyMs,
-          metadata: {
-            ...input.metadata,
-            operational_notice_codes: finalOutput.notices.map((notice) => notice.code),
-          },
-        });
         send("result", {
           request_id: input.requestId,
           result: finalOutput.result,
@@ -257,12 +247,37 @@ function streamingResponse(input: StreamingResponseInput): Response {
           },
           quota: input.quota(input.usedBefore + 1),
         });
+        controller.close();
+        responseClosed = true;
+        await recordUsage(input.tenantId, input.userId, {
+          operation: "review",
+          unitType: "review",
+          requestId: input.requestId,
+          status: "success",
+          modelVendor: finalOutput.modelVendor,
+          modelId: finalOutput.modelId,
+          inputUnits: finalOutput.inputTokens,
+          outputUnits: finalOutput.outputTokens,
+          latencyMs,
+          metadata: {
+            ...input.metadata,
+            operational_notice_codes: finalOutput.notices.map((notice) => notice.code),
+          },
+        });
       } catch (error) {
         const failure = aiModelFailureContract(error);
         console.error(
           `[/api/ai/review] stream provider error (request ${input.requestId}):`,
           failure.detail,
         );
+        if (!responseClosed) {
+          send("error", {
+            error: { code: failure.code, message: failure.message },
+            request_id: input.requestId,
+          });
+          controller.close();
+          responseClosed = true;
+        }
         await recordUsage(input.tenantId, input.userId, {
           operation: "review",
           unitType: "review",
@@ -272,12 +287,8 @@ function streamingResponse(input: StreamingResponseInput): Response {
           latencyMs: Date.now() - started,
           metadata: input.metadata,
         });
-        send("error", {
-          error: { code: failure.code, message: failure.message },
-          request_id: input.requestId,
-        });
       } finally {
-        controller.close();
+        if (!responseClosed) controller.close();
       }
     },
   });

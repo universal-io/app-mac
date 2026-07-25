@@ -5,6 +5,7 @@
 
 import { getPlanConfig } from "@/lib/server/plans";
 import { createHash } from "node:crypto";
+import { after } from "next/server";
 import {
   getSupabaseAdminClient,
   getSupabaseUserClient,
@@ -196,6 +197,40 @@ export async function recordUsage(
     // A successful metered write changes the value quota checks depend on.
     // The next explicit warm-up may refill this cache before the next AI call.
     quotaCache.delete(tenantId);
+  }
+}
+
+/**
+ * Persists operational usage after the response has been released. AI output
+ * must not wait on a bookkeeping insert; Next keeps the request context alive
+ * for this task on the deployed serverless runtime.
+ */
+export function recordUsageAfterResponse(
+  tenantId: string,
+  userId: string,
+  usage: UsageInput,
+): void {
+  after(() => recordUsage(tenantId, userId, usage));
+}
+
+/**
+ * GET handler shared by every AI route. It warms the exact route function and
+ * fills its auth/quota caches without invoking a provider or recording usage.
+ */
+export async function warmAIRequest(request: Request): Promise<Response> {
+  try {
+    const { tenantId, entitlement } = await authenticate(request);
+    await enforceQuota(tenantId, entitlement);
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "cache-control": "private, no-store",
+        "x-ai-warm": "ready",
+      },
+    });
+  } catch (error) {
+    if (error instanceof GatewayError) return gatewayErrorResponse(error, null);
+    return errorResponse(500, "INTERNAL_ERROR", "AI warm-up failed.", null);
   }
 }
 

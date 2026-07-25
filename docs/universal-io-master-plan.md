@@ -37,9 +37,12 @@ macOS UI
 - ローカルGateway、BYOK、旧endpoint、shadow実行、macOS側のfallbackを持たない。
 - 全AI機能はGatewayの単一モデルルーターで一次・二次モデルを指定する。一次失敗時だけ二次を
   1回実行し、切替時はユーザーへ共通noticeを表示する。両方失敗時は共通エラーを返す。
-- 音声入力はGroq Whisper Large V3 Turboと16 kHz mono WAVを本番経路とする。アプリ起動時と
-  録音開始時に同一routeの認証・quota前処理をウォームし、Gateway instance内で5分キャッシュする。
-  providerは呼ばないため、ウォームアップ自体は文字起こし利用として課金・usage記録しない。
+- 音声入力はGroq Whisper Large V3 Turboと16 kHz mono WAVを本番経路とする。
+- 全AI機能は共通`GatewayAIWarmup`から、アプリ起動時と各機能へ入る直前に同一routeの
+  認証・quota前処理をウォームする。Gateway instance内で5分キャッシュし、providerは呼ばないため
+  ウォームアップ自体は課金・usage記録しない。
+- 全AI routeのusage記録は共通処理で応答後に実行する。SSEも最終結果をクライアントへ返してから
+  記録し、運用上のDB書き込みをユーザーの待ち時間から外す。
 - Visionは画像、同一captureの候補、会話を1回のVLM呼び出しへ渡す。
 - Composeの先回り文案は共通判断、ユーザーPersona、任意のアプリ文脈を独立した添付として渡す。
   最新メッセージの話者・宛先・行為主体を確定してから、現在のユーザー視点で文案を作る。

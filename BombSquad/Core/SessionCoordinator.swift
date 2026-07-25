@@ -280,6 +280,9 @@ final class SessionCoordinator {
             summonTargetApp = nil
             return
         }
+        Task {
+            await GatewayAIWarmup.warm([.suggest, .review, .vision])
+        }
         // Reserve the suggestion slot immediately (placeholder + loading) when
         // we intend to try, so it's present from the moment the panel opens and
         // the panel doesn't grow-then-shrink later. Resolved to ready/none once
@@ -296,6 +299,9 @@ final class SessionCoordinator {
     /// Transform summon shares the same summon-time context capture, but the
     /// exit is clipboard-only so no target app handle is retained.
     private func presentTransformSession(with selection: String) {
+        Task {
+            await GatewayAIWarmup.warm([.transform])
+        }
         summonTargetApp = nil
         let rootContextTask = SituationalContextService.captureTask()
         let session = TransformSession(
@@ -349,7 +355,7 @@ final class SessionCoordinator {
         guard !isDictating else { return }
         transcriptionWarmupTask?.cancel()
         transcriptionWarmupTask = Task {
-            await GatewayTranscriber.warmUp()
+            await GatewayAIWarmup.warm([.transcribe])
         }
         switch stateMachine.mode {
         case .compose:

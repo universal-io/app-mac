@@ -1,6 +1,6 @@
 # Universal I/O Gateway API契約
 
-最終更新: 2026-07-22 ／ ステータス: 現行
+最終更新: 2026-07-25 ／ ステータス: 現行
 
 ## 共通
 
@@ -11,6 +11,10 @@
 - Gateway内のモデル順序は `web/lib/server/ai-routing.ts` が唯一の正本。全AI機能が一次・二次を
   1つずつ持ち、一次失敗時だけ二次を1回実行する。
 - `request_id` は全AIリクエストで必須。
+- `review`、`transcribe`、`transform`、`vision`、`suggest`、`memory/distill`の各routeは
+  認証付きGETをウォームアップとして受け付ける。認証・quota前処理だけを実行して成功時`204`を返し、
+  providerを呼ばずusageも記録しない。
+- POSTのusage記録は応答後に実行するため、成功・モデルエラーとも記録DBの待ち時間を応答へ加えない。
 
 共通JSON envelope:
 
@@ -81,8 +85,7 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 - 実装: `web/app/api/ai/transcribe/route.ts`
 - クライアント: `GatewayTranscriber`
 
-`GET /ai/transcribe`は同じserverless routeと認証・quota前処理だけをウォームし、成功時`204`を返す。
-ASR providerは呼ばず、usageも記録しない。POST成功応答の`meta.timing_ms`と`Server-Timing`は
+POST成功応答の`meta.timing_ms`と`Server-Timing`は
 `auth` / `quota` / `provider` / `usage` / `total`のミリ秒内訳を返す。
 
 ## POST /ai/transform

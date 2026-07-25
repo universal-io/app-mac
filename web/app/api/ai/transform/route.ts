@@ -7,7 +7,8 @@ import {
   errorResponse,
   gatewayErrorResponse,
   GatewayError,
-  recordUsage,
+  recordUsageAfterResponse,
+  warmAIRequest,
 } from "@/lib/server/gateway";
 import {
   aiModelFailureContract,
@@ -39,6 +40,8 @@ type TransformRequestBody = {
     app_version?: string;
   };
 };
+
+export const GET = warmAIRequest;
 
 export async function POST(request: Request): Promise<Response> {
   let requestId: string | null = null;
@@ -97,7 +100,7 @@ export async function POST(request: Request): Promise<Response> {
     } catch (error) {
       const failure = aiModelFailureContract(error);
       console.error(`[/api/ai/transform] provider error (request ${requestId}):`, failure.detail);
-      await recordUsage(tenantId, userId, {
+      recordUsageAfterResponse(tenantId, userId, {
         operation: "transform",
         unitType: "call",
         requestId,
@@ -110,7 +113,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     const latencyMs = Date.now() - started;
 
-    await recordUsage(tenantId, userId, {
+    recordUsageAfterResponse(tenantId, userId, {
       operation: "transform",
       unitType: "call",
       requestId,
