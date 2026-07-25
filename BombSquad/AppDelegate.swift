@@ -47,6 +47,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // memory state do not flash through an uninitialized panel state.
         _ = AuthViewModel.shared
         Task { await MemorySyncService.shared.start() }
+        Task {
+            await GatewayTranscriber.warmUp()
+            // The local Supabase session may publish just after launch.
+            try? await Task.sleep(for: .seconds(2))
+            await GatewayTranscriber.warmUp()
+        }
         SoundFeedback.prepare()
 
         permissions.onMicrophoneGranted = { [weak self] in self?.recorder.warmUp() }

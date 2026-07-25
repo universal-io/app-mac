@@ -4,6 +4,7 @@
 // validation and quota policy.
 
 import { getPlanConfig } from "@/lib/server/plans";
+import { createHash } from "node:crypto";
 import {
   getSupabaseAdminClient,
   getSupabaseUserClient,
@@ -30,6 +31,11 @@ export type AuthenticateOptions = {
    */
   requireActiveEntitlement?: boolean;
 };
+
+const PREFLIGHT_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_PREFLIGHT_CACHE_ENTRIES = 256;
+const authCache = new Map<string, { value: AuthContext; expiresAt: number }>();
+const quotaCache = new Map<string, number>();
 
 /** Thrown by shared helpers; route handlers convert it via `errorResponse`. */
 export class GatewayError extends Error {
@@ -69,6 +75,24 @@ export async function authenticate(
     throw new GatewayError(401, "UNAUTHENTICATED", "Missing Supabase access token.");
   }
 
+  const cacheKey = createHash("sha256").update(token).digest("base64url");
+  const cached = authCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (
+      requireActiveEntitlement
+      && cached.value.entitlement.status !== "active"
+      && cached.value.entitlement.status !== "trialing"
+    ) {
+      throw new GatewayError(
+        402,
+        "PAYMENT_REQUIRED",
+        "The current plan does not allow this operation.",
+      );
+    }
+    return cached.value;
+  }
+  if (cached) authCache.delete(cacheKey);
+
   const admin = getSupabaseAdminClient();
   const { data: userData, error: userError } = await admin.auth.getUser(token);
   if (userError || !userData?.user) {
@@ -105,7 +129,13 @@ export async function authenticate(
     );
   }
 
-  return { userId, tenantId, email, entitlement };
+  const result = { userId, tenantId, email, entitlement };
+  pruneCache(authCache);
+  authCache.set(cacheKey, {
+    value: result,
+    expiresAt: Date.now() + PREFLIGHT_CACHE_TTL_MS,
+  });
+  return result;
 }
 
 async function fetchDefaultTenantId(userId: string): Promise<string | null> {
@@ -161,6 +191,11 @@ export async function recordUsage(
       `[gateway] usage event insert failed (${usage.operation}):`,
       error.message,
     );
+  }
+  if (!error || error.message.includes("duplicate")) {
+    // A successful metered write changes the value quota checks depend on.
+    // The next explicit warm-up may refill this cache before the next AI call.
+    quotaCache.delete(tenantId);
   }
 }
 
@@ -257,12 +292,27 @@ export async function enforceQuota(
   tenantId: string,
   entitlement: Entitlement,
 ): Promise<void> {
+  const cachedUntil = quotaCache.get(tenantId) ?? 0;
+  if (cachedUntil > Date.now()) return;
+  if (cachedUntil) quotaCache.delete(tenantId);
   const limit = await effectiveMonthlyLimit(entitlement);
-  if (limit === null) return; // unlimited plan
+  if (limit === null) {
+    pruneCache(quotaCache);
+    quotaCache.set(tenantId, Date.now() + PREFLIGHT_CACHE_TTL_MS);
+    return;
+  }
   const used = await countMonthlyUsage(tenantId);
   if (used >= limit) {
     throw new GatewayError(429, "QUOTA_EXCEEDED", "Monthly usage limit reached.");
   }
+  pruneCache(quotaCache);
+  quotaCache.set(tenantId, Date.now() + PREFLIGHT_CACHE_TTL_MS);
+}
+
+function pruneCache<T>(cache: Map<string, T>): void {
+  if (cache.size < MAX_PREFLIGHT_CACHE_ENTRIES) return;
+  const oldestKey = cache.keys().next().value;
+  if (oldestKey) cache.delete(oldestKey);
 }
 
 /**

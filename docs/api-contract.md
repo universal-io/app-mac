@@ -74,11 +74,16 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 
 ## POST /ai/transcribe
 
-音声を文字起こしする。
+音声を文字起こしする。一次はGroq `whisper-large-v3-turbo`、二次はOpenAI `whisper-1`。
+16 kHz mono WAVを推奨する。
 
-- multipart fields: `file`, `request_id`, `platform`, `app_version`（任意）
+- multipart fields: `file`, `request_id`, `platform`, `app_version`（任意）、`language`（`ja` / `en`、任意）
 - 実装: `web/app/api/ai/transcribe/route.ts`
 - クライアント: `GatewayTranscriber`
+
+`GET /ai/transcribe`は同じserverless routeと認証・quota前処理だけをウォームし、成功時`204`を返す。
+ASR providerは呼ばず、usageも記録しない。POST成功応答の`meta.timing_ms`と`Server-Timing`は
+`auth` / `quota` / `provider` / `usage` / `total`のミリ秒内訳を返す。
 
 ## POST /ai/transform
 

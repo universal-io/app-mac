@@ -27,9 +27,12 @@ type WhisperSegment = {
   compression_ratio?: number;
 };
 
-export async function runTranscription(audio: File): Promise<TranscriptionOutput> {
+export async function runTranscription(
+  audio: File,
+  language?: "ja" | "en",
+): Promise<TranscriptionOutput> {
   const routed = await runWithModelFallback("transcribe", (target) =>
-    transcribeWith(target, audio)
+    transcribeWith(target, audio, language)
   );
   return {
     text: routed.value.text,
@@ -45,6 +48,7 @@ export async function runTranscription(audio: File): Promise<TranscriptionOutput
 async function transcribeWith(
   target: AIModelTarget,
   audio: File,
+  language?: "ja" | "en",
 ): Promise<{ text: string; durationSeconds: number }> {
   if (target.api !== "transcriptions") {
     throw new ProviderCallError(`Transcription cannot use API "${target.api}".`);
@@ -52,8 +56,11 @@ async function transcribeWith(
   const form = new FormData();
   form.append("model", target.modelId);
   form.append("temperature", "0");
-  // verbose_json gives per-segment confidence used to filter hallucinations.
+  // Keep duration for usage metering and confidence data for the secondary
+  // silence/hallucination guard. Client-side inspection already drops most
+  // empty clips before upload.
   form.append("response_format", "verbose_json");
+  if (language) form.append("language", language);
   form.append("file", audio, audio.name || "audio.m4a");
 
   const response = await fetch(endpointFor(target), {
@@ -75,8 +82,6 @@ async function transcribeWith(
     segments?: WhisperSegment[];
   };
 
-  // Drop segments that look like silence-driven hallucinations, then rebuild
-  // the text from what's left. Fall back to the top-level text otherwise.
   let text: string;
   if (Array.isArray(root.segments)) {
     text = root.segments
@@ -96,12 +101,6 @@ async function transcribeWith(
   };
 }
 
-/**
- * Whisper's own silence heuristic plus a repetition guard. A segment is
- * treated as a hallucination when the model is both confident there is no
- * speech and uncertain about its tokens, or when the output is degenerate
- * (highly repetitive text compresses far more than natural language).
- */
 function isHallucinated(segment: WhisperSegment): boolean {
   const noSpeechProb = segment.no_speech_prob ?? 0;
   const avgLogprob = segment.avg_logprob ?? 0;

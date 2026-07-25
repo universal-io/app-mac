@@ -13,7 +13,7 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 | Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
 | Transform（選択テキストの解説） | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
-| 音声入力 | Groq `whisper-large-v3` | OpenAI `whisper-1` |
+| 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
 | メモリ抽出 | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
 
 共通規則:
@@ -23,6 +23,9 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
   macOSは「一次へアクセスできなかったため、二次で処理した」と必ず表示する。
 - 両方が失敗した場合は、全機能で同じ明示的エラーを返す。
 - macOSはモデルを選ばず、認証済みの本番Gatewayだけを呼ぶ。
+- 音声入力は16 kHz mono PCM WAVを使い、アプリ起動時と録音開始時にtranscribe routeの
+  認証・quota前処理をプロバイダー呼び出しなしでウォームする。成功した前処理はGateway instance内で
+  5分キャッシュし、指を離した後のhot pathをアップロードとASR推論中心にする。
 
 メモリは、ユーザーがレビュー案を採用して実際に送った文章との差分、またはユーザー自身が
 提供した過去文例から、文体・敬語・相手との距離感だけを抽出する機能です。保存内容はユーザーが
@@ -79,6 +82,8 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
   残ったVision画像も次回起動時に削除する。Vision/Copilotの会話は永続化しない。
 - Supabaseのusageには機能、モデル、token／秒数、成功・失敗、処理時間などの運用情報だけを
   記録し、入力本文、回答本文、画像、音声、アプリ名、ウインドウタイトルは保存しない。
+- transcribe応答は`auth`、`quota`、`provider`、`usage`、`total`の所要時間を返し、体感遅延を
+  provider時間だけで判断しない。
 - request単位のusageは90日保持し、期限後はユーザーID・request IDを持たないテナント月次集計へ
   加算して詳細行を自動削除する。月次利用枠は当月の成功行だけで計算する。
 - アカウント画面から退会できる。直近10分以内の再認証を要求し、Authユーザー、メモリ、usage、

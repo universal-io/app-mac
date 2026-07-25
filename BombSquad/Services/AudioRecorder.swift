@@ -7,8 +7,9 @@ enum AudioRecorderError: UserPresentableError {
     }
 }
 
-/// Records mic input to a temporary m4a file for transcription.
-/// 16 kHz mono AAC keeps the upload small while staying ample for speech.
+/// Records mic input as 16 kHz mono PCM WAV. Groq accepts this directly and
+/// recommends WAV for lower transcription latency, avoiding AAC decode in the
+/// provider hot path. Short hold-to-talk clips remain small (~32 KB/second).
 final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
     private var recorder: AVAudioRecorder?
     private(set) var fileURL: URL?
@@ -18,12 +19,14 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 
     func start() throws {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("jam-\(UUID().uuidString).m4a")
+            .appendingPathComponent("jam-\(UUID().uuidString).wav")
         let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: 16_000,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
         ]
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder.delegate = self
@@ -36,12 +39,14 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
     /// Touch the audio system once so the first real recording starts faster.
     func warmUp() {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("jam-warmup.m4a")
+            .appendingPathComponent("jam-warmup.wav")
         let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: 16_000,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
         ]
         if let warm = try? AVAudioRecorder(url: url, settings: settings) {
             warm.prepareToRecord()

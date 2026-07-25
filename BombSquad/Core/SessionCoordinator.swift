@@ -61,6 +61,7 @@ final class SessionCoordinator {
     private var summonTargetApp: NSRunningApplication?
     private var isDictating = false
     private var transcriptionTask: Task<Void, Never>?
+    private var transcriptionWarmupTask: Task<Void, Never>?
     private var captureTask: Task<Void, Never>?
     private var captureGeneration = 0
     /// Full-screen shot taken silently the moment compose is summoned, so a
@@ -346,6 +347,10 @@ final class SessionCoordinator {
 
     private func startDictation() {
         guard !isDictating else { return }
+        transcriptionWarmupTask?.cancel()
+        transcriptionWarmupTask = Task {
+            await GatewayTranscriber.warmUp()
+        }
         switch stateMachine.mode {
         case .compose:
             guard let composeSession else { return }
@@ -437,6 +442,9 @@ final class SessionCoordinator {
         transcriptionTask = Task { [weak self] in
             defer { try? FileManager.default.removeItem(at: url) }
             guard let self else { return }
+
+            await self.transcriptionWarmupTask?.value
+            self.transcriptionWarmupTask = nil
 
             if let clip = AudioRecorder.inspect(url: url),
                clip.duration < 0.4 || clip.averagePower < -45 {

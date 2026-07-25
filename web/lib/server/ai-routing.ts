@@ -53,7 +53,7 @@ export const AI_MODEL_ROUTES: Readonly<Record<AIFeature, AIModelRoute>> = {
   },
   transcribe: {
     label: "Transcribe",
-    primary: { vendor: "groq", modelId: "whisper-large-v3", api: "transcriptions" },
+    primary: { vendor: "groq", modelId: "whisper-large-v3-turbo", api: "transcriptions" },
     secondary: { vendor: "openai", modelId: "whisper-1", api: "transcriptions" },
   },
   memory: {
