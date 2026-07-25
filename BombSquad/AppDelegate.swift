@@ -88,6 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             commandCenter.onScreenCaptureSettingsRequested = {
                 ScreenCapturePermission.openSettings()
             }
+            commandCenter.onProactiveSuggestionSettingChanged = { [weak self] isEnabled in
+                self?.coreCoordinator?.setProactiveSuggestionEnabled(isEnabled)
+            }
         }
 
         NotificationCenter.default.addObserver(

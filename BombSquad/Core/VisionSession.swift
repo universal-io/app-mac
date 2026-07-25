@@ -94,10 +94,23 @@ final class VisionSession: ObservableObject {
     }
 
     var canStartCopilot: Bool {
-        !isLoading
-            && selectedCandidate?.rect != nil
-            && turns.last(where: { $0.role == .assistant })?.mode == .guide
-            && turns.last(where: { $0.role == .user }) != nil
+        guard !isLoading,
+              let assistant = turns.last(where: { $0.role == .assistant }),
+              let question = turns.last(where: { $0.role == .user })?.text else {
+            return false
+        }
+        return assistant.mode == .guide || Self.isActionSeekingQuestion(question)
+    }
+
+    private static func isActionSeekingQuestion(_ question: String) -> Bool {
+        let normalized = question.lowercased()
+        let markers = [
+            "どこ", "どうやって", "方法", "行き方", "開く", "開け", "取得",
+            "作成", "設定", "変更", "クリック", "押す", "操作", "見つけ",
+            "where", "how do", "how can", "open", "go to", "find", "get ",
+            "create", "set up", "configure", "change", "click", "press",
+        ]
+        return markers.contains { normalized.contains($0) }
     }
 
     var latestInstruction: String {
@@ -163,7 +176,14 @@ final class VisionSession: ObservableObject {
             focusedField = .navigator
             return
         }
-        showLiveHighlight()
+        if selectedCandidate?.rect != nil {
+            showLiveHighlight()
+        } else {
+            // A useful guide answer can exist even when Chrome/Electron did
+            // not expose a matching AX rectangle. Copilot remains usable as
+            // text guidance; only the optional highlight is omitted.
+            activateTargetApp()
+        }
         installCopilotClickMonitor()
     }
 

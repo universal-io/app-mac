@@ -24,7 +24,7 @@ struct PanelSpec: Equatable {
             return nil
         case .compose:
             return PanelSpec(
-                size: CGSize(width: 680, height: 420),
+                size: CGSize(width: 680, height: 660),
                 placement: .centered,
                 closesOnResignActive: true
             )

@@ -8,6 +8,7 @@ final class AppCommandCenter {
     var onShowManagementRequested: (() -> Void)?
     var onScreenshotCaptureRequested: (() -> Void)?
     var onScreenCaptureSettingsRequested: (() -> Void)?
+    var onProactiveSuggestionSettingChanged: ((Bool) -> Void)?
 
     private init() {}
 
@@ -25,5 +26,9 @@ final class AppCommandCenter {
 
     func requestScreenCaptureSettings() {
         onScreenCaptureSettingsRequested?()
+    }
+
+    func notifyProactiveSuggestionSettingChanged(_ isEnabled: Bool) {
+        onProactiveSuggestionSettingChanged?(isEnabled)
     }
 }

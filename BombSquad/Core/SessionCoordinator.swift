@@ -86,6 +86,34 @@ final class SessionCoordinator {
         CoreTrace.event("coordinator.started", mode: stateMachine.mode)
     }
 
+    func setProactiveSuggestionEnabled(_ isEnabled: Bool) {
+        guard stateMachine.mode == .compose, let composeSession else { return }
+        if !isEnabled {
+            suggestionTask?.cancel()
+            suggestionTask = nil
+            composeSession.resetSuggestion()
+            SuggestTrace.log("disabled from compose panel")
+            return
+        }
+
+        guard composeSession.isEmptyDraft else { return }
+        guard ScreenCapturePermission.isGranted,
+              composeFocusEditable,
+              GatewaySuggestClient.make() != nil else {
+            composeSession.markSuggestionUnavailable()
+            return
+        }
+        composeSession.markSuggestionPreparing()
+        if let attachment = composePreCapture {
+            maybeStartComposeSuggestion(
+                attachment: attachment,
+                generation: composeGeneration
+            )
+        } else if composePreCaptureTask == nil {
+            composeSession.markSuggestionUnavailable()
+        }
+    }
+
     /// Single entry point for all input events.
     func handle(_ event: AppEvent) {
         let mode = stateMachine.mode

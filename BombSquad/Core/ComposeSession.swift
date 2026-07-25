@@ -201,6 +201,16 @@ final class ComposeSession: ObservableObject {
         suggestionStatus = .unavailable
     }
 
+    func resetSuggestion() {
+        suggestedDraft = ""
+        suggestionNote = nil
+        clearSuggestionError()
+        suggestionStatus = .idle
+        if focusedField == .revision {
+            focusedField = .draft
+        }
+    }
+
     /// The request FAILED. Surfaces the real reason instead of the vague
     /// "no suggestion" copy — hiding the failure would make a broken endpoint
     /// look like a model that simply had nothing to say.

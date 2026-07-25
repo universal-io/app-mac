@@ -30,6 +30,8 @@ struct ComposeSessionView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHelp = false
     @State private var isInputHistoryExpanded = false
+    @AppStorage(AppSettings.isProactiveSuggestEnabledKey)
+    private var isProactiveSuggestEnabled = true
     let onExpansionChange: (Bool) -> Void
 
     private var focusedField: Binding<FocusField?> {
@@ -42,14 +44,8 @@ struct ComposeSessionView: View {
         session.result != nil || !(session.streamingRevision ?? "").isEmpty
     }
 
-    /// Preparing stays compact in the draft toolbar. The lower surface appears
-    /// only when there is content (or an error) worth reading.
-    private var hasSuggestionSurface: Bool {
-        session.suggestionStatus == .ready || session.suggestionStatus == .unavailable
-    }
-
     private var showsLowerSlot: Bool {
-        hasReviewSurface || hasSuggestionSurface
+        true
     }
 
     var body: some View {
@@ -141,8 +137,6 @@ struct ComposeSessionView: View {
 
                 if session.isReviewing {
                     processingStatus("レビュー中")
-                } else if session.suggestionStatus == .preparing {
-                    processingStatus("画面分析中")
                 }
 
                 Button(action: session.requestReview) {
@@ -196,15 +190,29 @@ struct ComposeSessionView: View {
     private var suggestionPane: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Label("文案（自動）", systemImage: "sparkles")
+                Label("自動返信モード", systemImage: "sparkles")
                     .font(.headline)
+                Toggle("", isOn: $isProactiveSuggestEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .help(isProactiveSuggestEnabled ? "自動返信モードをオフにする" : "自動返信モードをオンにする")
+                    .accessibilityLabel("自動返信モード")
                 Spacer()
             }
             .background(WindowDragHandle())
+            .onChange(of: isProactiveSuggestEnabled) { _, enabled in
+                AppCommandCenter.shared.notifyProactiveSuggestionSettingChanged(enabled)
+            }
 
             switch session.suggestionStatus {
             case .preparing:
-                EmptyView()
+                VStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("画面を分析しています…")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             case .ready:
                 SendableTextEditor(
@@ -239,7 +247,16 @@ struct ComposeSessionView: View {
                 // A real failure shows its reason and technical cause; only a
                 // genuinely empty result gets the plain "no suggestion" copy.
                 VStack(alignment: .leading, spacing: 8) {
-                    if let errorMessage = session.suggestionErrorMessage {
+                    if !isProactiveSuggestEnabled {
+                        Text("自動返信モードはオフです。")
+                            .foregroundStyle(.secondary)
+                        Text("必要なときに上のスイッチからオンにできます。")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    } else if session.suggestionStatus == .idle {
+                        Text("自動返信モードを準備しています。")
+                            .foregroundStyle(.secondary)
+                    } else if let errorMessage = session.suggestionErrorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                             .fixedSize(horizontal: false, vertical: true)
