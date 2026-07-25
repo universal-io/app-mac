@@ -39,11 +39,21 @@ struct SituationalContext {
         !(conversationExcerpt ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Short label for the panel chip, e.g. "Slack — #general".
-    var chipLabel: String {
-        if let windowTitle, !windowTitle.isEmpty {
-            return "\(appName) — \(windowTitle)"
+    /// Product-facing label for the source disclosure. This is deliberately
+    /// narrower than skill detection: it only prevents a known web product
+    /// from being presented to the user as the container browser.
+    var detectedProductName: String? {
+        let normalizedHost = host?.lowercased()
+        if normalizedHost == "mail.google.com" { return "Gmail" }
+        if normalizedHost == "app.slack.com"
+            || bundleID?.lowercased() == "com.tinyspeck.slackmacgap" {
+            return "Slack"
         }
+        return nil
+    }
+
+    var detectionSource: String {
+        if let host, !host.isEmpty { return host }
         return appName
     }
 }

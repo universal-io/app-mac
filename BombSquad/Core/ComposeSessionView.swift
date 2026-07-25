@@ -71,7 +71,13 @@ struct ComposeSessionView: View {
     private var draftPane: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let context = session.situationalContext, !session.isContextExcluded {
-                FoundationContextChip(context: context, onExclude: session.excludeContext)
+                FoundationContextChip(
+                    context: context,
+                    skillName: session.activeSkillName,
+                    includesScreenshot: session.suggestionStatus == .preparing
+                        || session.suggestionStatus == .ready,
+                    onExclude: session.excludeContext
+                )
             }
 
             SendableTextEditor(
@@ -395,24 +401,48 @@ struct ComposeSessionView: View {
 
 struct FoundationContextChip: View {
     let context: SituationalContext
+    var skillName: String? = nil
+    var includesScreenshot = false
     let onExclude: () -> Void
     @State private var showDetail = false
+
+    private var productName: String? {
+        skillName ?? context.detectedProductName
+    }
+
+    private var sourceLabel: String {
+        let source = includesScreenshot ? "画面＋周辺テキスト" : "周辺テキスト"
+        if let productName {
+            return "参照中：\(productName) · \(source)"
+        }
+        return "参照中：\(source)"
+    }
 
     var body: some View {
         HStack(spacing: 6) {
             Button {
                 showDetail.toggle()
             } label: {
-                Label(context.chipLabel, systemImage: "paperclip")
+                Label(sourceLabel, systemImage: "paperclip")
                     .font(.caption)
                     .lineLimit(1)
             }
             .buttonStyle(.plain)
+            .help("参照している情報を確認")
             .popover(isPresented: $showDetail, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("参照中の周辺コンテクスト").font(.headline)
-                    Text(context.chipLabel).font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("参照している情報").font(.headline)
+                    if let productName {
+                        detailRow("適用スキル", productName)
+                    }
+                    detailRow("画面画像", includesScreenshot ? "自動返信の生成に使用" : "使用していません")
+                    detailRow("周辺テキスト", "アクセシビリティから取得・使用")
+                    detailRow("検出元", context.detectionSource)
+                    detailRow("保存", "このセッションのみ")
                     if let excerpt = context.conversationExcerpt, !excerpt.isEmpty {
+                        Divider()
+                        Text("取得した周辺テキスト")
+                            .font(.caption.weight(.semibold))
                         ScrollView {
                             Text(excerpt)
                                 .font(.caption.monospaced())
@@ -421,7 +451,7 @@ struct FoundationContextChip: View {
                         }
                         .frame(width: 380, height: 220)
                     }
-                    Text("この情報は保存されず、このセッションのレビューにだけ使われます。")
+                    Text("周辺テキストは自動返信、レビュー、受信内容の整理にだけ使われ、保存されません。")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -429,13 +459,26 @@ struct FoundationContextChip: View {
             }
 
             Button(action: onExclude) {
-                Image(systemName: "xmark.circle.fill").font(.caption)
+                Label("周辺テキストを使わない", systemImage: "xmark.circle.fill")
+                    .font(.caption)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help("このセッションでは周辺コンテクストを使いません")
-            .accessibilityLabel("周辺コンテクストを除外")
+            .help("このセッションではアクセシビリティから取得した周辺テキストを使いません")
+            .accessibilityLabel("周辺テキストを使わない")
             Spacer()
+        }
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 82, alignment: .leading)
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
         }
     }
 }
