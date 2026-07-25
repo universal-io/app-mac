@@ -156,6 +156,10 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 - **M0（完了）** 文体・関係性メモリを全層から削除。macOSストア・同期・抽出、Gatewayの
   `/ai/memory/distill`と`/memory/cards`、`ai-routing`の`memory`route、`bs_memory_cards`table、
   ローカル`memory.sqlite`の消去まで。送信ごとの抽出呼び出しが1回分消える。
+- **M0.5（完了）** 共通コアに「呼ばれた理由」を定義。ホットキーで呼ばれた時点でユーザーは
+  助けを求めており、入力欄の手前はユーザー宛の依頼である可能性が高い、を既定の姿勢とする。
+  認識フィールドへ「依頼を実行するのは誰か」を追加し、ユーザーが実行者の依頼を相手への指示として
+  返す失敗を塞ぐ。文脈不足を理由に生成を控えない。この前提は各Skillを書くときも共有する。
 - **M1** Skills基盤（`web/lib/server/skills/`、1ツール1ファイル、registry、階層合成、
   有効Skillの可視化）とSlack / Gmailの移植。各Skillはreading / conventions / affordances /
   attentionと、そのツールで学ぶ価値のあるfactキー語彙を宣言する。
