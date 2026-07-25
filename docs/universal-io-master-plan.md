@@ -168,8 +168,13 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
   attentionと、そのツールで学ぶ価値のあるfactキー語彙を宣言する。用途ごとに渡すセクションを
   変え、suggestはreading + conventions、Visionはreading + affordances + attentionを受け取る。
   適用中のSkill名はsuggest応答に含めてパネルへ表示する。
-- **M2** SkillsをVisionへ供給する。アプリ識別子は`candidate_diagnostics`で既に届いており、
-  API契約とmacOSクライアントの変更は不要。attentionは抑制側を明示する。
+- **M2（完了）** SkillsをVision / Copilotへ供給する。attentionは「列挙禁止・確実な1件だけ」の
+  抑制ルールとして渡し、適用中のSkill名はVisionパネルとCopilotストリップの両方に出す。
+  当初「アプリ識別子は`candidate_diagnostics`で既に届いており契約変更は不要」と書いたが誤りで、
+  同fieldはusageへ渡る運用情報のためクライアントがアプリ名もホストも送っていなかった。
+  Visionにもsuggestと同じ`input.context`（`host`が一次シグナル）を追加し、識別子は
+  プロンプト参照のみで保存しない。ホスト取得は`BrowserHostLookup`へ共通化し、初回の
+  画面説明にも間に合うよう候補収集とは別に解決する。
 - **M3** ファクトストア（`scope`/`key`/`value`のupsert、Skill宣言の語彙のみ受理、
   管理画面で一覧・編集・削除）。全件でも数十行のため差分同期もtombstoneも持たない。
 - **M4** 検出時にその場で確認するUI。専用呼び出しを作らず、suggestの構造化出力へ

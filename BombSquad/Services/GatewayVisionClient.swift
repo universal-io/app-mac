@@ -49,6 +49,10 @@ struct VisionMetadata: Equatable {
 struct VisionResponse: Equatable {
     let captureID: UUID
     let result: VisionResult
+    /// Display name of the skill the gateway applied to this turn, or nil when
+    /// no skill matched the screen. Shown in the panel: a skill never acts
+    /// silently.
+    let skillName: String?
     let metadata: VisionMetadata
 }
 
@@ -72,6 +76,7 @@ struct GatewayVisionClient {
         turns: [VisionTurn],
         candidates: [VisionObservation.Candidate] = [],
         candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
+        identity: VisionObservationCaptureService.TargetIdentity? = nil,
         guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> VisionResponse {
@@ -85,6 +90,13 @@ struct GatewayVisionClient {
         ]
         if let candidateDiagnostics {
             input["candidate_diagnostics"] = candidateDiagnostics.wirePayload
+        }
+        // Identity of the product on screen, so the Gateway can attach that
+        // product's skill. Reference data for the prompt only — the Gateway
+        // never stores it, which is why it travels here and not in the
+        // diagnostics that feed usage.
+        if let identity {
+            input["context"] = identity.wirePayload
         }
         if let guidanceContext {
             input["guidance"] = guidanceContext.wirePayload
@@ -149,6 +161,9 @@ struct GatewayVisionClient {
             throw ProviderError.decoding("The Vision response did not match its contract.")
         }
         let targetCandidateID = resultObject["target_candidate_id"] as? String
+        let skill = resultObject["skill"] as? [String: Any]
+        let skillName = (skill?["name"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard
             !modelVendor.isEmpty,
@@ -172,6 +187,7 @@ struct GatewayVisionClient {
                 uncertainties: uncertainties,
                 targetCandidateID: targetCandidateID
             ),
+            skillName: (skillName?.isEmpty ?? true) ? nil : skillName,
             metadata: VisionMetadata(
                 modelVendor: modelVendor,
                 modelID: modelID,

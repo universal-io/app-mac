@@ -92,6 +92,12 @@ struct VisionSessionView: View {
             }
 #endif
             Spacer()
+            if let skillName = session.activeSkillName {
+                ActiveSkillLabel(
+                    skillName: skillName,
+                    help: "\(skillName) の知識を参照して画面を読みました"
+                )
+            }
         }
         .background(WindowDragHandle())
     }
@@ -256,6 +262,12 @@ private struct CopilotStripView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
+                if let skillName = session.activeSkillName {
+                    ActiveSkillLabel(
+                        skillName: skillName,
+                        help: "\(skillName) の知識を参照して案内しています"
+                    )
+                }
                 Button {
                     session.stopCopilot()
                 } label: {

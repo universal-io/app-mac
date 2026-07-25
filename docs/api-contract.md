@@ -111,6 +111,10 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 - `input.turns`: 最大20件
 - `input.candidates`: 同一captureから取得したAX/DOM候補、最大500件
 - `input.guidance`: Copilot進捗時の目的と直前案内。`question`とは排他
+- `input.context`: 任意（`app_name` / `bundle_id` / `window_title` / `host`、各1,024文字まで）。
+  Skill判定と画面の出所提示のためだけの参照データで保存しない。判定規則はsuggestと同じで、
+  `host`が一次シグナル、ネイティブアプリは`bundle_id`。`candidate_diagnostics`には
+  アプリ名・ウインドウタイトルを入れない（あちらはusageへ渡る運用情報）
 - 実装: `web/app/api/ai/vision/route.ts`
 - クライアント: `GatewayVisionClient`
 
@@ -125,7 +129,8 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
     "message": "...",
     "observations": [],
     "uncertainties": [],
-    "target_candidate_id": null
+    "target_candidate_id": null,
+    "skill": { "id": "gmail", "name": "Gmail" }
   },
   "meta": {
     "model_vendor": "openai",
@@ -134,6 +139,7 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
     "api": "responses",
     "image_detail": "original",
     "reasoning_effort": "none",
+    "skill": "gmail",
     "fallback_used": false,
     "latency_ms": 0,
     "notices": []
@@ -143,6 +149,11 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 
 クライアントはcapture ID、route、画像detail、reasoning設定を検証する。モデルIDと
 `fallback_used` はGatewayのSSOTを受け入れ、fallback時はnoticeを表示する。
+
+`result.skill` はsuggestと同じ意味で、適用したSkillが無ければ`null`。macOSはVisionパネルと
+Copilotストリップの両方に名前を表示する。Visionへ渡すセクションはreading / affordances /
+attentionで、attentionは列挙禁止の抑制ルールとして渡す（確実で、いま聞かれたことより
+緊急な場合に1件だけ）。
 
 ## POST /ai/suggest
 

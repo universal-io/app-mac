@@ -24,6 +24,7 @@ const MAX_CAPTURE_ID_CHARS = 128;
 const MAX_TURNS = 20;
 const MAX_TURN_CHARS = 4_000;
 const MAX_CANDIDATES = 500;
+const MAX_CONTEXT_FIELD_CHARS = 1_024;
 
 type VisionRequestBody = {
   request_id?: string;
@@ -34,6 +35,15 @@ type VisionRequestBody = {
     media_type?: string;
     question?: string;
     turns?: VisionTurn[];
+    /** Identity of the app behind the capture, used to pick a skill. Never
+     * persisted: `candidate_diagnostics` stays identity-free because it is
+     * what feeds usage. */
+    context?: {
+      app_name?: string;
+      bundle_id?: string;
+      host?: string;
+      window_title?: string;
+    };
     candidate_diagnostics?: {
       elapsed_ms?: number;
       visited_nodes?: number;
@@ -94,6 +104,15 @@ export async function POST(request: Request): Promise<Response> {
       states: candidate.states ?? [],
     })) satisfies VisionCandidate[];
     const language = body.preferences!.output_language as "japanese" | "english";
+    const rawContext = body.input!.context;
+    const context = rawContext
+      ? {
+          appName: rawContext.app_name,
+          bundleId: rawContext.bundle_id,
+          windowTitle: rawContext.window_title,
+          host: rawContext.host,
+        }
+      : undefined;
     const guidance = body.input!.guidance
       ? {
           goal: body.input!.guidance.goal!,
@@ -115,6 +134,7 @@ export async function POST(request: Request): Promise<Response> {
         body.input!.candidate_diagnostics,
       ),
       turn_count: turns.length,
+      has_context: Boolean(context),
       has_question: Boolean(question),
       is_guidance_progress: Boolean(guidance),
       api: "responses",
@@ -130,6 +150,7 @@ export async function POST(request: Request): Promise<Response> {
         turns,
         candidates,
         guidance,
+        context,
         language,
       });
       const latencyMs = Date.now() - started;
@@ -159,9 +180,11 @@ export async function POST(request: Request): Promise<Response> {
           observations: output.result.observations,
           uncertainties: output.result.uncertainties,
           target_candidate_id: output.result.targetCandidateId,
+          skill: output.skill,
         },
         meta: {
           output_language: language,
+          skill: output.skill?.id ?? null,
           model_vendor: output.modelVendor,
           model_id: output.modelId,
           route: output.route,
@@ -305,6 +328,24 @@ function validateBody(
     || new Set(candidates.map((candidate) => candidate.id)).size !== candidates.length
   ) {
     return errorResponse(400, "BAD_REQUEST", "input.candidates is invalid.", requestId);
+  }
+  const context = body.input?.context;
+  if (context !== undefined) {
+    if (typeof context !== "object" || context === null || Array.isArray(context)) {
+      return errorResponse(400, "BAD_REQUEST", "input.context is invalid.", requestId);
+    }
+    const fields = [
+      context.app_name,
+      context.bundle_id,
+      context.host,
+      context.window_title,
+    ];
+    if (fields.some((field) =>
+      field !== undefined
+      && (typeof field !== "string" || field.length > MAX_CONTEXT_FIELD_CHARS)
+    )) {
+      return errorResponse(400, "BAD_REQUEST", "input.context fields are invalid.", requestId);
+    }
   }
   const diagnostics = body.input?.candidate_diagnostics;
   const allowedTruncationReasons = new Set([

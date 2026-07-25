@@ -20,6 +20,23 @@ struct PanelSendButton: View {
     }
 }
 
+/// Names the skill that shaped the answer on screen. A skill is injected
+/// knowledge about the product the user is looking at, and it is named wherever
+/// it acts: knowledge the user cannot see is knowledge they cannot correct or
+/// distrust. Every panel that consumes skills shows the same chip.
+struct ActiveSkillLabel: View {
+    let skillName: String
+    let help: String
+
+    var body: some View {
+        Label(skillName, systemImage: "puzzlepiece.extension")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help(help)
+            .accessibilityLabel("適用中のスキル: \(skillName)")
+    }
+}
+
 /// Selectable error text shared by all transient panel modes.
 struct ErrorBanner: View {
     let message: String

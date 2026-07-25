@@ -31,6 +31,9 @@ final class VisionSession: ObservableObject {
     @Published private(set) var candidates: [VisionObservation.Candidate] = []
     @Published private(set) var candidatesReady = false
     @Published private(set) var candidateDiagnostics: VisionObservationCaptureService.Diagnostics?
+    /// Display name of the skill the gateway applied to the latest turn. Always
+    /// shown: knowledge the user cannot see is knowledge they cannot correct.
+    @Published private(set) var activeSkillName: String?
     @Published private(set) var selectedCandidate: VisionObservation.Candidate?
     @Published private(set) var screenshotHighlight: CGRect?
     @Published private(set) var isCopilotActive = false
@@ -53,6 +56,12 @@ final class VisionSession: ObservableObject {
     private let outputLanguage: OutputLanguage
     private let preferredTargetPID: pid_t?
     private let candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>
+    /// Resolved separately from the candidate capture so the very first turn
+    /// already carries the product identity; the candidate collection can take
+    /// seconds on a cold browser tree and the opening observation does not wait
+    /// for it.
+    private var identityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>
+    private var targetIdentity: VisionObservationCaptureService.TargetIdentity?
     private let onRequestPanelClose: () -> Void
     private let onRequestModeTransition: (AppMode, String) -> Bool
     private var requestTask: Task<Void, Never>?
@@ -83,6 +92,9 @@ final class VisionSession: ObservableObject {
                 )
             )
         }
+        self.identityTask = VisionObservationCaptureService.identityTask(
+            preferredPID: preferredTargetPID
+        )
         self.client = client
         self.outputLanguage = AppSettings.outputLanguage()
         self.onRequestModeTransition = onRequestModeTransition
@@ -220,6 +232,33 @@ final class VisionSession: ObservableObject {
         turns.map { VisionTurn(role: $0.role, text: $0.text) }
     }
 
+    /// A resolved identity is reused, except when it came back without a host.
+    /// A browser that had not yet built its web AX tree looks exactly like a
+    /// native app, so caching that answer would hide a web product for the rest
+    /// of the session. The concurrent candidate passes warm that tree within a
+    /// second, so retrying on the next turn is what recovers it.
+    private func resolvedIdentity() async -> VisionObservationCaptureService.TargetIdentity? {
+        if let targetIdentity, targetIdentity.host != nil { return targetIdentity }
+        if targetIdentity != nil {
+            identityTask = VisionObservationCaptureService.identityTask(
+                preferredPID: preferredTargetPID
+            )
+        }
+        let resolved = await identityTask.value
+        targetIdentity = resolved
+        return resolved
+    }
+
+    /// Re-resolve before a copilot progress turn: guidance routinely walks the
+    /// user from one product into another, and the skill has to follow them.
+    private func refreshIdentity() async -> VisionObservationCaptureService.TargetIdentity? {
+        identityTask = VisionObservationCaptureService.identityTask(
+            preferredPID: preferredTargetPID
+        )
+        targetIdentity = nil
+        return await resolvedIdentity()
+    }
+
     private func run(question: String?, priorTurns: [VisionTurn]) {
         requestTask?.cancel()
         OperationalNoticeCenter.shared.beginOperation()
@@ -260,6 +299,7 @@ final class VisionSession: ObservableObject {
                     turns: priorTurns,
                     candidates: fixedCandidates,
                     candidateDiagnostics: fixedDiagnostics,
+                    identity: await self.resolvedIdentity(),
                     language: self.outputLanguage
                 )
                 try Task.checkCancellation()
@@ -365,6 +405,7 @@ final class VisionSession: ObservableObject {
             preferredPID: preferredTargetPID,
             attachment: newAttachment
         )
+        let identity = await refreshIdentity()
         let snapshot = await snapshotTask.value
         guard !Task.isCancelled, isCopilotActive else {
             try? FileManager.default.removeItem(at: newAttachment.url)
@@ -380,6 +421,7 @@ final class VisionSession: ObservableObject {
                 turns: [],
                 candidates: snapshot.axCandidates,
                 candidateDiagnostics: snapshot.diagnostics,
+                identity: identity,
                 guidanceContext: ScreenGuidanceContext(
                     goal: goal,
                     previousInstruction: previousInstruction
@@ -460,6 +502,7 @@ final class VisionSession: ObservableObject {
         candidates fixedCandidates: [VisionObservation.Candidate]
     ) throws {
         metadata = response.metadata
+        activeSkillName = response.skillName
         if let targetID = response.result.targetCandidateID {
             guard let candidate = fixedCandidates.first(where: { $0.id == targetID }),
                   let rect = candidate.rect else {

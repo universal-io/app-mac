@@ -44,6 +44,32 @@ enum VisionObservationCaptureService {
         let diagnostics: Diagnostics
     }
 
+    /// Which product the user is looking at. Sent with the Vision request so the
+    /// Gateway can attach that product's skill; nothing here is persisted, which
+    /// is why it is separate from `Diagnostics` (the identity-free struct that
+    /// feeds usage). The host is the deciding signal for web products — see
+    /// `BrowserHostLookup`.
+    struct TargetIdentity: Equatable {
+        let appName: String
+        let bundleID: String?
+        let windowTitle: String?
+        let host: String?
+
+        var wirePayload: [String: Any] {
+            var payload: [String: Any] = ["app_name": String(appName.prefix(256))]
+            if let bundleID, !bundleID.isEmpty {
+                payload["bundle_id"] = String(bundleID.prefix(256))
+            }
+            if let windowTitle, !windowTitle.isEmpty {
+                payload["window_title"] = String(windowTitle.prefix(1_024))
+            }
+            if let host, !host.isEmpty {
+                payload["host"] = String(host.prefix(256))
+            }
+            return payload
+        }
+    }
+
     private struct CollectionResult {
         let candidates: [VisionObservation.Candidate]
         let visitedNodes: Int
@@ -81,24 +107,7 @@ enum VisionObservationCaptureService {
         preferredPID: pid_t?,
         attachment: ScreenshotAttachment
     ) -> Task<Snapshot, Never> {
-        let ownPID = ProcessInfo.processInfo.processIdentifier
-        // Resolution order, most to least reliable for "the app the user is
-        // looking at": the live frontmost app; the frontmost on-screen real
-        // window's owner (catches the moment our own panel/overlay holds
-        // focus — the previous cause of intermittent no_target_app); and
-        // finally the summon-time PID, which is two gestures stale.
-        let frontmost = NSWorkspace.shared.frontmostApplication
-        let app: NSRunningApplication?
-        if let frontmost, frontmost.processIdentifier != ownPID {
-            app = frontmost
-        } else if let onScreen = frontmostRegularApp(excluding: ownPID) {
-            app = onScreen
-        } else if let preferredPID, preferredPID != ownPID {
-            app = NSRunningApplication(processIdentifier: preferredPID)
-        } else {
-            app = nil
-        }
-        guard let app else {
+        guard let app = resolveTargetApp(preferredPID: preferredPID) else {
             return Task {
                 Snapshot(
                     environment: nil,
@@ -216,6 +225,72 @@ enum VisionObservationCaptureService {
                 )
             )
         }
+    }
+
+    /// Resolves which product is on screen, without waiting for the candidate
+    /// collection: the first Vision turn fires before that finishes, and a skill
+    /// that only arrives from the second turn onward is a skill that missed the
+    /// screen it was written for. Bounded to a window title read plus one host
+    /// lookup, so it costs a fraction of a candidate pass.
+    ///
+    /// Returns nil when the user turned screen-context capture off, when
+    /// Accessibility is not granted, or when no target app could be resolved.
+    /// Vision then runs its fully general path, which is the point of skills
+    /// being data: nothing here can break a screen that has no skill.
+    static func identityTask(preferredPID: pid_t?) -> Task<TargetIdentity?, Never> {
+        guard AppSettings.isContextCaptureEnabled(), AXIsProcessTrusted(),
+              let app = resolveTargetApp(preferredPID: preferredPID) else {
+            return Task { nil }
+        }
+        let pid = app.processIdentifier
+        let appName = app.localizedName ?? app.bundleIdentifier ?? "Unknown"
+        let bundleID = app.bundleIdentifier
+
+        return Task.detached(priority: .userInitiated) {
+            let appElement = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(appElement, Budget.axMessagingTimeout)
+            // Same lazily built trees the candidate collection deals with:
+            // Electron needs AXManualAccessibility, Chromium AXEnhancedUserInterface.
+            // Asking here starts the tree materializing at the earliest moment
+            // instead of waiting for the first candidate pass.
+            AXUIElementSetAttributeValue(
+                appElement,
+                "AXManualAccessibility" as CFString,
+                kCFBooleanTrue
+            )
+            AXUIElementSetAttributeValue(
+                appElement,
+                "AXEnhancedUserInterface" as CFString,
+                kCFBooleanTrue
+            )
+            let window = copyElement(appElement, kAXFocusedWindowAttribute)
+            return TargetIdentity(
+                appName: appName,
+                bundleID: bundleID,
+                windowTitle: window.flatMap { copyString($0, kAXTitleAttribute) },
+                host: window.flatMap { BrowserHostLookup.host(in: $0) }
+            )
+        }
+    }
+
+    /// Resolution order, most to least reliable for "the app the user is
+    /// looking at": the live frontmost app; the frontmost on-screen real
+    /// window's owner (catches the moment our own panel/overlay holds focus —
+    /// the previous cause of intermittent no_target_app); and finally the
+    /// summon-time PID, which is two gestures stale.
+    private static func resolveTargetApp(preferredPID: pid_t?) -> NSRunningApplication? {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.processIdentifier != ownPID {
+            return frontmost
+        }
+        if let onScreen = frontmostRegularApp(excluding: ownPID) {
+            return onScreen
+        }
+        if let preferredPID, preferredPID != ownPID {
+            return NSRunningApplication(processIdentifier: preferredPID)
+        }
+        return nil
     }
 
     /// The owner of the frontmost real on-screen window that is not us.
