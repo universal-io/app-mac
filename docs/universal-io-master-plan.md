@@ -151,7 +151,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 
 事業上の核心は「あらゆるツールを使いこなせるアプリへ育てること」であり、ツール個別の適合が
 エンタープライズ導入とFDEモデルの商材になる。精度レイヤーの正式名称は **Skills**（データであり
-制御フローに触れない／ベース < ツール < 業務 < 個社の階層合成／有効なSkillは常に可視）。
+制御フローに触れない／ベース < ツール < 業務 < 個社の階層合成／有効なSkillは常に可視）。設計根拠は[v3-tool-fit-plan.md](v3-tool-fit-plan.md)。
 
 - **M0（完了）** 文体・関係性メモリを全層から削除。macOSストア・同期・抽出、Gatewayの
   `/ai/memory/distill`と`/memory/cards`、`ai-routing`の`memory`route、`bs_memory_cards`table、

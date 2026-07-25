@@ -199,6 +199,6 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 
 v3で文体・関係性メモリを廃止したため、`/ai/memory/distill` と `/memory/cards` は存在しない。
 `input.memory`を送るクライアントも無い。ユーザーに関する事実の記憶はv3で別機構として設計する
-（正本 [compose-vision-suggest-plan.md](compose-vision-suggest-plan.md)）。
+（正本 [v3-tool-fit-plan.md](v3-tool-fit-plan.md)）。
 
 各routeの入力検証と認可は `web/app/api` の現行実装を正とする。

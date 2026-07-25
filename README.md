@@ -13,6 +13,7 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 | Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
 | Transform（選択テキストの解説） | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
+| 先回り文案 | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
 
 共通規則:
@@ -30,7 +31,7 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 
 v3で文体・関係性メモリ（persona / relationship カード）を廃止しました。実利用で注入に値する
 学習が得られず、送信のたびに1回の抽出呼び出しを費やしていたためです。ユーザーに関する事実の
-記憶はv3で別機構として設計します（[compose-vision-suggest-plan.md](docs/compose-vision-suggest-plan.md)）。
+記憶はv3で別機構として設計します（[v3-tool-fit-plan.md](docs/v3-tool-fit-plan.md)）。
 
 ## 現行機能
 
@@ -57,7 +58,8 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
 検出しても1行のままで、使い続けても膨らまない。検出はSkillが効いている画面から行い、保存前に
 必ずユーザーへ確認する（1セッション1問、拒否したキーは再質問しない）。
 
-進捗と受け入れ条件は[マスタープラン R8](docs/universal-io-master-plan.md)を正本とする。
+設計根拠は[v3-tool-fit-plan.md](docs/v3-tool-fit-plan.md)、進捗と受け入れ条件は
+[マスタープラン R8](docs/universal-io-master-plan.md)を正本とする。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -122,6 +124,7 @@ macOS アプリは AI プロバイダーを直接呼びません。認証済み�
 | 音声入力 | `GatewayTranscriber` | `POST /api/ai/transcribe` |
 | 受信変換 | `TransformSession` / `GatewayTransformClient` | `POST /api/ai/transform` |
 | Vision / Copilot | `VisionSession` / `GatewayVisionClient` | `POST /api/ai/vision` |
+| 先回り文案 | `ComposeSession` / `GatewaySuggestClient` | `POST /api/ai/suggest` |
 
 ローカルGateway、BYOK、旧Navigator endpoint、shadow、runtime feature flag、macOS側の
 代替経路は存在しません。モデルfallbackは本番Gateway内の共通ルーターだけが行います。
@@ -202,6 +205,19 @@ npm run build
 
 通常のCLI検証では署名を無効にします。署名付き実行はマイク・画面収録・Accessibility・
 Keychain の許可状態に影響するため、明示的な実機確認時だけ行います。
+
+### Gatewayのデプロイ
+
+**`main` へのコミット＝本番Gatewayデプロイ**です（Vercelのgit連携。`vercel` CLIもCI workflowも
+使いません）。`web/` を触った変更は `main` に載るまで本番へ届かないので、実機検証の前に必ず
+`main` へマージします。過去に「クライアントは正しいのに文案が出ない」障害の唯一の原因が、
+routeが`main`に無かったことでした。macOSクライアントだけの変更はGatewayに影響しません。
+
+`main` 以外のブランチをpushするとVercelのPreviewが生成されますが、Deployment Protection配下で
+外部からは到達できず、固定エイリアスも持ちません。アプリは常に `api.universal-io.com`
+（Production＝`main`）だけを見るため、実検証にはPreviewを使えません。
+
+配布中のDMGはGatewayデプロイとは独立で、`tools/release.sh` を回さない限り変わりません。
 
 ## リリース運用
 

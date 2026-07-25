@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-最終更新: 2026-07-23 ／ ステータス: 現行
+最終更新: 2026-07-25 ／ ステータス: 現行
 
 このファイルがドキュメントの唯一の入口です。実装の正は現行コード、製品計画の正は
 `universal-io-master-plan.md`、APIの正は `api-contract.md` です。
@@ -17,7 +17,7 @@
 | [macos-ux-polish-checklist.md](macos-ux-polish-checklist.md) | リリース前 UX 磨き込みチェックリスト（TCC/ウィンドウ/署名） |
 | [supabase-setup.md](supabase-setup.md) | 認証・データ基盤の設定 |
 | [admin-dashboard-plan.md](admin-dashboard-plan.md) | 本番Admin Console |
-| [compose-vision-suggest-plan.md](compose-vision-suggest-plan.md) | 【実験ブランチ】先回り文案（Compose Vision Suggest）開発計画 |
+| [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
 
 ## 参照資料
 
