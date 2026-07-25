@@ -19,6 +19,16 @@ enum BrowserHostLookup {
     static let defaultNodeBudget = 200
     static let defaultDeadline: TimeInterval = 1.0
 
+    /// One lookup attempt. The two extra fields exist so a caller can tell the
+    /// two failures apart: a native window that will never have a host, and a
+    /// browser whose web tree is still being built. `visitedNodes` growing
+    /// between attempts is what "still being built" looks like.
+    struct Probe {
+        let host: String?
+        let sawWebArea: Bool
+        let visitedNodes: Int
+    }
+
     /// Safari publishes the document on the window itself; Chromium browsers
     /// publish it on the web area inside, so try the window first.
     static func host(
@@ -26,23 +36,33 @@ enum BrowserHostLookup {
         nodeBudget: Int = defaultNodeBudget,
         deadline: TimeInterval = defaultDeadline
     ) -> String? {
+        probe(in: window, nodeBudget: nodeBudget, deadline: deadline).host
+    }
+
+    static func probe(
+        in window: AXUIElement,
+        nodeBudget: Int = defaultNodeBudget,
+        deadline: TimeInterval = defaultDeadline
+    ) -> Probe {
         if let host = copyString(window, "AXDocument").flatMap(hostComponent) {
-            return host
+            return Probe(host: host, sawWebArea: true, visitedNodes: 1)
         }
 
         let expiry = Date().addingTimeInterval(deadline)
         var visited = 0
+        var sawWebArea = false
         var stack: [AXUIElement] = [window]
         while let element = stack.popLast() {
             if visited >= nodeBudget || Date() >= expiry { break }
             visited += 1
 
             if copyString(element, kAXRoleAttribute) == "AXWebArea" {
+                sawWebArea = true
                 if let url = copyURL(element, "AXURL"), let host = hostComponent(url.absoluteString) {
-                    return host
+                    return Probe(host: host, sawWebArea: true, visitedNodes: visited)
                 }
                 if let host = copyString(element, "AXDocument").flatMap(hostComponent) {
-                    return host
+                    return Probe(host: host, sawWebArea: true, visitedNodes: visited)
                 }
             }
 
@@ -50,7 +70,7 @@ enum BrowserHostLookup {
                 stack.append(contentsOf: children)
             }
         }
-        return nil
+        return Probe(host: nil, sawWebArea: sawWebArea, visitedNodes: visited)
     }
 
     /// Host alone, lowercased and without a leading "www.". A non-web scheme

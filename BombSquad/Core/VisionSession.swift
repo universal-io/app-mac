@@ -74,6 +74,7 @@ final class VisionSession: ObservableObject {
         attachment: ScreenshotAttachment,
         preferredTargetPID: pid_t? = nil,
         candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>? = nil,
+        identityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>? = nil,
         client: GatewayVisionClient? = GatewayVisionClient.make(),
         onRequestModeTransition: @escaping (AppMode, String) -> Bool = { _, _ in true },
         onRequestPanelClose: @escaping () -> Void = {}
@@ -92,7 +93,10 @@ final class VisionSession: ObservableObject {
                 )
             )
         }
-        self.identityTask = VisionObservationCaptureService.identityTask(
+        // Normally handed in from the summon, where it started in parallel with
+        // the screenshot. Resolving it here instead means starting after the
+        // capture finished, which is exactly the wait we are avoiding.
+        self.identityTask = identityTask ?? VisionObservationCaptureService.identityTask(
             preferredPID: preferredTargetPID
         )
         self.client = client
@@ -249,14 +253,14 @@ final class VisionSession: ObservableObject {
         return resolved
     }
 
-    /// Re-resolve before a copilot progress turn: guidance routinely walks the
-    /// user from one product into another, and the skill has to follow them.
-    private func refreshIdentity() async -> VisionObservationCaptureService.TargetIdentity? {
+    /// Re-resolve for a copilot progress turn: guidance routinely walks the user
+    /// from one product into another, and the skill has to follow them. Started
+    /// rather than awaited, so it runs alongside the progress capture.
+    private func beginIdentityRefresh() {
         identityTask = VisionObservationCaptureService.identityTask(
             preferredPID: preferredTargetPID
         )
         targetIdentity = nil
-        return await resolvedIdentity()
     }
 
     private func run(question: String?, priorTurns: [VisionTurn]) {
@@ -405,7 +409,7 @@ final class VisionSession: ObservableObject {
             preferredPID: preferredTargetPID,
             attachment: newAttachment
         )
-        let identity = await refreshIdentity()
+        beginIdentityRefresh()
         let snapshot = await snapshotTask.value
         guard !Task.isCancelled, isCopilotActive else {
             try? FileManager.default.removeItem(at: newAttachment.url)
@@ -421,7 +425,7 @@ final class VisionSession: ObservableObject {
                 turns: [],
                 candidates: snapshot.axCandidates,
                 candidateDiagnostics: snapshot.diagnostics,
-                identity: identity,
+                identity: await resolvedIdentity(),
                 guidanceContext: ScreenGuidanceContext(
                     goal: goal,
                     previousInstruction: previousInstruction

@@ -70,6 +70,11 @@ final class SessionCoordinator {
     /// it on teardown) or discarded when compose exits without using it.
     private var composePreCapture: ScreenshotAttachment?
     private var composePreCaptureTask: Task<Void, Never>?
+    /// Which product the summon happened on, resolved from the moment the user
+    /// asks for Vision so the first turn already carries its skill. It runs
+    /// while the screenshot is being taken, so the wait is absorbed rather than
+    /// added. Handed to the VisionSession, which owns it from then on.
+    private var visionIdentityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>?
     private var suggestionTask: Task<Void, Never>?
     private var composeGeneration = 0
     /// Whether an editable field was focused in the source app at the moment
@@ -215,6 +220,12 @@ final class SessionCoordinator {
             return
         }
         summonTargetApp = NSWorkspace.shared.frontmostApplication
+        // Before the capture, not after it: the screenshot is the longest thing
+        // in this path, and resolving the product underneath it in parallel is
+        // what lets the opening observation arrive with its skill attached.
+        visionIdentityTask = VisionObservationCaptureService.identityTask(
+            preferredPID: summonTargetApp?.processIdentifier
+        )
         composeSession?.tearDown()
         composeSession = nil
         transformSession?.tearDown()
@@ -339,6 +350,7 @@ final class SessionCoordinator {
             : summonTargetApp
         stopActiveWork()
         discardComposePreCapture()
+        visionIdentityTask = nil
         stateMachine.transition(to: .idle, reason: reason)
         screenshotSelection.cancel()
         composeSession?.tearDown()
@@ -762,6 +774,8 @@ final class SessionCoordinator {
         // Any entry into a VisionSession retires the pending compose suggestion.
         suggestionTask?.cancel()
         suggestionTask = nil
+        let pendingIdentity = visionIdentityTask
+        visionIdentityTask = nil
         guard case .capturing(let returnTo) = stateMachine.mode else { return }
 
         switch completion {
@@ -770,10 +784,15 @@ final class SessionCoordinator {
                 preferredPID: summonTargetApp?.processIdentifier,
                 attachment: attachment
             )
+            let identityTask = resolveVisionIdentityTask(
+                from: composeSession,
+                pending: pendingIdentity
+            )
             let session = VisionSession(
                 attachment: attachment,
                 preferredTargetPID: summonTargetApp?.processIdentifier,
                 candidateCaptureTask: candidateCaptureTask,
+                identityTask: identityTask,
                 onRequestModeTransition: { [weak self] target, reason in
                     self?.transitionVision(to: target, reason: reason) ?? false
                 },
@@ -795,6 +814,30 @@ final class SessionCoordinator {
             composeSession?.errorMessage = message
             _ = stateMachine.transition(to: returnTo, reason: "captureFailed")
         }
+    }
+
+    /// Where the product identity for a Vision session comes from, best source
+    /// first: the compose session, which resolved it at its own summon and is
+    /// therefore both free and warm; a task started when Vision was summoned
+    /// from idle; or, as a last resort, a fresh lookup.
+    private func resolveVisionIdentityTask(
+        from composeSession: ComposeSession?,
+        pending: Task<VisionObservationCaptureService.TargetIdentity?, Never>?
+    ) -> Task<VisionObservationCaptureService.TargetIdentity?, Never> {
+        if let composeSession {
+            let fallbackPID = summonTargetApp?.processIdentifier
+            return Task {
+                if let context = await composeSession.awaitSituationalContext() {
+                    return VisionObservationCaptureService.TargetIdentity(context: context)
+                }
+                return await VisionObservationCaptureService
+                    .identityTask(preferredPID: fallbackPID)
+                    .value
+            }
+        }
+        return pending ?? VisionObservationCaptureService.identityTask(
+            preferredPID: summonTargetApp?.processIdentifier
+        )
     }
 
     private func transitionVision(to target: AppMode, reason: String) -> Bool {

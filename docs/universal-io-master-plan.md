@@ -173,8 +173,10 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
   当初「アプリ識別子は`candidate_diagnostics`で既に届いており契約変更は不要」と書いたが誤りで、
   同fieldはusageへ渡る運用情報のためクライアントがアプリ名もホストも送っていなかった。
   Visionにもsuggestと同じ`input.context`（`host`が一次シグナル）を追加し、識別子は
-  プロンプト参照のみで保存しない。ホスト取得は`BrowserHostLookup`へ共通化し、初回の
-  画面説明にも間に合うよう候補収集とは別に解決する。
+  プロンプト参照のみで保存しない。ホスト取得は`BrowserHostLookup`へ共通化する。
+  **初回ターンで必ずSkillが効くこと**を受け入れ条件とし、製品判定はVision要求と同時（撮影と並行）に
+  開始する。Compose経由ならsummon時のSituationalContextをそのまま使う。Chromiumはweb AXツリーを
+  遅延構築するため、ツリーが成長している間だけ追加パスを回し、ネイティブ窓と確定したら即終了する。
 - **M3** ファクトストア（`scope`/`key`/`value`のupsert、Skill宣言の語彙のみ受理、
   管理画面で一覧・編集・削除）。全件でも数十行のため差分同期もtombstoneも持たない。
 - **M4** 検出時にその場で確認するUI。専用呼び出しを作らず、suggestの構造化出力へ

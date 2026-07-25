@@ -55,6 +55,23 @@ enum VisionObservationCaptureService {
         let windowTitle: String?
         let host: String?
 
+        /// The compose path already resolved all of this at summon. Reusing it
+        /// costs nothing and is warm, so Vision entered from compose never pays
+        /// for a second lookup.
+        init(context: SituationalContext) {
+            self.appName = context.appName
+            self.bundleID = context.bundleID
+            self.windowTitle = context.windowTitle
+            self.host = context.host
+        }
+
+        init(appName: String, bundleID: String?, windowTitle: String?, host: String?) {
+            self.appName = appName
+            self.bundleID = bundleID
+            self.windowTitle = windowTitle
+            self.host = host
+        }
+
         var wirePayload: [String: Any] {
             var payload: [String: Any] = ["app_name": String(appName.prefix(256))]
             if let bundleID, !bundleID.isEmpty {
@@ -92,6 +109,17 @@ enum VisionObservationCaptureService {
         static let passWaitNanoseconds: UInt64 = 500_000_000
         /// A later pass replaces the previous one when the tree is still
         /// materializing; 25% node growth distinguishes that from jitter.
+        static let growthFactor = 1.25
+    }
+
+    /// Identity resolution runs alongside the screenshot, so its budget is set
+    /// by how long a cold Chromium takes to publish its web area (~1s of
+    /// sustained querying), not by what a user would tolerate waiting for.
+    private enum IdentityBudget {
+        static let maxPasses = 6
+        static let totalDeadline: TimeInterval = 2.0
+        static let passWaitNanoseconds: UInt64 = 250_000_000
+        /// Node growth that distinguishes a tree still materializing from jitter.
         static let growthFactor = 1.25
     }
 
@@ -227,11 +255,17 @@ enum VisionObservationCaptureService {
         }
     }
 
-    /// Resolves which product is on screen, without waiting for the candidate
-    /// collection: the first Vision turn fires before that finishes, and a skill
-    /// that only arrives from the second turn onward is a skill that missed the
-    /// screen it was written for. Bounded to a window title read plus one host
-    /// lookup, so it costs a fraction of a candidate pass.
+    /// Resolves which product is on screen. Start this at summon, in parallel
+    /// with the screenshot: the first Vision turn is the one the user judges the
+    /// app on, and a skill that only arrives on the second turn is a skill that
+    /// missed the screen it was written for. Run early it is free, because the
+    /// capture it overlaps with takes longer than the lookup.
+    ///
+    /// Chromium builds its web AX tree only once an AX client asks and keeps
+    /// asking, so a single lookup on a cold browser sees a window with no web
+    /// area — indistinguishable from a native app. Hence the passes: keep
+    /// asking while the tree is visibly still growing, and stop the moment the
+    /// host appears or the tree proves to be a native one.
     ///
     /// Returns nil when the user turned screen-context capture off, when
     /// Accessibility is not granted, or when no target app could be resolved.
@@ -263,12 +297,35 @@ enum VisionObservationCaptureService {
                 "AXEnhancedUserInterface" as CFString,
                 kCFBooleanTrue
             )
-            let window = copyElement(appElement, kAXFocusedWindowAttribute)
+            var window = copyElement(appElement, kAXFocusedWindowAttribute)
+            var host: String?
+            var previousNodes = 0
+            var pass = 0
+            let expiry = Date().addingTimeInterval(IdentityBudget.totalDeadline)
+            while pass < IdentityBudget.maxPasses {
+                pass += 1
+                guard let target = window else { break }
+                let probe = BrowserHostLookup.probe(in: target)
+                if let found = probe.host {
+                    host = found
+                    break
+                }
+                // A window with no web area and a tree that stopped growing is
+                // a native window: nothing will appear by asking again.
+                let stillGrowing = Double(probe.visitedNodes)
+                    > Double(previousNodes) * IdentityBudget.growthFactor
+                previousNodes = probe.visitedNodes
+                guard probe.sawWebArea || stillGrowing,
+                      pass < IdentityBudget.maxPasses,
+                      Date() < expiry else { break }
+                try? await Task.sleep(nanoseconds: IdentityBudget.passWaitNanoseconds)
+                window = copyElement(appElement, kAXFocusedWindowAttribute) ?? window
+            }
             return TargetIdentity(
                 appName: appName,
                 bundleID: bundleID,
                 windowTitle: window.flatMap { copyString($0, kAXTitleAttribute) },
-                host: window.flatMap { BrowserHostLookup.host(in: $0) }
+                host: host
             )
         }
     }
