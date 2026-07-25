@@ -71,9 +71,21 @@ Skillの利用者は2種類あり、必要なセクションが違う。全部�
 
 ### 検出について
 
-大半のB2B SaaSはブラウザ内で動くため、bundle ID はどれも Chrome になる。
-一次経路はウィンドウタイトル判定とする。Vision の初回観察は既に毎回ツール名を特定できて
-いるので、モデル判定を二次経路として後から足す。
+大半のB2B SaaSはブラウザ内で動くため、bundle ID はどれもブラウザのものになる。
+**一次シグナルはページのホスト名**とし、Accessibility から取得する（Safariはウィンドウの
+`AXDocument`、Chromium系は`AXWebArea`の`AXURL`）。パスとクエリは取得しない — 製品の判定に
+必要なのはホストだけで、残りはユーザーの中身だからである。
+
+ウィンドウタイトル判定を一次にしてはいけない。M1のGmailがこれで外れた: Workspace の Gmail は
+タブタイトルが「件名 - アドレス - 組織名 Mail」で、**製品名をどこにも含まない**。タイトル一致は
+個人の @gmail.com アカウントだけを拾い、つまり顧客以外の全員を拾う。ホストなら
+`mail.google.com` で一意に決まる。
+
+この一手で SaaS カテゴリ全体が同じ形で載る: GA4 は `analytics.google.com`、Salesforce は
+`*.lightning.force.com`、freee は `*.freee.co.jp`、SmartHR は `*.smarthr.jp`。
+
+Vision の初回観察は既に毎回ツール名を特定できているので、ホストが取れない場合の
+モデル判定を二次経路として後から足す。
 
 ## 4. ユーザーファクト
 

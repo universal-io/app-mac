@@ -92,6 +92,8 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
   セッションにだけ一度移行する。
 - SupabaseのログインセッションはUniversal I/O専用のmacOS Keychain領域へ保存する。旧SDK共通
   キーは一度だけ移行し、テスト起動ではKeychainを開かない。
+- 画面から読み取るホスト名は製品の判定にだけ使い、パス・クエリは取得しない。周辺コンテクストと
+  同じくプロンプト用の参照情報で、Gatewayにもusageにも保存しない。
 - スクリーンショットと音声は処理用の一時ファイルだけに置く。通常終了時に削除し、異常終了で
   残ったVision画像も次回起動時に削除する。Vision/Copilotの会話は永続化しない。
 - Supabaseのusageには機能、モデル、token／秒数、成功・失敗、処理時間などの運用情報だけを
@@ -164,7 +166,13 @@ Enter は下書きを送信します。レビュー案を使う場合だけ明�
 共通の判断指示とユーザーPersonaは別レイヤーで渡し、現行の既定Personaは事業開発とソフトウェア開発を
 横断するFounder／Engineer／Designer／Business professionalです。
 
-画面上の製品を判定すると、その製品のSkillを添付します。Skillは1製品1ファイルで、画面の読み方
+画面上の製品はホスト名で判定します。業務ツールの多くはブラウザ内で動くため bundle ID は
+ブラウザのものにしかならず、ウィンドウタイトルもページ次第です（Workspace の Gmail は
+「件名 - アドレス - 組織名 Mail」で製品名を含みません）。ホスト名だけが製品を確実に指すので、
+Accessibility からページのホスト名を読み、パスとクエリは取得しません。ネイティブアプリは
+bundle ID で判定します。
+
+製品を判定すると、その製品のSkillを添付します。Skillは1製品1ファイルで、画面の読み方
 （reading）、その製品での自然な書き方（conventions）、使える機能（affordances）、注意すべき状態
 （attention）、そこで学ぶ価値のあるユーザーファクトのキー語彙を持ちます。用途に応じて渡す
 セクションを変え、文案生成にはreadingとconventions、Vision／Copilotにはreading・affordances・

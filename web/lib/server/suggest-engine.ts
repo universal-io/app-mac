@@ -35,6 +35,7 @@ export type SuggestContext = {
   appName?: string;
   bundleId?: string;
   windowTitle?: string;
+  host?: string;
   conversationExcerpt?: string;
 };
 
@@ -274,6 +275,10 @@ function contextText(context: SuggestContext | undefined): string {
     lines.push(`- Frontmost app: ${appName} (window: ${windowTitle})`);
   } else if (appName) {
     lines.push(`- Frontmost app: ${appName}`);
+  }
+  const host = context?.host?.trim();
+  if (host) {
+    lines.push(`- Page host: ${host}`);
   }
   const excerpt = context?.conversationExcerpt?.trim();
   if (excerpt) {

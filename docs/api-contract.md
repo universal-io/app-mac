@@ -154,8 +154,10 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 - `operation`: `suggest`
 - `input.capture_id`: 必須
 - `input.image_base64`: 必須、PNG/JPEG
-- `input.context`: 任意（`app_name` / `bundle_id` / `window_title` / `conversation_excerpt`）。
-  参照専用で保存しない。`bundle_id`・`app_name`・`window_title`から該当するSkillを判定する
+- `input.context`: 任意（`app_name` / `bundle_id` / `window_title` / `host` /
+  `conversation_excerpt`）。参照専用で保存しない。Skillの判定は`host`を一次シグナルとし、
+  ネイティブアプリは`bundle_id`、補助として`app_name`・`window_title`を使う。
+  `host`はブラウザ表示中のページのホスト名だけで、パスとクエリは送らない
 - 実装: `web/app/api/ai/suggest/route.ts`
 - クライアント: `GatewaySuggestClient`
 

@@ -1,4 +1,4 @@
-import { matchesProduct } from "@/lib/server/skills/tools/slack";
+import { matchesHost, matchesProduct } from "@/lib/server/skills/tools/slack";
 import type { Skill } from "@/lib/server/skills/types";
 
 // Gmail, Docs, and Sheets are separate skills even though one vendor ships all
@@ -8,7 +8,12 @@ export const GMAIL_SKILL: Skill = {
   id: "gmail",
   name: "Gmail",
   layer: "tool",
-  detect: ({ appName, windowTitle }) => matchesProduct(appName, windowTitle, "gmail"),
+  // Host first. A Workspace tab reads "<subject> - <address> - <Org> Mail" and
+  // contains no product name, so title matching alone finds only consumer
+  // @gmail.com accounts — that is, everyone except the customers.
+  detect: (signals) =>
+    matchesHost(signals.host, "mail.google.com")
+    || matchesProduct(signals.appName, signals.windowTitle, "gmail"),
 
   reading: `Gmail-specific reading rules:
 - In an expanded message header, From identifies the sender and To identifies the addressee. A reply composer belongs to the current user.

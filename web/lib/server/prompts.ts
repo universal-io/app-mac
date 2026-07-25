@@ -10,6 +10,8 @@ export type SituationalContextPayload = {
   app_name?: string;
   bundle_id?: string;
   window_title?: string;
+  /** Page host when the source app is a browser, e.g. "mail.google.com". */
+  host?: string;
   conversation_excerpt?: string;
 };
 

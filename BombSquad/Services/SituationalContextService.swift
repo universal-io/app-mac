@@ -36,6 +36,10 @@ enum SituationalContextService {
         /// Electron builds its AX tree lazily after AXManualAccessibility is
         /// set; wait this long before the one retry when the first pass is empty.
         static let electronRetryDelay: useconds_t = 300_000
+        /// Nodes to inspect while looking for the browser's web area. The web
+        /// area sits a few levels below the window, so this stays small — it is
+        /// a lookup, not a walk.
+        static let maxNodesForHostLookup = 200
     }
 
     /// Kick off a capture of whatever app is frontmost right now. Returns a
@@ -87,6 +91,7 @@ enum SituationalContextService {
 
         let focused = copyElement(appElement, kAXFocusedUIElementAttribute)
         let focusedFieldEditable = focused.map(isEditableField) ?? false
+        let host = window.flatMap(browserHost(in:))
 
         // App identity alone still tells the review where the draft is going,
         // so a context without conversation text is still worth returning.
@@ -95,6 +100,7 @@ enum SituationalContextService {
             bundleID: bundleID,
             pid: pid,
             windowTitle: windowTitle,
+            host: host,
             conversationExcerpt: excerpt,
             focusedFieldEditable: focusedFieldEditable,
             capturedAt: Date()
@@ -138,6 +144,52 @@ enum SituationalContextService {
             return true
         }
         return false
+    }
+
+    /// The host of the page a browser window is showing, or nil for a native
+    /// app. Safari publishes the document URL on the window itself; Chrome and
+    /// other Chromium browsers publish it on the AXWebArea inside, so try the
+    /// window first and then look for the web area.
+    private static func browserHost(in window: AXUIElement) -> String? {
+        if let host = copyString(window, "AXDocument").flatMap(hostComponent) {
+            return host
+        }
+
+        var visited = 0
+        var stack: [AXUIElement] = [window]
+        while let element = stack.popLast() {
+            if visited >= Budget.maxNodesForHostLookup { break }
+            visited += 1
+
+            if copyString(element, kAXRoleAttribute) == "AXWebArea" {
+                if let url = copyURL(element, "AXURL"), let host = hostComponent(url.absoluteString) {
+                    return host
+                }
+                if let host = copyString(element, "AXDocument").flatMap(hostComponent) {
+                    return host
+                }
+            }
+
+            if let children = copyChildren(element) {
+                stack.append(contentsOf: children)
+            }
+        }
+        return nil
+    }
+
+    /// Host alone, lowercased and without a leading "www.". A non-web scheme
+    /// (a native document window exposing AXDocument as file://) yields nil.
+    private static func hostComponent(_ raw: String) -> String? {
+        guard let components = URLComponents(string: raw),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              var host = components.host?.lowercased(),
+              !host.isEmpty
+        else { return nil }
+        if host.hasPrefix("www.") {
+            host.removeFirst("www.".count)
+        }
+        return host
     }
 
     /// Expanding-scope search: collect text at each ancestor level of the
@@ -235,6 +287,14 @@ enum SituationalContextService {
             return nil
         }
         return value as? String
+    }
+
+    private static func copyURL(_ element: AXUIElement, _ attribute: String) -> URL? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+            return nil
+        }
+        return value as? URL
     }
 
     private static func copyChildren(_ element: AXUIElement) -> [AXUIElement]? {

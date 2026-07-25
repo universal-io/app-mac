@@ -14,6 +14,16 @@ struct SituationalContext {
     /// (press a button, focus a field) back into that app.
     let pid: pid_t
     let windowTitle: String?
+    /// Host of the page when the source app is a browser, e.g. "mail.google.com".
+    /// Most business tools are web apps, where the bundle id is only ever the
+    /// browser's and the window title is whatever the page chose to call itself
+    /// — a Workspace Gmail tab is titled "<subject> - <address> - <Org> Mail"
+    /// and contains no identifying product name at all. The host is the one
+    /// signal that names the product reliably.
+    ///
+    /// Host only, never the path or query: identifying the product is all this
+    /// is for, and the rest of a URL is the user's business.
+    let host: String?
     /// Text collected from around the focused field (the conversation thread),
     /// in rough reading order, trimmed to a budget. Nil when nothing readable
     /// was found via Accessibility.

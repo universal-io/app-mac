@@ -32,6 +32,7 @@ type SuggestRequestBody = {
     context?: {
       app_name?: string;
       bundle_id?: string;
+      host?: string;
       window_title?: string;
       conversation_excerpt?: string;
     };
@@ -65,6 +66,7 @@ export async function POST(request: Request): Promise<Response> {
           appName: rawContext.app_name,
           bundleId: rawContext.bundle_id,
           windowTitle: rawContext.window_title,
+          host: rawContext.host,
           conversationExcerpt: rawContext.conversation_excerpt,
         }
       : undefined;
@@ -213,6 +215,7 @@ function validateBody(
     const fields = [
       context.app_name,
       context.bundle_id,
+      context.host,
       context.window_title,
       context.conversation_excerpt,
     ];

@@ -15,6 +15,14 @@ export type AppSignals = {
   appName?: string;
   bundleId?: string;
   windowTitle?: string;
+  /**
+   * Page host when the app is a browser, e.g. "mail.google.com". This is the
+   * primary signal for web products: they all share the browser's bundle id,
+   * and a window title is whatever the page decided to call itself — Gmail on
+   * a Workspace domain titles its tab "<subject> - <address> - <Org> Mail" and
+   * never says "Gmail" at all.
+   */
+  host?: string;
 };
 
 /**

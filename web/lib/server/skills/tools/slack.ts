@@ -4,9 +4,10 @@ export const SLACK_SKILL: Skill = {
   id: "slack",
   name: "Slack",
   layer: "tool",
-  detect: ({ appName, bundleId, windowTitle }) =>
-    bundleId?.trim().toLowerCase() === "com.tinyspeck.slackmacgap"
-    || matchesProduct(appName, windowTitle, "slack"),
+  detect: (signals) =>
+    signals.bundleId?.trim().toLowerCase() === "com.tinyspeck.slackmacgap"
+    || matchesHost(signals.host, "app.slack.com")
+    || matchesProduct(signals.appName, signals.windowTitle, "slack"),
 
   reading: `Slack-specific reading rules:
 - The name and avatar attached to a message block identify its sender.
@@ -51,4 +52,12 @@ export function matchesProduct(
   const identity = [appName, windowTitle].filter(Boolean).join(" ");
   const escaped = productName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|\\W)${escaped}(\\W|$)`, "i").test(identity);
+}
+
+/** Exact host, or a subdomain of it. Hosts are already lowercased and stripped
+ * of "www." by the client. */
+export function matchesHost(host: string | undefined, expected: string): boolean {
+  const value = host?.trim().toLowerCase();
+  if (!value) return false;
+  return value === expected || value.endsWith(`.${expected}`);
 }
