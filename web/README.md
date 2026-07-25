@@ -5,13 +5,12 @@
 ## Routes
 
 - `/`, `/auth`, `/auth/callback`, `/admin`
-- `/api/account`（GET / DELETE）、`/api/memory/cards`（差分同期）、`/api/admin/overview`
+- `/api/account`（GET / DELETE）、`/api/admin/overview`
 - `/api/ai/review`
 - `/api/ai/transcribe`
 - `/api/ai/transform`
 - `/api/ai/vision`
 - `/api/ai/suggest`（コンポーズの先回り文案。画像＋文脈→入力候補）
-- `/api/ai/memory/distill`
 
 AI routeはこの一覧だけです。旧route、評価route、ローカルGateway用routeは置きません。
 
