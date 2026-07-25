@@ -92,8 +92,12 @@ final class SessionCoordinator {
         if !isEnabled {
             suggestionTask?.cancel()
             suggestionTask = nil
-            composeSession.resetSuggestion()
-            SuggestTrace.log("disabled from compose panel")
+            if composeSession.suggestionStatus == .ready {
+                SuggestTrace.log("disabled for future sessions; keeping ready draft")
+            } else {
+                composeSession.resetSuggestion()
+                SuggestTrace.log("disabled from compose panel; pending state cleared")
+            }
             return
         }
 

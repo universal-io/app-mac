@@ -44,7 +44,7 @@ struct ComposeSessionView: View {
     }
 
     private var showsExpandedContent: Bool {
-        hasReviewSurface || isProactiveSuggestEnabled
+        hasReviewSurface || isProactiveSuggestEnabled || session.suggestionStatus == .ready
     }
 
     var body: some View {
@@ -197,7 +197,7 @@ struct ComposeSessionView: View {
                 AppCommandCenter.shared.notifyProactiveSuggestionSettingChanged(enabled)
             }
 
-            if isProactiveSuggestEnabled {
+            if isProactiveSuggestEnabled || session.suggestionStatus == .ready {
                 switch session.suggestionStatus {
                 case .preparing:
                     VStack(spacing: 10) {
