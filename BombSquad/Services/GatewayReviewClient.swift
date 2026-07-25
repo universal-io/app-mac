@@ -28,15 +28,14 @@ struct GatewayReviewClient: ReviewProvider {
     func review(
         draft: String,
         language: OutputLanguage,
-        context: SituationalContext?,
-        memory: MemoryInjection?
+        context: SituationalContext?
     ) async throws -> ReviewResult {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProviderError.emptyDraft }
 
         let data = try await client.postJSON(
             "ai/review",
-            body: requestBody(draft: trimmed, language: language, context: context, memory: memory)
+            body: requestBody(draft: trimmed, language: language, context: context)
         )
         return try decodeResult(from: data)
     }
@@ -47,13 +46,12 @@ struct GatewayReviewClient: ReviewProvider {
     func reviewStream(
         draft: String,
         language: OutputLanguage,
-        context: SituationalContext?,
-        memory: MemoryInjection?
+        context: SituationalContext?
     ) async throws -> AsyncThrowingStream<ReviewStreamEvent, Error> {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProviderError.emptyDraft }
 
-        var body = requestBody(draft: trimmed, language: language, context: context, memory: memory)
+        var body = requestBody(draft: trimmed, language: language, context: context)
         body["stream"] = true
         let events = try await client.postSSE("ai/review", body: body)
 
@@ -92,15 +90,11 @@ struct GatewayReviewClient: ReviewProvider {
     private func requestBody(
         draft: String,
         language: OutputLanguage,
-        context: SituationalContext?,
-        memory: MemoryInjection?
+        context: SituationalContext?
     ) -> [String: Any] {
         var input: [String: Any] = ["draft": draft]
         if let context {
             input["context"] = GatewayClient.contextPayload(context)
-        }
-        if let memory, let payload = GatewayClient.memoryPayload(memory) {
-            input["memory"] = payload
         }
         return GatewayClient.envelope(
             operation: "review",

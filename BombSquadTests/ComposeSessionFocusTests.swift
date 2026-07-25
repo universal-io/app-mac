@@ -54,8 +54,7 @@ private struct FocusTestReviewProvider: ReviewProvider {
     func review(
         draft: String,
         language: OutputLanguage,
-        context: SituationalContext?,
-        memory: MemoryInjection?
+        context: SituationalContext?
     ) async throws -> ReviewResult {
         ReviewResult(
             issues: [],

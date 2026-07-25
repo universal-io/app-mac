@@ -5,7 +5,6 @@ protocol TransformProvider {
         receivedText: String,
         instruction: String?,
         language: OutputLanguage,
-        context: SituationalContext?,
-        memory: MemoryInjection?
+        context: SituationalContext?
     ) async throws -> TransformInterpretationResult
 }

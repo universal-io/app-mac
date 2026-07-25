@@ -26,7 +26,6 @@ import {
   ProviderCallError,
 } from "@/lib/server/ai-routing";
 import type {
-  MemoryPayload,
   OutputLanguageCode,
   ReviewMode,
   SituationalContextPayload,
@@ -42,7 +41,6 @@ type ReviewRequestBody = {
   input?: {
     draft?: string;
     context?: SituationalContextPayload;
-    memory?: MemoryPayload;
   };
   preferences?: {
     output_language?: string;
@@ -108,7 +106,6 @@ export async function POST(request: Request): Promise<Response> {
       draft,
       language: language as OutputLanguageCode,
       context: body.input?.context,
-      memory: body.input?.memory,
     };
 
     // --- Streaming path (SSE) ---
@@ -309,6 +306,5 @@ function usageMetadata(body: ReviewRequestBody): Record<string, unknown> {
     platform: body.client?.platform,
     app_version: body.client?.app_version,
     has_context: Boolean(body.input?.context?.conversation_excerpt),
-    has_memory: Boolean(body.input?.memory?.persona_md || body.input?.memory?.relationship_md),
   };
 }

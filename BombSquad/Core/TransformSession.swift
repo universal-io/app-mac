@@ -87,7 +87,6 @@ final class TransformSession: ObservableObject {
 
         let input = draft
         let context = await resolveContext()
-        let memory = await resolveMemory(context: context)
         guard !Task.isCancelled else { return }
         guard let provider = GatewayTransformClient.make() else {
             errorMessage = "受信メッセージ整理サービスを利用できません。ログイン状態を確認してください。"
@@ -99,8 +98,7 @@ final class TransformSession: ObservableObject {
                 receivedText: input,
                 instruction: nil,
                 language: outputLanguage,
-                context: context,
-                memory: memory
+                context: context
             )
             try Task.checkCancellation()
             lastDurationMs = Int(Date().timeIntervalSince(started) * 1000)
@@ -133,25 +131,5 @@ final class TransformSession: ObservableObject {
             situationalContext = await contextCaptureTask.value
         }
         return situationalContext
-    }
-
-    private func resolveMemory(context: SituationalContext?) async -> MemoryInjection? {
-        guard AppSettings.isMemoryEnabled() else { return nil }
-        let persona = try? await MemoryStore.shared.personaCard()
-
-        var relationship: MemoryCard?
-        if let context {
-            let haystack = [context.windowTitle, context.conversationExcerpt]
-                .compactMap { $0 }
-                .joined(separator: "\n")
-            relationship = try? await MemoryStore.shared.matchRelationship(inText: haystack)
-        }
-
-        let injection = MemoryInjection(
-            personaMD: persona?.contentMD,
-            relationshipSubject: relationship?.subject,
-            relationshipMD: relationship?.contentMD
-        )
-        return injection.isEmpty ? nil : injection
     }
 }

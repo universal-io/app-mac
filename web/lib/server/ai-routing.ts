@@ -15,8 +15,7 @@ export type AIFeature =
   | "transform"
   | "vision"
   | "suggest"
-  | "transcribe"
-  | "memory";
+  | "transcribe";
 
 export type AIModelTarget = Readonly<{
   vendor: "openai" | "groq";
@@ -55,11 +54,6 @@ export const AI_MODEL_ROUTES: Readonly<Record<AIFeature, AIModelRoute>> = {
     label: "Transcribe",
     primary: { vendor: "groq", modelId: "whisper-large-v3-turbo", api: "transcriptions" },
     secondary: { vendor: "openai", modelId: "whisper-1", api: "transcriptions" },
-  },
-  memory: {
-    label: "Memory distillation",
-    primary: { vendor: "openai", modelId: "gpt-5.6-luna", api: "chat_completions" },
-    secondary: { vendor: "groq", modelId: "openai/gpt-oss-120b", api: "chat_completions" },
   },
 };
 

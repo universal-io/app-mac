@@ -3,7 +3,6 @@ import Foundation
 enum AppSettings {
     static let isHistoryEnabledKey = "isHistoryEnabled"
     static let isContextCaptureEnabledKey = "isContextCaptureEnabled"
-    static let isMemoryEnabledKey = "isMemoryEnabled"
     static let isProactiveSuggestEnabledKey = "isProactiveSuggestEnabled"
     static let outputLanguageKey = "outputLanguage"
     static let localHistoryLimit = 100
@@ -25,13 +24,6 @@ enum AppSettings {
             return true
         }
         return UserDefaults.standard.bool(forKey: isContextCaptureEnabledKey)
-    }
-
-    static func isMemoryEnabled() -> Bool {
-        if UserDefaults.standard.object(forKey: isMemoryEnabledKey) == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: isMemoryEnabledKey)
     }
 
     static func isProactiveSuggestEnabled() -> Bool {

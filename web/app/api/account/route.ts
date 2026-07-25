@@ -105,7 +105,7 @@ export async function DELETE(request: Request): Promise<Response> {
     }
 
     // Auth user deletion cascades every user-owned row: profile, membership,
-    // memory, usage, and device records. The personal tenant is removed next
+    // usage, and device records. The personal tenant is removed next
     // so its entitlement cannot remain as an orphan. Enterprise/shared
     // tenants are never deleted by one member's withdrawal.
     const { error: userDeleteError } = await admin.auth.admin.deleteUser(userId);

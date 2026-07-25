@@ -14,7 +14,6 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 | Transform（選択テキストの解説） | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
-| メモリ抽出 | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
 
 共通規則:
 
@@ -29,10 +28,9 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 - usage記録は成功・モデルエラーとも応答後に行い、レビューのSSEも最終結果を閉じてから記録する。
   モデル推論後の運用記録をユーザーの待ち時間へ含めない。
 
-メモリは、ユーザーがレビュー案を採用して実際に送った文章との差分、またはユーザー自身が
-提供した過去文例から、文体・敬語・相手との距離感だけを抽出する機能です。保存内容はユーザーが
-閲覧・編集・削除でき、次回のComposeレビューとTransformへ任意の参考コンテクストとして
-注入されます。自動学習部分は重複を除いた直近20件に制限します。
+v3で文体・関係性メモリ（persona / relationship カード）を廃止しました。実利用で注入に値する
+学習が得られず、送信のたびに1回の抽出呼び出しを費やしていたためです。ユーザーに関する事実の
+記憶はv3で別機構として設計します（[compose-vision-suggest-plan.md](docs/compose-vision-suggest-plan.md)）。
 
 ## 現行機能
 
@@ -43,9 +41,23 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 - 受信変換: 選択中の文章を読み取り、要点と返信案を表示
 - Vision: スクリーンショットを読み、質問への回答や次の操作位置を提示
 - Copilot: ユーザーの操作後に画面を再取得し、目的に到達するまで次の一手を案内
-- 履歴・メモリ: ローカル履歴とユーザー管理のスタイル情報
+- 履歴: 実際に送信した内容のローカル履歴
 
 ## 開発予定の新機能
+
+### v3: ツール適合（Skills とユーザーファクト）
+
+汎用理解を限界までチューニングした上に、ツール個別の理解を積み上げていく。精度レイヤーの
+正式名称は **Skills** で、データであり制御フローには触れない（Skillが無くても汎用経路は無傷）。
+階層はベース < ツール < 業務 < 個社で合成し、有効なSkillは常にUIで見える（サイレント注入禁止）。
+
+1つのSkillは、そのツールの読み方（reading）、自然な書き方（conventions）、使える機能
+（affordances）、注意すべき状態（attention）に加えて、そのツールで学ぶ価値のあるユーザー
+ファクトのキー語彙を宣言する。ファクトは`scope`/`key`/`value`のupsertなので、同じ事実を何度
+検出しても1行のままで、使い続けても膨らまない。検出はSkillが効いている画面から行い、保存前に
+必ずユーザーへ確認する（1セッション1問、拒否したキーは再質問しない）。
+
+進捗と受け入れ条件は[マスタープラン R8](docs/universal-io-master-plan.md)を正本とする。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -73,16 +85,11 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
   最新100件保存する。
   Transformの選択文、解説、返信案、コピー結果は履歴へ保存しない。
 - 未送信のCompose下書きもユーザー単位でこのMacへ保存する。送信した下書きは消去する。
-- メモリカードはこのMacと、ログイン中のユーザーに紐づくSupabaseへ同期する。削除時は
-  同期用tombstoneだけを残し、本文と相手名はローカル・サーバー双方から消去する。
-- 履歴・下書き・メモリはSupabase user IDごとに分離する。ログアウト時はローカルDBを閉じ、
+- 履歴・下書きはSupabase user IDごとに分離する。ログアウト時はローカルDBを閉じ、
   別アカウントへ内容を表示・注入・同期しない。旧版の未分離データは、起動時に復元できた既存
   セッションにだけ一度移行する。
 - SupabaseのログインセッションはUniversal I/O専用のmacOS Keychain領域へ保存する。旧SDK共通
   キーは一度だけ移行し、テスト起動ではKeychainを開かない。
-- メモリ同期は変更分だけを最大100件ずつ送る。Gatewayの時刻を版として競合を検出し、別Macの
-  同時変更はユーザーが「このMac」「クラウド」のどちらを残すか決めるまで上書きしない。
-  内容を消去したtombstoneは長期オフライン端末からの復活を防ぐため保持するが、毎回は送らない。
 - スクリーンショットと音声は処理用の一時ファイルだけに置く。通常終了時に削除し、異常終了で
   残ったVision画像も次回起動時に削除する。Vision/Copilotの会話は永続化しない。
 - Supabaseのusageには機能、モデル、token／秒数、成功・失敗、処理時間などの運用情報だけを
@@ -91,8 +98,8 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
   `usage`は応答後実行のため0として明示し、体感遅延をprovider時間だけで判断しない。
 - request単位のusageは90日保持し、期限後はユーザーID・request IDを持たないテナント月次集計へ
   加算して詳細行を自動削除する。月次利用枠は当月の成功行だけで計算する。
-- アカウント画面から退会できる。直近10分以内の再認証を要求し、Authユーザー、メモリ、usage、
-  profile、個人tenantと、このMacの履歴・下書き・メモリを削除する。有効な契約があれば先に解約する。
+- アカウント画面から退会できる。直近10分以内の再認証を要求し、Authユーザー、usage、profile、
+  個人tenantと、このMacの履歴・下書きを削除する。有効な契約があれば先に解約する。
 
 ### AI事業者側の保持（ZDR）
 
@@ -115,7 +122,6 @@ macOS アプリは AI プロバイダーを直接呼びません。認証済み�
 | 音声入力 | `GatewayTranscriber` | `POST /api/ai/transcribe` |
 | 受信変換 | `TransformSession` / `GatewayTransformClient` | `POST /api/ai/transform` |
 | Vision / Copilot | `VisionSession` / `GatewayVisionClient` | `POST /api/ai/vision` |
-| メモリ抽出 | `MemoryDistiller` | `POST /api/ai/memory/distill` |
 
 ローカルGateway、BYOK、旧Navigator endpoint、shadow、runtime feature flag、macOS側の
 代替経路は存在しません。モデルfallbackは本番Gateway内の共通ルーターだけが行います。

@@ -16,31 +16,26 @@ struct GatewayTransformClient: TransformProvider {
         receivedText: String,
         instruction: String?,
         language: OutputLanguage,
-        context: SituationalContext?,
-        memory: MemoryInjection?
+        context: SituationalContext?
     ) async throws -> TransformInterpretationResult {
         var input: [String: Any] = ["text": receivedText]
-        addCommonFields(to: &input, instruction: instruction, context: context, memory: memory)
+        addCommonFields(to: &input, instruction: instruction, context: context)
         return try await send(input: input, language: language)
     }
 
     private func addCommonFields(
         to input: inout [String: Any],
         instruction: String?,
-        context: SituationalContext?,
-        memory: MemoryInjection?
+        context: SituationalContext?
     ) {
         if let instruction = instruction?.trimmingCharacters(in: .whitespacesAndNewlines),
            !instruction.isEmpty {
             input["instruction"] = instruction
         }
-        // Same payload shapes as ai/review: the gateway builds the prompt and
-        // stores neither block (see the API contract).
+        // Same payload shape as ai/review: the gateway builds the prompt and
+        // stores no part of it (see the API contract).
         if let context {
             input["context"] = GatewayClient.contextPayload(context)
-        }
-        if let memory, let payload = GatewayClient.memoryPayload(memory) {
-            input["memory"] = payload
         }
     }
 

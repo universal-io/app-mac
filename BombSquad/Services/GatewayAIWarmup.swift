@@ -10,16 +10,8 @@ enum GatewayAIWarmup {
         case vision
         case suggest
         case transcribe
-        case memory
 
-        var path: String {
-            switch self {
-            case .memory:
-                return "ai/memory/distill"
-            default:
-                return "ai/\(rawValue)"
-            }
-        }
+        var path: String { "ai/\(rawValue)" }
     }
 
     static func warm(_ features: Set<Feature>) async {

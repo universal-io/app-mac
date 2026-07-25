@@ -3,7 +3,6 @@ import SwiftUI
 struct GeneralSettingsView: View {
     @AppStorage(AppSettings.isHistoryEnabledKey) private var isHistoryEnabled = true
     @AppStorage(AppSettings.isContextCaptureEnabledKey) private var isContextCaptureEnabled = true
-    @AppStorage(AppSettings.isMemoryEnabledKey) private var isMemoryEnabled = true
     @AppStorage(AppSettings.isProactiveSuggestEnabledKey) private var isProactiveSuggestEnabled = true
     @AppStorage(AppSettings.outputLanguageKey) private var outputLanguageID = OutputLanguage.japanese.rawValue
 
@@ -39,10 +38,6 @@ struct GeneralSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section("メモリ") {
-                Toggle("スタイルプロファイルをレビューへ反映・自動学習する", isOn: $isMemoryEnabled)
             }
 
             Section("履歴") {

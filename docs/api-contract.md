@@ -11,7 +11,7 @@
 - Gateway内のモデル順序は `web/lib/server/ai-routing.ts` が唯一の正本。全AI機能が一次・二次を
   1つずつ持ち、一次失敗時だけ二次を1回実行する。
 - `request_id` は全AIリクエストで必須。
-- `review`、`transcribe`、`transform`、`vision`、`suggest`、`memory/distill`の各routeは
+- `review`、`transcribe`、`transform`、`vision`、`suggest`の各routeは
   認証付きGETをウォームアップとして受け付ける。認証・quota前処理だけを実行して成功時`204`を返し、
   providerを呼ばずusageも記録しない。
 - POSTのusage記録は応答後に実行するため、成功・モデルエラーとも記録DBの待ち時間を応答へ加えない。
@@ -72,7 +72,7 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 
 - `operation`: `review`
 - `input.draft`: 必須
-- `input.context` / `input.memory`: 任意
+- `input.context`: 任意
 - 実装: `web/app/api/ai/review/route.ts`
 - クライアント: `GatewayReviewClient`
 
@@ -94,7 +94,7 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 
 - `operation`: `transform`
 - `input.text`: 必須、最大16,000文字
-- `input.context` / `input.memory`: 任意
+- `input.context`: 任意
 - 実装: `web/app/api/ai/transform/route.ts`
 - クライアント: `GatewayTransformClient`
 
@@ -190,28 +190,15 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 `context_package`は適用無しの場合`null`。
 画像・入力本文・回答本文はusageに保存しない（運用情報のみ）。
 
-## POST /ai/memory/distill
-
-送信差分またはユーザー提供サンプルから、保存候補となるスタイル情報を抽出する。
-
-- `operation`: `distill` または `bootstrap`
-- 実装: `web/app/api/ai/memory/distill/route.ts`
-- クライアント: `MemoryDistiller`
-
-## アカウント・メモリ・管理
+## アカウント・管理
 
 - `GET /account`
 - `DELETE /account` — body `{"confirmation":"DELETE"}`。直近10分以内の認証を要求し、
   有効なsubscriptionがある場合は`ACTIVE_SUBSCRIPTION`で拒否する。
-- `GET|PUT /memory/cards`
 - `GET /admin/overview`
 
-`/memory/cards` の削除状態は `deleted_at` を持つ同期用tombstoneとして表現する。tombstoneは
-`subject: null`、`content_md: ""` を必須とし、削除済みユーザー内容を保持しない。
-
-新クライアントの`PUT /memory/cards`は`cards`（dirty差分、最大100件）と`cursor`を送る。
-各cardの`base_updated_at`がserver版と一致する時だけGateway時刻で更新し、応答は`cards`、
-`synced_ids`、`conflicts`、`cursor`、`has_more`を返す。`cursor`を持たないv0.1.0の全件同期は
-リリース移行期間だけ後方互換として受理する。
+v3で文体・関係性メモリを廃止したため、`/ai/memory/distill` と `/memory/cards` は存在しない。
+`input.memory`を送るクライアントも無い。ユーザーに関する事実の記憶はv3で別機構として設計する
+（正本 [compose-vision-suggest-plan.md](compose-vision-suggest-plan.md)）。
 
 各routeの入力検証と認可は `web/app/api` の現行実装を正とする。

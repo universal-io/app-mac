@@ -41,12 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         terminateOtherRunningCopies()
         ScreenshotCaptureService.cleanupTemporaryCaptures()
         AppSupport.cleanupPendingAccountDeletions()
+        AppSupport.removeRetiredMemoryDatabases()
         NSApp.setActivationPolicy(.accessory)
 
-        // Start shared services before the first summon so authentication and
-        // memory state do not flash through an uninitialized panel state.
+        // Start shared services before the first summon so authentication
+        // state does not flash through an uninitialized panel state.
         _ = AuthViewModel.shared
-        Task { await MemorySyncService.shared.start() }
         Task {
             await GatewayAIWarmup.warmAll()
             // The local Supabase session may publish just after launch.

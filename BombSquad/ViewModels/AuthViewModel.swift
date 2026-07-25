@@ -117,7 +117,6 @@ final class AuthViewModel: ObservableObject {
 
         Task {
             do {
-                await MemorySyncService.shared.syncNow()
                 try await authClient.signOut()
                 try await self.activateLocalAccount(userID: nil, migrateLegacyData: false)
                 GatewayQuotaStore.shared.clear()
@@ -217,13 +216,6 @@ final class AuthViewModel: ObservableObject {
                     shouldBootstrap: change.session != nil,
                     migrateLegacyData: change.session != nil
                 )
-                // Normal launches restore the session asynchronously and emit
-                // .initialSession (not .signedIn), after the launch-time sync
-                // in MemorySyncService.start() has already no-opped without a
-                // session — so this is the trigger that makes startup sync work.
-                if change.session != nil {
-                    Task { await MemorySyncService.shared.syncNow() }
-                }
             case .signedIn:
                 try await refreshState(
                     session: change.session,
@@ -231,10 +223,6 @@ final class AuthViewModel: ObservableObject {
                     migrateLegacyData: false
                 )
                 statusMessage = authMethodLabel.map { "\($0)でログインしました。" } ?? "ログインしました。"
-                // Gateway access just became available (or a new user signed
-                // in on this device) — sync memory right away rather than
-                // waiting for the next local edit.
-                Task { await MemorySyncService.shared.syncNow() }
             case .tokenRefreshed, .userUpdated, .mfaChallengeVerified, .passwordRecovery:
                 try await refreshState(
                     session: change.session,
@@ -299,10 +287,6 @@ final class AuthViewModel: ObservableObject {
             migrateLegacyDraft: migrateLegacyData
         )
         try await LocalHistoryStore.shared.activateAccount(
-            userID: userID,
-            migrateLegacyDatabase: migrateLegacyData
-        )
-        try await MemoryStore.shared.activateAccount(
             userID: userID,
             migrateLegacyDatabase: migrateLegacyData
         )

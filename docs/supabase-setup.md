@@ -25,17 +25,16 @@ Database naming rule:
   `bs_tenants` / `bs_profiles` / `bs_tenant_members` / `bs_entitlements` /
   `bs_usage_events` / `bs_app_devices`。RLS 有効化、メンバーシップ補助関数、
   ユーザーブートストラップ RPC、既存 `auth.users` のバックフィル。
-- `supabase/migrations/0002_bs_memory_cards.sql` — `bs_memory_cards`
-  （メモリ同期。tombstone 付き、user スコープ RLS。M3-B）。
 - `supabase/migrations/0004_plan_catalog.sql` — **`bs_plans`（プラン→クォータ/機能の唯一の正本）**。
   `bs_entitlements.plan` を FK 化、`monthly_review_limit` を NULL 可（NULL = プラン値に従う）に変更、
   `bs_provision_user()` 再定義。**ベータ方針（2026-07-08）: free=500件/月、他プランは無制限・
   機能ゲート無し。プラン変更はこのテーブルの行を編集する（env・コードにコピーを持たない）**。
 - `supabase/migrations/20260718000000_remove_unused_tables.sql` — 使用を終了した旧画面案内テーブルを削除。
-- `supabase/migrations/20260722000000_scrub_deleted_memory_card_content.sql` — 削除済みメモリの
-  tombstoneから本文・相手名を消去し、今後もDB triggerで内容を保持しない。
 - `supabase/migrations/20260722010000_usage_retention.sql` — request単位usageを90日保持し、
   `bs_usage_monthly_rollups`へ集約して詳細行を削除する日次pg_cron jobを登録する。
+- `supabase/migrations/20260725000000_drop_memory_cards.sql` — v3で文体・関係性メモリを廃止し、
+  `bs_memory_cards`とscrub triggerを削除する。`0002` / `20260722000000` はこの削除で無効化された
+  履歴であり、新規環境でも適用後に落ちる。
 
 ## Secrets Needed Later
 

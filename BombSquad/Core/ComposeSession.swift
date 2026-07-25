@@ -295,21 +295,7 @@ final class ComposeSession: ObservableObject {
             modelName: lastModelName,
             outputLanguage: outputLanguage.displayName
         )
-        let original = draft
-        let suggestion = result?.revisedText
-        let context = situationalContext
-
-        guard deploy(text: finalText, historyInput: historyInput) else { return }
-        if AppSettings.isMemoryEnabled(), let suggestion {
-            Task.detached(priority: .background) {
-                await MemoryDistiller.distillAfterDeploy(
-                    original: original,
-                    suggestion: suggestion,
-                    final: finalText,
-                    context: context
-                )
-            }
-        }
+        deploy(text: finalText, historyInput: historyInput)
     }
 
     func adoptSuggestedDraft(_ text: String) {
@@ -365,15 +351,13 @@ final class ComposeSession: ObservableObject {
         }
 
         let context = await resolveContext()
-        let memory = await resolveMemory(context: context)
         guard !Task.isCancelled else { return }
         if let injectedReviewProvider {
             do {
                 let reviewed = try await injectedReviewProvider.review(
                     draft: input,
                     language: language,
-                    context: context,
-                    memory: memory
+                    context: context
                 )
                 try Task.checkCancellation()
                 lastDurationMs = Int(Date().timeIntervalSince(started) * 1000)
@@ -402,8 +386,7 @@ final class ComposeSession: ObservableObject {
             let stream = try await provider.reviewStream(
                 draft: input,
                 language: language,
-                context: context,
-                memory: memory
+                context: context
             )
             for try await event in stream {
                 try Task.checkCancellation()
@@ -441,24 +424,6 @@ final class ComposeSession: ObservableObject {
             situationalContext = await contextCaptureTask.value
         }
         return situationalContext
-    }
-
-    private func resolveMemory(context: SituationalContext?) async -> MemoryInjection? {
-        guard AppSettings.isMemoryEnabled() else { return nil }
-        let persona = try? await MemoryStore.shared.personaCard()
-        var relationship: MemoryCard?
-        if let context {
-            let searchableText = [context.windowTitle, context.conversationExcerpt]
-                .compactMap { $0 }
-                .joined(separator: "\n")
-            relationship = try? await MemoryStore.shared.matchRelationship(inText: searchableText)
-        }
-        let injection = MemoryInjection(
-            personaMD: persona?.contentMD,
-            relationshipSubject: relationship?.subject,
-            relationshipMD: relationship?.contentMD
-        )
-        return injection.isEmpty ? nil : injection
     }
 
     @discardableResult

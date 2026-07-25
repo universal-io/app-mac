@@ -15,7 +15,6 @@ import {
 } from "@/lib/server/ai-routing";
 import { runTransformInterpretation } from "@/lib/server/transform-engine";
 import type {
-  MemoryPayload,
   OutputLanguageCode,
   SituationalContextPayload,
 } from "@/lib/server/prompts";
@@ -30,7 +29,6 @@ type TransformRequestBody = {
     text?: string;
     instruction?: string;
     context?: SituationalContextPayload;
-    memory?: MemoryPayload;
   };
   preferences?: {
     output_language?: string;
@@ -84,7 +82,6 @@ export async function POST(request: Request): Promise<Response> {
       text_chars: sourceText?.length,
       has_instruction: Boolean(body.input?.instruction?.trim()),
       has_context: Boolean(body.input?.context?.conversation_excerpt),
-      has_memory: Boolean(body.input?.memory?.persona_md || body.input?.memory?.relationship_md),
     };
 
     const started = Date.now();
@@ -95,7 +92,6 @@ export async function POST(request: Request): Promise<Response> {
         instruction: body.input?.instruction,
         language: language as OutputLanguageCode,
         context: body.input?.context,
-        memory: body.input?.memory,
       });
     } catch (error) {
       const failure = aiModelFailureContract(error);

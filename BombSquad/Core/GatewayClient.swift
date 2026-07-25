@@ -71,7 +71,7 @@ final class OperationalNoticeCenter: ObservableObject {
 /// The single gateway transport. Owns availability gating, the request
 /// envelope, JSON/multipart sends,
 /// transport/status/error-contract mapping, and SSE framing. Feature clients
-/// (review/transform/vision/transcribe/account/memory) are thin wrappers that
+/// (review/transform/vision/transcribe/suggest/account) are thin wrappers that
 /// keep only their domain payloads and response decoding.
 struct GatewayClient {
     let api: GatewayAPI
@@ -113,7 +113,7 @@ struct GatewayClient {
         return body
     }
 
-    /// `input.context` payload shared by review/vision/distill. The gateway
+    /// `input.context` payload shared by review/transform/suggest. The gateway
     /// builds the prompt from it and stores nothing (see the API contract).
     static func contextPayload(_ context: SituationalContext) -> [String: Any] {
         var payload: [String: Any] = ["app_name": context.appName]
@@ -121,16 +121,6 @@ struct GatewayClient {
         if let title = context.windowTitle { payload["window_title"] = title }
         if let excerpt = context.conversationExcerpt { payload["conversation_excerpt"] = excerpt }
         return payload
-    }
-
-    /// `input.memory` payload shared by review/vision. Nil when there is
-    /// nothing to inject, so callers can skip the key entirely.
-    static func memoryPayload(_ memory: MemoryInjection) -> [String: Any]? {
-        var payload: [String: Any] = [:]
-        if let persona = memory.personaMD { payload["persona_md"] = persona }
-        if let subject = memory.relationshipSubject { payload["relationship_subject"] = subject }
-        if let relationship = memory.relationshipMD { payload["relationship_md"] = relationship }
-        return payload.isEmpty ? nil : payload
     }
 
     // MARK: - Plain requests
@@ -153,7 +143,7 @@ struct GatewayClient {
         return data
     }
 
-    /// Pre-encoded JSON body (Codable payloads like memory-card sync).
+    /// Pre-encoded JSON body for `Codable` payloads.
     func sendJSONData(_ path: String, method: String = "POST", body: Data) async throws -> Data {
         var request = try await api.authorizedRequest(path, method: method)
         request.setValue("application/json", forHTTPHeaderField: "content-type")

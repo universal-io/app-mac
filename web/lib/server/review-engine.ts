@@ -7,10 +7,9 @@ import {
 } from "@/lib/server/ai-routing";
 import type { OperationalNotice } from "@/lib/server/operational-notice";
 import {
-  enrichedSystem,
+  systemPrompt,
   userContent,
   JSON_INSTRUCTION,
-  type MemoryPayload,
   type OutputLanguageCode,
   type ReviewMode,
   type SituationalContextPayload,
@@ -46,7 +45,6 @@ type EngineInput = {
   draft: string;
   language: OutputLanguageCode;
   context?: SituationalContextPayload;
-  memory?: MemoryPayload;
 };
 
 function prepareCall(input: EngineInput, target: AIModelTarget): {
@@ -57,7 +55,7 @@ function prepareCall(input: EngineInput, target: AIModelTarget): {
   if (target.api !== "chat_completions") {
     throw new ProviderCallError(`Review cannot use API "${target.api}".`);
   }
-  const system = enrichedSystem(input.mode, input.memory);
+  const system = systemPrompt(input.mode);
   const user =
     userContent(input.mode, input.draft, input.language, input.context) +
     "\n\n" +

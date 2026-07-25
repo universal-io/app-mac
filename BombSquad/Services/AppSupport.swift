@@ -11,11 +11,11 @@ enum AppRuntime {
     }
 }
 
-/// The app's Application Support directory, shared by every local store
-/// (history, memory). The folder was renamed from the old "BombSquad" name to
-/// "UniversalIO"; on first access any existing legacy folder is moved intact so
-/// a user's history and memory carry over silently. Because both stores route
-/// through here, the migration runs once — whichever store is opened first.
+/// The app's Application Support directory, shared by every local store.
+/// The folder was renamed from the old "BombSquad" name to "UniversalIO"; on
+/// first access any existing legacy folder is moved intact so a user's local
+/// data carries over silently. Because every store routes through here, the
+/// migration runs once — whichever store is opened first.
 enum AppSupport {
     private static let directoryName = "UniversalIO"
     private static let legacyDirectoryName = "BombSquad"
@@ -34,7 +34,7 @@ enum AppSupport {
 
     /// Account-owned local data lives below a UUID-named directory. Keeping
     /// the account id in the path makes it impossible for a later login to
-    /// open another user's history or memory database by accident.
+    /// open another user's history database by accident.
     static func accountDirectory(
         for userID: UUID,
         migrateLegacyDatabases: Bool = false
@@ -46,7 +46,6 @@ enum AppSupport {
 
         if migrateLegacyDatabases {
             migrateLegacyDatabase(named: "history.sqlite", from: root, to: account)
-            migrateLegacyDatabase(named: "memory.sqlite", from: root, to: account)
         }
         return account
     }
@@ -81,6 +80,30 @@ enum AppSupport {
                 clearPendingAccountDeletion(userID)
             } catch {
                 NSLog("Universal I/O pending local account cleanup failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// v3 removed the style/relationship memory feature. Its database held
+    /// personal notes, so leaving the file behind would keep data the user can
+    /// no longer see or delete from the app. Erase it once, everywhere it could
+    /// have been written (pre-account root and every account directory).
+    static func removeRetiredMemoryDatabases() {
+        let fileManager = FileManager.default
+        guard let root = try? directory() else { return }
+        var directories = [root]
+        let accounts = root.appendingPathComponent("Accounts", isDirectory: true)
+        if let children = try? fileManager.contentsOfDirectory(
+            at: accounts,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ) {
+            directories.append(contentsOf: children)
+        }
+        for directory in directories {
+            for suffix in ["", "-wal", "-shm"] {
+                let file = URL(fileURLWithPath: directory.appendingPathComponent("memory.sqlite").path + suffix)
+                guard fileManager.fileExists(atPath: file.path) else { continue }
+                try? fileManager.removeItem(at: file)
             }
         }
     }
