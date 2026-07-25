@@ -86,9 +86,18 @@
 
 ## 外部テスターへの候補版配布
 
-- [ ] 本番Gatewayを候補版macOSクライアントより先にdeployし、旧クライアントとの互換性を確認する。
-- [ ] `0.1.1` build `3`として署名・notarization済みDMGを作り、正式公開前は限定共有する。
+- [x] 本番GatewayをmacOSクライアントより先にdeployし、旧クライアントとの互換性を維持した
+  （2026-07-25）。
+- [x] `0.1.1` build `3`として署名・notarization済みDMGを公開した。
 - [ ] テスターへ、Xcode版や旧Applications版を終了してから候補版をApplicationsへコピーするよう案内する。
 - [ ] ZDRの運用確認が終わるまでは、実名・私信・業務機密ではなくテスト用データを使用してもらう。
 - [ ] クラッシュ、Keychain許可の反復、アカウント切替、メモリ競合、オフライン復帰、退会を重点確認する。
-- [ ] 合格後に不変URLへ公開し、WebサイトのCTAとlatest aliasを切り替え、`v0.1.1`タグを付ける。
+- [x] 不変URLへ公開し、latest aliasを切り替え、`v0.1.1`タグを付けた。
+
+## `v0.2.0` 正式採用
+
+- [x] Vision / Copilot、自動返信、AI性能共通化を実装しmainへ統合した（2026-07-25）。
+- [x] Web production buildとmacOS unit testを通過した。
+- [ ] `0.2.0` build `4`をDeveloper ID署名・notarizationし、不変URLへ公開する。
+- [ ] DMGをマウントして署名、staple、Gatekeeper、バージョン、SHA-256を再検証する。
+- [ ] 公開URLを`0.2.0` build `4`へpromoteし、Gitタグを付ける。

@@ -192,17 +192,13 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 
 ## リリース運用
 
-現行の正式版は `v0.1.1`（build `3`、ソース `7171d35`）です。配布DMGは
-`https://dl.universal-io.com/releases/0.1.1/build-3/Universal-IO.dmg`、SHA-256は
-`9b46618325f296bd78a7e48b75e383454f58ccb457d8617037dfacd887c2afca`です。データ保持、
-アカウント分離・退会、メモリ差分同期、Keychainのアプリ専用化、開発/本番のアプリ正体分離、
-初回セットアップのUX改善、アプリアイコンを含む。本番Gatewayとマイグレーションは先に反映済み。
+次の正式版は `v0.2.0`（build `4`）です。Vision / Copilot、画面文脈に基づく自動返信、
+共通AIウォームアップ、統一したCompose UIを製品機能として正式採用します。配布DMGの不変URL、
+ソースコミット、SHA-256は署名・notarization・公開完了時にこの節へ記録します。
 
-公開URL（`Universal-IO.dmg`）は現在 0.1.1 build 3 を配信中である。外部テスターへは不変URLを
-限定共有し、公開に確定する時は `--promote` で公開URLを向け直す（下記）。
-一つ前の `v0.1.0`（build `2`、ソース `700f607`）は
-`https://dl.universal-io.com/releases/0.1.0/build-2/Universal-IO.dmg`、SHA-256
-`e0b08385d11cb591019490a93a5bfc2aa3b0f510ef577f116ab768c3f90f2f90` として不変保存されている。
+現行公開版の `v0.1.1`（build `3`、ソース `7171d35`）は
+`https://dl.universal-io.com/releases/0.1.1/build-3/Universal-IO.dmg`、SHA-256
+`9b46618325f296bd78a7e48b75e383454f58ccb457d8617037dfacd887c2afca`として不変保存されています。
 
 公開版は長期ブランチではなく、Gitタグと変更しないバージョン／build別DMGで保存します。
 `main`は次のリリースへ進め、公開済みコードへ緊急修正が必要な場合だけタグからfixブランチを
@@ -216,7 +212,7 @@ bash tools/release.sh
 bash tools/release.sh --publish
 
 # 検証後、公開URL（Universal-IO.dmg）を選んだビルドへ向ける＝公開確定
-bash tools/release.sh --promote 0.1.1 3
+bash tools/release.sh --promote 0.2.0 4
 ```
 
 **ビルドの公開と「公開ダウンロードにする」を分離する。** `--publish` は

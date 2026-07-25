@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-23 ／ ステータス: `v0.1.0` 公開済み・`v0.1.1` 候補準備
+最終更新: 2026-07-25 ／ ステータス: `v0.1.1` 公開済み・`v0.2.0` 正式リリース
 
 ## 製品
 
@@ -127,9 +127,9 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
   `e0b08385d11cb591019490a93a5bfc2aa3b0f510ef577f116ab768c3f90f2f90`。
 - 初期usage、エラー率、レイテンシを監視する。
 
-### R6 — データ境界修正版（`v0.1.1` 候補）
+### R6 — データ境界修正版（`v0.1.1` 完了）
 
-2026-07-23時点で実装と機械検証を完了し、fixブランチからmainへの統合・本番反映待ち。
+実装・機械検証・main統合・本番公開を完了した。
 
 - Compose履歴、下書き、メモリをSupabase user ID単位で分離した。
 - メモリ同期をdirty差分・server cursor・競合解決方式へ変更した。
@@ -138,8 +138,15 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 - request単位usageを90日後に月次rollupへ移すmigrationと日次cronを本番適用・記録した。
 - 削除済みメモリから本文・相手名を消すtriggerは本番適用済み。migration台帳との整合確認を
   `v0.1.1`公開前に完了する。
-- `0.1.1` build `3`へ更新し、Gateway先行deploy、外部候補テスト、署名、notarization、DMG公開の
-  順で進める。公開中の`0.1.0` build `2`は変更せず、rollback可能な履歴として保持する。
+- `0.1.1` build `3`として署名・notarization・DMG公開を完了し、旧版もrollback可能な履歴として保持する。
+
+### R7 — Vision / Copilot・自動返信正式版（`v0.2.0`）
+
+- Vision / Copilotを単一の本番経路へ統合し、画面上の質問から案内へ入りやすくした。
+- Slack / Gmail等のアプリ文脈、Persona、話者・宛先の構造化認識を自動返信へ導入した。
+- Composeの送信UI、可変パネル、ドラッグ移動、自動返信トグルを製品UXとして統一した。
+- 全AI経路の認証・quotaウォームアップと応答後usage記録を共通化した。
+- `0.2.0` build `4`を正式採用し、Developer ID署名、notarization、DMG公開を行う。
 
 ## リリース判定
 
