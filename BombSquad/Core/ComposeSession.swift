@@ -75,8 +75,6 @@ final class ComposeSession: ObservableObject {
     @Published var focusedField: FocusField? = .draft
     @Published var isRecording = false
     @Published var isTranscribing = false
-    @Published private(set) var recentHistoryEntries: [HistoryEntry] = []
-    @Published private(set) var isLoadingHistory = false
     @Published private(set) var situationalContext: SituationalContext?
     @Published private(set) var isContextExcluded = false
     /// Proactive Vision-grounded draft suggestion for the focused external
@@ -100,7 +98,6 @@ final class ComposeSession: ObservableObject {
     private let injectedReviewProvider: ReviewProvider?
     private var contextCaptureTask: Task<SituationalContext?, Never>?
     private var reviewTask: Task<Void, Never>?
-    private var hasLoadedHistory = false
     private var reviewedDraft: String?
     private var reviewedLanguage: OutputLanguage?
 
@@ -315,12 +312,6 @@ final class ComposeSession: ObservableObject {
         }
     }
 
-    func restoreHistoryEntry(_ entry: HistoryEntry) {
-        // Input history is a drafting aid, not a send shortcut. Restoring an
-        // entry must leave the user in control of review and deployment.
-        adoptSuggestedDraft(entry.finalText)
-    }
-
     func adoptSuggestedDraft(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -345,12 +336,6 @@ final class ComposeSession: ObservableObject {
             if let captured { return captured }
             return await pending?.value
         }
-    }
-
-    func loadRecentHistoryIfNeeded() async {
-        guard !hasLoadedHistory else { return }
-        hasLoadedHistory = true
-        await reloadHistory()
     }
 
     func tearDown() {
@@ -484,26 +469,12 @@ final class ComposeSession: ObservableObject {
             FoundationComposeDraftStore.clear()
             Task {
                 await LocalHistoryStore.shared.record(historyInput)
-                await reloadHistory()
             }
             return true
         } catch {
             errorMessage = "送信に失敗しました。もう一度お試しください。"
             return false
         }
-    }
-
-    private func reloadHistory() async {
-        guard AppSettings.isHistoryEnabled() else {
-            recentHistoryEntries = []
-            isLoadingHistory = false
-            return
-        }
-        isLoadingHistory = true
-        defer { isLoadingHistory = false }
-        recentHistoryEntries = (try? await LocalHistoryStore.shared.fetchEntries(
-            limit: 5
-        )) ?? []
     }
 
     private func appending(_ piece: String, to existing: String) -> String {

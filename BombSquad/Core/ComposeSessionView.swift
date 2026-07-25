@@ -29,7 +29,6 @@ struct ComposeSessionView: View {
     @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showHelp = false
-    @State private var isInputHistoryExpanded = false
     @AppStorage(AppSettings.isProactiveSuggestEnabledKey)
     private var isProactiveSuggestEnabled = true
     let onExpansionChange: (Bool) -> Void
@@ -44,8 +43,8 @@ struct ComposeSessionView: View {
         session.result != nil || !(session.streamingRevision ?? "").isEmpty
     }
 
-    private var showsLowerSlot: Bool {
-        true
+    private var showsExpandedContent: Bool {
+        hasReviewSurface || isProactiveSuggestEnabled
     }
 
     var body: some View {
@@ -53,21 +52,18 @@ struct ComposeSessionView: View {
             globalMessages
 
             draftPane
-                .frame(maxHeight: showsLowerSlot ? 190 : .infinity)
+                .frame(maxHeight: showsExpandedContent ? 190 : .infinity)
 
-            if showsLowerSlot {
-                lowerSlot
-                    .frame(maxHeight: .infinity)
-            }
+            lowerSlot
+                .frame(maxHeight: showsExpandedContent ? .infinity : nil)
         }
-        .animation(reduceMotion ? nil : .spring(duration: 0.28), value: showsLowerSlot)
-        .frame(minWidth: 620, minHeight: showsLowerSlot ? 640 : 360)
-        .task { await session.loadRecentHistoryIfNeeded() }
+        .animation(reduceMotion ? nil : .spring(duration: 0.28), value: showsExpandedContent)
+        .frame(minWidth: 620, minHeight: showsExpandedContent ? 640 : 360)
         .onAppear {
             DispatchQueue.main.async { session.focusedField = .draft }
-            onExpansionChange(showsLowerSlot)
+            onExpansionChange(showsExpandedContent)
         }
-        .onChange(of: showsLowerSlot) { _, expanded in
+        .onChange(of: showsExpandedContent) { _, expanded in
             onExpansionChange(expanded)
         }
     }
@@ -151,10 +147,6 @@ struct ComposeSessionView: View {
                     action: session.deployDraft
                 )
             }
-
-            if session.isEmptyDraft, !session.recentHistoryEntries.isEmpty {
-                inputHistory
-            }
         }
         .padding()
     }
@@ -205,79 +197,71 @@ struct ComposeSessionView: View {
                 AppCommandCenter.shared.notifyProactiveSuggestionSettingChanged(enabled)
             }
 
-            switch session.suggestionStatus {
-            case .preparing:
-                VStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("画面を分析しています…")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            case .ready:
-                SendableTextEditor(
-                    text: $session.suggestedDraft,
-                    focusedField: focusedField,
-                    field: .revision,
-                    onSend: session.deploySuggestion
-                )
-                .padding(8)
-                .frame(maxHeight: .infinity)
-                .background(EditorFocusBackground(isFocused: session.focusedField == .revision))
-
-                if let note = session.suggestionNote, !note.isEmpty {
-                    Text(note)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Spacer()
-                    // Confirming sends straight to the target field — the slot
-                    // is editable here, so there is no draft hop in between.
-                    PanelSendButton(
-                        accessibilityLabel: "AI文案を送信",
-                        help: "AI文案を送信（Enter）",
-                        isEnabled: session.hasSuggestion,
-                        action: session.deploySuggestion
-                    )
-                }
-
-            case .unavailable, .idle:
-                // A real failure shows its reason and technical cause; only a
-                // genuinely empty result gets the plain "no suggestion" copy.
-                VStack(alignment: .leading, spacing: 8) {
-                    if !isProactiveSuggestEnabled {
-                        Text("自動返信モードはオフです。")
-                            .foregroundStyle(.secondary)
-                        Text("必要なときに上のスイッチからオンにできます。")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    } else if session.suggestionStatus == .idle {
-                        Text("自動返信モードを準備しています。")
-                            .foregroundStyle(.secondary)
-                    } else if let errorMessage = session.suggestionErrorMessage {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let detail = session.suggestionErrorDetail {
-                            Text(detail)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    } else {
-                        Text("この画面に合わせた文案は出せませんでした。")
+            if isProactiveSuggestEnabled {
+                switch session.suggestionStatus {
+                case .preparing:
+                    VStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("画面を分析しています…")
                             .foregroundStyle(.secondary)
                     }
-                    Text("自分で入力して送信できます。")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                case .ready:
+                    SendableTextEditor(
+                        text: $session.suggestedDraft,
+                        focusedField: focusedField,
+                        field: .revision,
+                        onSend: session.deploySuggestion
+                    )
+                    .padding(8)
+                    .frame(maxHeight: .infinity)
+                    .background(EditorFocusBackground(isFocused: session.focusedField == .revision))
+
+                    if let note = session.suggestionNote, !note.isEmpty {
+                        Text(note)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Spacer()
+                        PanelSendButton(
+                            accessibilityLabel: "AI文案を送信",
+                            help: "AI文案を送信（Enter）",
+                            isEnabled: session.hasSuggestion,
+                            action: session.deploySuggestion
+                        )
+                    }
+
+                case .unavailable, .idle:
+                    VStack(alignment: .leading, spacing: 8) {
+                        if session.suggestionStatus == .idle {
+                            Text("自動返信モードを準備しています。")
+                                .foregroundStyle(.secondary)
+                        } else if let errorMessage = session.suggestionErrorMessage {
+                            Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if let detail = session.suggestionErrorDetail {
+                                Text(detail)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        } else {
+                            Text("この画面に合わせた文案は出せませんでした。")
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("自分で入力して送信できます。")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(16)
+                    .background(EditorFocusBackground(isFocused: false))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(16)
-                .background(EditorFocusBackground(isFocused: false))
             }
         }
         .padding()
@@ -377,48 +361,6 @@ struct ComposeSessionView: View {
                 Spacer()
             }
         }
-    }
-
-    private var inputHistory: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                isInputHistoryExpanded.toggle()
-            } label: {
-                HStack(spacing: 8) {
-                    Text("入力履歴")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Image(systemName: isInputHistoryExpanded ? "chevron.up" : "chevron.down")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isInputHistoryExpanded ? "入力履歴を閉じる" : "入力履歴を開く")
-
-            if isInputHistoryExpanded {
-                ForEach(session.recentHistoryEntries) { entry in
-                    Button {
-                        session.restoreHistoryEntry(entry)
-                        isInputHistoryExpanded = false
-                    } label: {
-                        HStack {
-                            Text(entry.finalText)
-                                .lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "arrow.up.left")
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(8)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("原文欄に入力します")
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     private func shortcut(_ key: String, _ action: String) -> some View {

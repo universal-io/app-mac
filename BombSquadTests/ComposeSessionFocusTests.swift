@@ -40,46 +40,6 @@ final class ComposeSessionFocusTests: XCTestCase {
         XCTAssertEqual(session.focusedField, .revision)
     }
 
-    @MainActor
-    func testRestoringInputHistoryPopulatesDraftWithoutDeploying() {
-        let defaults = UserDefaults.standard
-        let userID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
-        let draftKey = "foundation.composeDraft.\(userID.uuidString.lowercased())"
-        let previousDraft = defaults.object(forKey: draftKey)
-        FoundationComposeDraftStore.activateAccount(userID: userID)
-        defer {
-            FoundationComposeDraftStore.activateAccount(userID: nil)
-            if let previousDraft {
-                defaults.set(previousDraft, forKey: draftKey)
-            } else {
-                defaults.removeObject(forKey: draftKey)
-            }
-        }
-
-        let deployer = FocusTestDeployer()
-        let session = ComposeSession(
-            deployer: deployer,
-            contextCaptureTask: Task<SituationalContext?, Never> { nil },
-            provider: FocusTestReviewProvider()
-        )
-        session.draft = "現在の入力"
-        session.focusedField = .revision
-        let entry = HistoryEntry(
-            id: UUID(),
-            createdAt: Date(),
-            sourceText: "以前の原文",
-            finalText: "履歴から戻す文面",
-            modelID: nil,
-            modelName: nil,
-            outputLanguage: nil
-        )
-
-        session.restoreHistoryEntry(entry)
-
-        XCTAssertEqual(session.draft, "履歴から戻す文面")
-        XCTAssertEqual(session.focusedField, .draft)
-        XCTAssertTrue(deployer.deployedTexts.isEmpty)
-    }
 }
 
 private final class FocusTestDeployer: Deployer {
