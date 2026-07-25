@@ -31,16 +31,31 @@ export type AppSignals = {
  * store accepts these keys and nothing else, which is what keeps the fact store
  * bounded by construction instead of by expiry heuristics.
  *
+ * The label is not decoration: the user has to be able to read their own facts
+ * to correct them, and the confirmation question asks in these words. It is
+ * written in Japanese like the other user-facing strings this gateway returns.
+ *
  * `global` facts hold across every tool; a tool's own keys are scoped to it.
  */
-export type FactKey = string;
+export type FactDeclaration = {
+  key: string;
+  label: string;
+};
 
-export const GLOBAL_FACT_KEYS = [
-  "display_name",
-  "primary_language",
-  "org_name",
-  "role",
-] as const satisfies readonly FactKey[];
+/** Longest value the store accepts. Facts are identifiers and short phrases;
+ * anything longer is a note, and notes are what made the retired memory
+ * feature grow without bound. */
+export const MAX_FACT_VALUE_CHARS = 120;
+
+export const GLOBAL_FACT_SCOPE = "global";
+export const GLOBAL_FACT_SCOPE_LABEL = "共通";
+
+export const GLOBAL_FACTS: readonly FactDeclaration[] = [
+  { key: "display_name", label: "表示名" },
+  { key: "primary_language", label: "主に使う言語" },
+  { key: "org_name", label: "所属組織" },
+  { key: "role", label: "役割・肩書き" },
+];
 
 export type SkillLayer = "tool" | "domain" | "tenant";
 
@@ -59,8 +74,17 @@ export type Skill = {
   affordances?: string;
   /** States worth noticing: unread, addressed-to-you, blocked, overdue. */
   attention?: string;
-  /** Fact keys worth learning while this skill is active, scoped to its id. */
-  facts?: readonly FactKey[];
+  /** Facts worth learning while this skill is active, scoped to its id. */
+  facts?: readonly FactDeclaration[];
+};
+
+/** One addressable place a fact can live, resolved for display. The scope label
+ * is the skill's own name, so the list a user reads says "Slack", not "slack". */
+export type FactSlot = {
+  scope: string;
+  scopeLabel: string;
+  key: string;
+  label: string;
 };
 
 /** The sections a given consumer wants. Suggestion drafts text; Vision explains

@@ -43,5 +43,9 @@ export const GMAIL_SKILL: Skill = {
 - An attachment referenced in the text but absent from the message.
 Do not enumerate these. Mention one only when it is unambiguous and plausibly more urgent than what the user is already doing.`,
 
-  facts: ["address", "signature_name", "org_domain"],
+  facts: [
+    { key: "address", label: "メールアドレス" },
+    { key: "signature_name", label: "署名に使う名前" },
+    { key: "org_domain", label: "組織のドメイン" },
+  ],
 };

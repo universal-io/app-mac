@@ -1,12 +1,14 @@
 import { GMAIL_SKILL } from "@/lib/server/skills/tools/gmail";
 import { SLACK_SKILL } from "@/lib/server/skills/tools/slack";
 import {
-  GLOBAL_FACT_KEYS,
+  GLOBAL_FACTS,
+  GLOBAL_FACT_SCOPE,
+  GLOBAL_FACT_SCOPE_LABEL,
   SUGGEST_SECTIONS,
   VISION_SECTIONS,
   type ActiveSkill,
   type AppSignals,
-  type FactKey,
+  type FactSlot,
   type Skill,
   type SkillSection,
 } from "@/lib/server/skills/types";
@@ -81,19 +83,49 @@ export function visionSkill(signals: AppSignals | undefined): ActiveSkill | null
   return skillAttachment(signals, VISION_SECTIONS);
 }
 
+const GLOBAL_FACT_SLOTS: readonly FactSlot[] = GLOBAL_FACTS.map((fact) => ({
+  scope: GLOBAL_FACT_SCOPE,
+  scopeLabel: GLOBAL_FACT_SCOPE_LABEL,
+  key: fact.key,
+  label: fact.label,
+}));
+
+function slotsFor(skill: Skill): FactSlot[] {
+  return (skill.facts ?? []).map((fact) => ({
+    scope: skill.id,
+    scopeLabel: skill.name,
+    key: fact.key,
+    label: fact.label,
+  }));
+}
+
 /**
- * Fact keys the store may accept for a screen: the global vocabulary plus the
- * keys the matched skills declare, each scoped to its own skill id. Anything
- * outside this set is refused, which is what bounds the store.
+ * Every place a fact may be stored, across all registered skills. This is the
+ * store's only guardrail: a key outside this list is refused, so the fact store
+ * is bounded by the vocabulary rather than by expiry or confidence decay. Adding
+ * a tool extends it from that tool's own file and nowhere else.
  */
-export function allowedFactKeys(
-  signals: AppSignals | undefined,
-): Array<{ scope: string; key: FactKey }> {
-  const allowed = GLOBAL_FACT_KEYS.map((key) => ({ scope: "global", key: key as FactKey }));
+export function factVocabulary(): FactSlot[] {
+  const slots = [...GLOBAL_FACT_SLOTS];
+  for (const layer of [TOOL_SKILLS, DOMAIN_SKILLS, TENANT_SKILLS]) {
+    for (const skill of layer) slots.push(...slotsFor(skill));
+  }
+  return slots;
+}
+
+export function factSlot(scope: string, key: string): FactSlot | null {
+  return factVocabulary().find((slot) => slot.scope === scope && slot.key === key) ?? null;
+}
+
+/**
+ * The slots relevant to one screen: the global vocabulary plus what the matched
+ * skills declare. This is what a detection may ask about and what injection may
+ * read — deliberately narrower than the whole store.
+ */
+export function allowedFactSlots(signals: AppSignals | undefined): FactSlot[] {
+  const allowed = [...GLOBAL_FACT_SLOTS];
   for (const skill of resolveSkills(signals)) {
-    for (const key of skill.facts ?? []) {
-      allowed.push({ scope: skill.id, key });
-    }
+    allowed.push(...slotsFor(skill));
   }
   return allowed;
 }

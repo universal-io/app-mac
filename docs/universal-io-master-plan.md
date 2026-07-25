@@ -177,8 +177,11 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
   **初回ターンで必ずSkillが効くこと**を受け入れ条件とし、製品判定はVision要求と同時（撮影と並行）に
   開始する。Compose経由ならsummon時のSituationalContextをそのまま使う。Chromiumはweb AXツリーを
   遅延構築するため、ツリーが成長している間だけ追加パスを回し、ネイティブ窓と確定したら即終了する。
-- **M3** ファクトストア（`scope`/`key`/`value`のupsert、Skill宣言の語彙のみ受理、
-  管理画面で一覧・編集・削除）。全件でも数十行のため差分同期もtombstoneも持たない。
+- **M3（完了）** ファクトストア。`bs_user_facts`（`user_id`/`scope`/`key`/`value`のupsert、
+  RLSは本人のみ）、`/api/facts`のGET/PUT/DELETE、管理画面「覚えていること」で一覧・編集・削除。
+  語彙外キーは書き込み時に拒否し、これを唯一のガードレールとする（削除は語彙検査なし＝Skill廃止後の
+  残骸をユーザーが消せる）。表示名（label）はSkill定義側が持ち、ツール追加でクライアントは変わらない。
+  全件でも数十行のため差分同期もtombstoneも持たない。**検出と注入はまだ無い**（M4／M5）。
 - **M4** 検出時にその場で確認するUI。専用呼び出しを作らず、suggestの構造化出力へ
   `fact_candidate`を1つ足す。1セッション1問、拒否済みキーは再質問しない。
 - **M5** ファクト注入（global＋現在ツールのscopeのみ）と固定Personaの撤去。

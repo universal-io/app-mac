@@ -208,6 +208,40 @@ macOSはこの名前をパネルに表示する。Skillのサイレント注入�
 形で知識を注入しない。`meta.skill`は同じものをusage用にidだけで持つ。
 画像・入力本文・回答本文はusageに保存しない（運用情報のみ）。
 
+## ユーザーファクト
+
+`/api/facts` はSkillsが宣言したキー語彙に沿って、ユーザー本人に関する事実を保持する。
+AI呼び出しもusage記録も行わない。プランが失効していても閲覧・編集できる（アカウント情報と同じ扱い）。
+
+- `GET /api/facts` — 語彙の全スロットを返す。未登録スロットは`value: null`で含める
+  （アプリが何を覚え得るかを見せるのが目的で、覚えた分だけを見せるのではない）
+- `PUT /api/facts` — body `{"scope","key","value"}`。**語彙に無いキーは`UNKNOWN_FACT_KEY`で拒否**する。
+  これがストア肥大化に対する唯一のガードレール。値は制御文字を除去し、連続空白を畳んで
+  最大120文字
+- `DELETE /api/facts` — body `{"scope","key"}`。語彙から外れた過去キーも削除できる
+  （Skill廃止後に残った行をユーザーが消せなくなるため、語彙検査は書き込みだけに掛ける）
+- 実装: `web/app/api/facts/route.ts` ／ クライアント: `GatewayFactsClient`
+
+```json
+{
+  "facts": [
+    {
+      "scope": "slack",
+      "scope_label": "Slack",
+      "key": "account_name",
+      "label": "Slackでの表示名",
+      "value": "Kaya Matsumoto",
+      "updated_at": "2026-07-26T00:00:00Z"
+    }
+  ],
+  "max_value_chars": 120
+}
+```
+
+`scope`は`global`かSkillのid。`label`／`scope_label`はGateway側（Skill定義）が持ち、
+macOSは表示するだけ。ツールを1つ増やしてもクライアントは変更しない。
+全件でも数十行のため、cursor・差分・tombstoneは持たない。
+
 ## アカウント・管理
 
 - `GET /account`

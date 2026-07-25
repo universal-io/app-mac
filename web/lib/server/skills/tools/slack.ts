@@ -40,7 +40,11 @@ export const SLACK_SKILL: Skill = {
 - Draft indicators mean unsent text is waiting in another conversation.
 Do not enumerate these. Most screens have unread markers, and reading them aloud every time is noise. Mention one only when it is both unambiguous and plausibly more urgent than what the user is already doing.`,
 
-  facts: ["account_name", "handle", "workspace"],
+  facts: [
+    { key: "account_name", label: "Slackでの表示名" },
+    { key: "handle", label: "Slackのハンドル" },
+    { key: "workspace", label: "主に使うワークスペース" },
+  ],
 };
 
 /** Word-boundary match so "Slackline Inc" in a title does not count. */
