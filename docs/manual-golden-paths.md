@@ -98,6 +98,8 @@
 
 - [x] Vision / Copilot、自動返信、AI性能共通化を実装しmainへ統合した（2026-07-25）。
 - [x] Web production buildとmacOS unit testを通過した。
-- [ ] `0.2.0` build `4`をDeveloper ID署名・notarizationし、不変URLへ公開する。
-- [ ] DMGをマウントして署名、staple、Gatekeeper、バージョン、SHA-256を再検証する。
-- [ ] 公開URLを`0.2.0` build `4`へpromoteし、Gitタグを付ける。
+- [x] `0.2.0` build `4`をDeveloper ID署名・notarizationし、不変URLへ公開した
+  （2026-07-25、Apple notary Accepted）。
+- [x] 公開DMGを再ダウンロード・マウントし、署名、staple、Gatekeeper、`0.2.0` build `4`、
+  Universal binary、SHA-256一致を再検証した。
+- [x] 公開URLを`0.2.0` build `4`へpromoteした。Gitタグはリリース記録コミットへ付与する。

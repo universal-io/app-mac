@@ -192,9 +192,11 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 
 ## リリース運用
 
-次の正式版は `v0.2.0`（build `4`）です。Vision / Copilot、画面文脈に基づく自動返信、
-共通AIウォームアップ、統一したCompose UIを製品機能として正式採用します。配布DMGの不変URL、
-ソースコミット、SHA-256は署名・notarization・公開完了時にこの節へ記録します。
+現行の正式版は `v0.2.0`（build `4`、バイナリソース `ce74d12`）です。配布DMGは
+`https://dl.universal-io.com/releases/0.2.0/build-4/Universal-IO.dmg`、SHA-256は
+`98f14799181b45933d5e77df0a55aebbf7f65d9be3a0d87748e0b97551e093c7`です。
+Vision / Copilot、画面文脈に基づく自動返信、共通AIウォームアップ、統一したCompose UIを
+製品機能として正式採用しました。
 
 現行公開版の `v0.1.1`（build `3`、ソース `7171d35`）は
 `https://dl.universal-io.com/releases/0.1.1/build-3/Universal-IO.dmg`、SHA-256
