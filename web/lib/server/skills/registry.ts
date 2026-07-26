@@ -1,3 +1,4 @@
+import { GA4_SKILL } from "@/lib/server/skills/tools/ga4";
 import { GMAIL_SKILL } from "@/lib/server/skills/tools/gmail";
 import { SLACK_SKILL } from "@/lib/server/skills/tools/slack";
 import {
@@ -20,6 +21,7 @@ import {
 const TOOL_SKILLS: readonly Skill[] = [
   SLACK_SKILL,
   GMAIL_SKILL,
+  GA4_SKILL,
 ];
 
 const DOMAIN_SKILLS: readonly Skill[] = [];

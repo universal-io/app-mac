@@ -202,8 +202,12 @@ bundle ID で判定します。
 （reading）、その製品での自然な書き方（conventions）、使える機能（affordances）、注意すべき状態
 （attention）、そこで学ぶ価値のあるユーザーファクトのキー語彙を持ちます。用途に応じて渡す
 セクションを変え、文案生成にはreadingとconventions、Vision／Copilotにはreading・affordances・
-attentionを渡します。現行はSlackとGmailです。Googleのような提供元単位ではなく、Gmail、Docs、
-SheetsのようにUIの意味が異なる製品単位で追加します。
+attentionを渡します。現行はSlack、Gmail、Google アナリティクス（GA4）です。Googleのような提供元
+単位ではなく、Gmail、Docs、SheetsのようにUIの意味が異なる製品単位で追加します。
+
+ツールによって厚いセクションが変わります。SlackやGmailは書き方（conventions）が厚く、GA4のような
+操作系は逆にaffordancesとattentionが厚く、conventionsを持ちません。持たないセクションは
+単に注入されないので、文案生成はGA4ではreadingだけを受け取ります。
 
 **適用中のSkillは必ずパネルに表示します。** ユーザーが見えない知識は、疑うことも直すこともできない
 ためです。Skillはデータであり制御フローに触れないので、該当するSkillが無い画面でも汎用の経路が
