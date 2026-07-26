@@ -5,7 +5,7 @@ import SwiftUI
 /// One place decides size, placement, and activation behavior.
 struct PanelSpec: Equatable {
     enum Placement: Equatable {
-        /// Centered on the screen the cursor is on.
+        /// Centered on the screen the user is working on (`ActiveDisplay`).
         case centered
         /// Bottom-right corner strip (copilot: never cover the navigated screen).
         case bottomTrailing
@@ -181,12 +181,10 @@ final class PanelController {
         appliedSpec = spec
     }
 
-    /// Center on whichever screen the cursor is on, so the panel never
-    /// spills off-screen.
+    /// Center on the screen the user is working on — the one showing the app
+    /// they summoned us from, not the one the pointer happens to rest on.
     private func centerOnActiveScreen(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
+        guard let visible = ActiveDisplay.screen()?.visibleFrame else { return }
         let size = window.frame.size
         window.setFrameOrigin(NSPoint(
             x: visible.midX - size.width / 2,
@@ -194,11 +192,9 @@ final class PanelController {
         ))
     }
 
-    /// Bottom-right corner of the screen the cursor is on, with a margin.
+    /// Bottom-right corner of the working screen, with a margin.
     private func positionBottomTrailing(_ window: NSWindow) {
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
+        guard let visible = ActiveDisplay.screen()?.visibleFrame else { return }
         let margin: CGFloat = 24
         let size = window.frame.size
         window.setFrameOrigin(NSPoint(

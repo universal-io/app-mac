@@ -220,6 +220,9 @@ final class SessionCoordinator {
             return
         }
         summonTargetApp = NSWorkspace.shared.frontmostApplication
+        // Resolve the working screen while that app is still frontmost; once our
+        // panel activates, the frontmost app is us.
+        ActiveDisplay.pin(to: summonTargetApp)
         // Before the capture, not after it: the screenshot is the longest thing
         // in this path, and resolving the product underneath it in parallel is
         // what lets the opening observation arrive with its skill attached.
@@ -238,11 +241,7 @@ final class SessionCoordinator {
         captureTask?.cancel()
         captureTask = Task { [weak self] in
             guard let self else { return }
-            let mouse = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-            let displayID = screen?.deviceDescription[
-                NSDeviceDescriptionKey("NSScreenNumber")
-            ] as? CGDirectDisplayID
+            let displayID = ActiveDisplay.displayID(of: ActiveDisplay.screen())
             let completion: CaptureCompletion
             do {
                 let attachment = try await self.screenshotCapture.captureFullScreen(displayID: displayID)
@@ -271,6 +270,10 @@ final class SessionCoordinator {
     private func presentComposeSession() {
         let target = NSWorkspace.shared.frontmostApplication
         summonTargetApp = target
+        // Both of these read the source app while it is still frontmost: the
+        // screen it is on, and whether it has an editable field focused. After
+        // our panel activates, neither is answerable.
+        ActiveDisplay.pin(to: target)
         // Capture focus editability synchronously, before the panel activates
         // and the source app loses first responder.
         composeFocusEditable = target.map {
@@ -317,6 +320,10 @@ final class SessionCoordinator {
         Task {
             await GatewayAIWarmup.warm([.transform])
         }
+        // The screen is resolved from the app the selection came from, which is
+        // still frontmost at this point; the app handle itself is not retained
+        // because the transform exit is clipboard-only.
+        ActiveDisplay.pin(to: NSWorkspace.shared.frontmostApplication)
         summonTargetApp = nil
         let rootContextTask = SituationalContextService.captureTask()
         let session = TransformSession(
@@ -360,6 +367,7 @@ final class SessionCoordinator {
         visionSession?.tearDown()
         visionSession = nil
         summonTargetApp = nil
+        ActiveDisplay.unpin()
         if let appToRestore, !appToRestore.isTerminated {
             appToRestore.activate()
         }
@@ -554,11 +562,7 @@ final class SessionCoordinator {
         composeGeneration += 1
         let generation = composeGeneration
         composePreCaptureTask = Task { [weak self] in
-            let mouse = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-            let displayID = screen?.deviceDescription[
-                NSDeviceDescriptionKey("NSScreenNumber")
-            ] as? CGDirectDisplayID
+            let displayID = ActiveDisplay.displayID(of: ActiveDisplay.screen())
             let attachment = try? await ScreenshotCaptureService().captureFullScreen(displayID: displayID)
             await MainActor.run {
                 guard let self else {
@@ -746,11 +750,8 @@ final class SessionCoordinator {
         captureTask = Task { [weak self, weak composeSession] in
             guard let self, let composeSession else { return }
 
-            let mouse = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
-            let displayID = screen?.deviceDescription[
-                NSDeviceDescriptionKey("NSScreenNumber")
-            ] as? CGDirectDisplayID
+            let screen = ActiveDisplay.screen()
+            let displayID = ActiveDisplay.displayID(of: screen)
 
             let completion: CaptureCompletion
             do {
