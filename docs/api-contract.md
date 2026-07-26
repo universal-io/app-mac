@@ -181,7 +181,15 @@ attentionで、attentionは列挙禁止の抑制ルールとして渡す（確�
   "result": {
     "draft": "フォームに入れるべき文案（提案できない時は空文字）",
     "note": "検出したフォームと提案意図の一言",
-    "skill": { "id": "slack", "name": "Slack" }
+    "skill": { "id": "slack", "name": "Slack" },
+    "fact_question": {
+      "scope": "slack",
+      "scope_label": "Slack",
+      "key": "account_name",
+      "label": "Slackでの表示名",
+      "value": "Kaya Matsumoto",
+      "question": "Slackでの表示名は「Kaya Matsumoto」ですか？"
+    }
   },
   "meta": {
     "model_vendor": "openai",
@@ -190,7 +198,7 @@ attentionで、attentionは列挙禁止の抑制ルールとして渡す（確�
     "api": "responses",
     "image_detail": "original",
     "reasoning_effort": "medium",
-    "prompt_version": "responder-mission-v3",
+    "prompt_version": "responder-mission-v4-facts",
     "skill": "slack",
     "fallback_used": false,
     "latency_ms": 0,
@@ -208,6 +216,20 @@ macOSはこの名前をパネルに表示する。Skillのサイレント注入�
 形で知識を注入しない。`meta.skill`は同じものをusage用にidだけで持つ。
 画像・入力本文・回答本文はusageに保存しない（運用情報のみ）。
 
+`result.fact_question` は**ユーザー本人に関する事実の確認質問**で、候補が無ければ`null`。
+検出専用の呼び出しは作らず、この構造化出力に`fact_candidate`を1つ足すだけなので追加の
+レイテンシもコストも無い。仕様:
+
+- 1応答につき最大1件。モデルはGatewayが渡した**askableスロットのenumからidを選ぶだけ**で、
+  キーを創作できない。該当が無ければ空文字を返す
+- askableスロット＝有効Skill＋globalの語彙から、**保存済み・拒否済み・打ち切り済み（通算3回）**を
+  除いたもの。空なら`fact_candidate`はスキーマからもプロンプトからも消え、従来と同一の呼び出しになる
+- `value`は画面から読み取った文字列。Gatewayが制御文字除去・空白畳み・120文字上限で正規化し、
+  `question`もGatewayが組み立てる（値は必ず引用符の中。プロンプトインジェクション対策）
+- `meta`/usageには`fact_question_asked`（真偽）だけを記録し、キーも値も残さない
+- 質問を返した時点で`bs_fact_prompts.ask_count`を応答後に加算する。答えずに閉じても1回として数え、
+  通算3回でそのキーを打ち切る
+
 ## ユーザーファクト
 
 `/api/facts` はSkillsが宣言したキー語彙に沿って、ユーザー本人に関する事実を保持する。
@@ -218,9 +240,14 @@ AI呼び出しもusage記録も行わない。プランが失効していても�
 - `PUT /api/facts` — body `{"scope","key","value"}`。**語彙に無いキーは`UNKNOWN_FACT_KEY`で拒否**する。
   これがストア肥大化に対する唯一のガードレール。値は制御文字を除去し、連続空白を畳んで
   最大120文字
+- `POST /api/facts` — body `{"scope","key","decision":"declined"}`。確認質問への「いいえ」を記録し、
+  そのキーを二度とたずねない。「はい」は`PUT`だけで足りる（保存済みキーは再質問対象から外れる）
 - `DELETE /api/facts` — body `{"scope","key"}`。語彙から外れた過去キーも削除できる
   （Skill廃止後に残った行をユーザーが消せなくなるため、語彙検査は書き込みだけに掛ける）
 - 実装: `web/app/api/facts/route.ts` ／ クライアント: `GatewayFactsClient`
+- 質問の抑制状態は`bs_fact_prompts`（`ask_count` / `declined_at`）に持ち、値そのものは
+  `bs_user_facts`にしか置かない。ユーザーごとの状態参照は`web/lib/server/facts-store.ts`が唯一の窓口で、
+  語彙（`web/lib/server/skills/`）は純粋なデータのまま保つ
 
 ```json
 {

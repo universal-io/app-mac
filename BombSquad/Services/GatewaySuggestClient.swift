@@ -12,6 +12,9 @@ struct ComposeSuggestion: Equatable {
     /// Display name of the skill the gateway applied, or nil when no skill
     /// matched the screen. Shown in the panel: a skill never acts silently.
     let skillName: String?
+    /// At most one fact to confirm with the user, or nil. Detection rides along
+    /// with the draft — there is no separate call and no extra latency for it.
+    let factQuestion: FactQuestion?
 }
 
 /// Gateway-backed client for `POST /ai/suggest`. Mirrors `GatewayVisionClient`:
@@ -95,8 +98,27 @@ struct GatewaySuggestClient {
             note: note.trimmingCharacters(in: .whitespacesAndNewlines),
             skillName: (skill?["name"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-                .nilWhenEmpty
+                .nilWhenEmpty,
+            factQuestion: factQuestion(from: result["fact_question"])
         )
+    }
+
+    /// A malformed question is dropped rather than failing the whole response:
+    /// the draft is the reason this call was made, and losing it over an
+    /// optional side task would be the wrong trade every time.
+    private static func factQuestion(from raw: Any?) -> FactQuestion? {
+        guard
+            let payload = raw as? [String: Any],
+            let scope = (payload["scope"] as? String)?.nilWhenEmpty,
+            let key = (payload["key"] as? String)?.nilWhenEmpty,
+            let value = (payload["value"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilWhenEmpty,
+            let question = (payload["question"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilWhenEmpty
+        else { return nil }
+        return FactQuestion(scope: scope, key: key, value: value, question: question)
     }
 }
 

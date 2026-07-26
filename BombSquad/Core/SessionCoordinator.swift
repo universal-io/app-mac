@@ -663,6 +663,10 @@ final class SessionCoordinator {
                         note: suggestion.note,
                         skillName: suggestion.skillName
                     )
+                    // Independent of whether a draft came back: the screen may
+                    // establish who the user is even when it offers nothing to
+                    // write. Presented after, so it never displaces the draft.
+                    session.presentFactQuestion(suggestion.factQuestion)
                 }
             } catch is CancellationError {
                 return

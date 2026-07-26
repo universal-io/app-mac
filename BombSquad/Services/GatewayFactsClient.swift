@@ -38,6 +38,16 @@ struct GatewayFactsClient {
         )
     }
 
+    /// Records a "no" to a confirmation question. Saying yes needs no call of
+    /// its own — `save` stores the value, and a stored fact is already reason
+    /// enough never to ask again.
+    func decline(scope: String, key: String) async throws {
+        _ = try await client.postJSON(
+            "facts",
+            body: ["scope": scope, "key": key, "decision": "declined"]
+        )
+    }
+
     func delete(scope: String, key: String) async throws {
         _ = try await client.postJSON(
             "facts",

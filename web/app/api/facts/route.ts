@@ -13,7 +13,11 @@ import {
   GatewayError,
 } from "@/lib/server/gateway";
 import { factSlot, factVocabulary } from "@/lib/server/skills/registry";
-import { MAX_FACT_VALUE_CHARS } from "@/lib/server/skills/types";
+import {
+  MAX_FACT_VALUE_CHARS,
+  normalizeFactValue,
+} from "@/lib/server/skills/types";
+import { recordFactDeclined } from "@/lib/server/facts-store";
 import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 
 type StoredFact = {
@@ -78,7 +82,7 @@ export async function PUT(request: Request): Promise<Response> {
     if (!factSlot(scope, key)) {
       return errorResponse(400, "UNKNOWN_FACT_KEY", "その項目は保存できません。", null);
     }
-    const value = normalizeValue(rawValue);
+    const value = normalizeFactValue(rawValue);
     if (!value) {
       return errorResponse(
         400,
@@ -107,6 +111,41 @@ export async function PUT(request: Request): Promise<Response> {
   } catch (error) {
     if (error instanceof GatewayError) return gatewayErrorResponse(error, null);
     console.error("[/api/facts] PUT internal error:", error);
+    return errorResponse(500, "INTERNAL_ERROR", "Unclassified server failure.", null);
+  }
+}
+
+/**
+ * The answer to a confirmation question when it is "no". "Yes" needs nothing
+ * of its own — it is a PUT, and a stored fact is already reason enough never to
+ * ask again. A decline leaves no value behind, so without this the same
+ * question would come back next session.
+ */
+export async function POST(request: Request): Promise<Response> {
+  try {
+    const body = (await request.json().catch(() => null)) as
+      | { scope?: unknown; key?: unknown; decision?: unknown }
+      | null;
+    const scope = typeof body?.scope === "string" ? body.scope : null;
+    const key = typeof body?.key === "string" ? body.key : null;
+    if (!scope || !key || body?.decision !== "declined") {
+      return errorResponse(
+        400,
+        "BAD_REQUEST",
+        "scope, key and decision: 'declined' are required.",
+        null,
+      );
+    }
+
+    const { userId } = await authenticate(request, { requireActiveEntitlement: false });
+    const recorded = await recordFactDeclined(userId, scope, key);
+    if (!recorded) {
+      return errorResponse(500, "FACT_WRITE_FAILED", "内容を保存できませんでした。", null);
+    }
+    return Response.json({ declined: true });
+  } catch (error) {
+    if (error instanceof GatewayError) return gatewayErrorResponse(error, null);
+    console.error("[/api/facts] POST internal error:", error);
     return errorResponse(500, "INTERNAL_ERROR", "Unclassified server failure.", null);
   }
 }
@@ -144,16 +183,4 @@ export async function DELETE(request: Request): Promise<Response> {
     console.error("[/api/facts] DELETE internal error:", error);
     return errorResponse(500, "INTERNAL_ERROR", "Unclassified server failure.", null);
   }
-}
-
-/** Facts are shown back to the user and, later, injected into prompts. Newlines
- * and control characters have no place in an identifier and are exactly what a
- * hostile screen would use to break out of the surrounding text. */
-function normalizeValue(raw: string): string | null {
-  const collapsed = raw
-    .replace(/[\u0000-\u001F\u007F]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!collapsed || collapsed.length > MAX_FACT_VALUE_CHARS) return null;
-  return collapsed;
 }

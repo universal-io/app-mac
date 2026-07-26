@@ -117,6 +117,17 @@ bs_user_facts (user_id, scope, key, value, updated_at)
 全件でも数十行なので、差分同期・cursor・tombstone は持たない。全件 pull/push の
 last-write-wins で足りる。旧メモリの複雑な同期機構は引き継がない。
 
+質問の抑制状態だけは別テーブルへ置く。
+
+```
+bs_fact_prompts (user_id, scope, key, ask_count, declined_at, updated_at)
+  unique (user_id, scope, key)
+```
+
+値と抑制状態を1行に混ぜない。**保存済みであること自体が「もう聞かない」理由**なので重複はせず、
+ユーザーが値を消せば同じキーをまた聞ける（回数は引き継ぐ）。キーは同じ閉じた語彙なので、
+この表も構造上有限である。
+
 ### 聞き方
 
 検出専用の呼び出しは作らない。suggest は Compose を開くたびに画面を読んで構造化JSONを

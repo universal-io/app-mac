@@ -274,6 +274,14 @@ struct ComposeSessionView: View {
                     .padding(16)
                     .background(EditorFocusBackground(isFocused: false))
                 }
+
+                if let question = session.factQuestion {
+                    FactQuestionRow(
+                        question: question,
+                        state: session.factQuestionState,
+                        onAnswer: session.answerFactQuestion(accepted:)
+                    )
+                }
             }
         }
         .padding()
@@ -392,6 +400,66 @@ struct ComposeSessionView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)です")
+    }
+}
+
+/// The one thing the app may ask about the user in a session, asked in place
+/// rather than through a settings screen nobody opens. Deliberately quiet: it
+/// sits below the draft, never takes focus, and ignoring it is a complete
+/// answer — the gateway stops asking on its own after a few unanswered turns.
+private struct FactQuestionRow: View {
+    let question: FactQuestion
+    let state: FactQuestionState
+    let onAnswer: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "person.crop.circle.badge.questionmark")
+                .foregroundStyle(.secondary)
+
+            switch state {
+            case .asking, .saving:
+                Text(question.question)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if state == .saving {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("はい") { onAnswer(true) }
+                        .controlSize(.small)
+                        .help("この内容を覚えます。あとから管理画面で編集・削除できます")
+                        .accessibilityLabel("はい、覚える")
+                    Button("いいえ") { onAnswer(false) }
+                        .controlSize(.small)
+                        .help("覚えません。この項目は次回以降たずねません")
+                        .accessibilityLabel("いいえ、覚えない")
+                }
+
+            case .saved:
+                Text("覚えました。管理画面で編集・削除できます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+
+            case .declined:
+                Text("覚えません。この項目は次回以降たずねません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+
+            case .failed(let message):
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Spacer(minLength: 8)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
     }
 }
 

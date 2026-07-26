@@ -94,6 +94,11 @@ final class ComposeSession: ObservableObject {
     /// Technical detail behind the failure (status code, endpoint, raw error),
     /// shown small next to the message so a real cause is never hidden.
     @Published private(set) var suggestionErrorDetail: String?
+    /// The one fact this session may ask about, if the gateway found one. At
+    /// most one per session by construction: a compose session makes a single
+    /// suggestion call, and that call returns at most one candidate.
+    @Published private(set) var factQuestion: FactQuestion?
+    @Published private(set) var factQuestionState: FactQuestionState = .asking
 
     let outputLanguage: OutputLanguage
 
@@ -209,6 +214,7 @@ final class ComposeSession: ObservableObject {
         suggestionNote = nil
         activeSkillName = nil
         clearSuggestionError()
+        clearFactQuestion()
         suggestionStatus = .idle
         if focusedField == .revision {
             focusedField = .draft
@@ -237,6 +243,58 @@ final class ComposeSession: ObservableObject {
         suggestionErrorDetail = nil
     }
 
+    // MARK: - Fact confirmation
+
+    /// Show the one question this session may ask. Silent learning is not an
+    /// option here: nothing is stored unless the user says yes to a sentence
+    /// they can read.
+    func presentFactQuestion(_ question: FactQuestion?) {
+        guard let question else { return }
+        factQuestion = question
+        factQuestionState = .asking
+    }
+
+    /// "No" means "do not store this", not "that value is wrong" — one meaning,
+    /// one pair of buttons. A wrong value is corrected on the management
+    /// screen, which is also where anything stored here can be deleted.
+    func answerFactQuestion(accepted: Bool) {
+        guard let question = factQuestion, factQuestionState == .asking else { return }
+        guard let client = GatewayFactsClient.make() else {
+            factQuestionState = .failed("保存できませんでした。")
+            return
+        }
+        factQuestionState = .saving
+        Task { [weak self] in
+            do {
+                if accepted {
+                    try await client.save(
+                        scope: question.scope,
+                        key: question.key,
+                        value: question.value
+                    )
+                } else {
+                    try await client.decline(scope: question.scope, key: question.key)
+                }
+                await MainActor.run {
+                    guard let self, self.factQuestion == question else { return }
+                    self.factQuestionState = accepted ? .saved : .declined
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self, self.factQuestion == question else { return }
+                    self.factQuestionState = .failed(
+                        accepted ? "保存できませんでした。" : "設定を記録できませんでした。"
+                    )
+                }
+            }
+        }
+    }
+
+    private func clearFactQuestion() {
+        factQuestion = nil
+        factQuestionState = .asking
+    }
+
     /// Send the (possibly edited) suggestion straight to the target field.
     /// Confirming the focused slot is a single action: the old path adopted the
     /// text into the draft and then required a second confirm, which is a
@@ -255,6 +313,7 @@ final class ComposeSession: ObservableObject {
         suggestedDraft = ""
         suggestionNote = nil
         activeSkillName = nil
+        clearFactQuestion()
         suggestionStatus = .idle
         focusedField = .draft
     }
@@ -346,11 +405,13 @@ final class ComposeSession: ObservableObject {
         result = nil
         revisedDraft = ""
         streamingRevision = nil
-        // The review claims the lower slot; drop any pending/ready suggestion.
+        // The review claims the lower slot; drop any pending/ready suggestion
+        // and the question that shared that space.
         suggestionStatus = .idle
         suggestedDraft = ""
         suggestionNote = nil
         activeSkillName = nil
+        clearFactQuestion()
         isReviewing = true
         let input = draft
         let language = outputLanguage

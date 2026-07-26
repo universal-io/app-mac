@@ -7,6 +7,12 @@ import {
 } from "@/lib/server/ai-routing";
 import type { OperationalNotice } from "@/lib/server/operational-notice";
 import { suggestSkill } from "@/lib/server/skills/registry";
+import {
+  factQuestionText,
+  factSlotId,
+  normalizeFactValue,
+  type FactSlot,
+} from "@/lib/server/skills/types";
 
 // The proactive compose suggestion reads the same immutable screenshot Vision
 // uses, but its job is the opposite of Vision's: instead of only interpreting
@@ -25,7 +31,7 @@ import { suggestSkill } from "@/lib/server/skills/registry";
 export const SUGGEST_REASONING_EFFORT = "medium";
 export const SUGGEST_IMAGE_DETAIL = "original";
 export const SUGGEST_MAX_OUTPUT_TOKENS = 4_000;
-export const SUGGEST_PROMPT_VERSION = "responder-mission-v3";
+export const SUGGEST_PROMPT_VERSION = "responder-mission-v4-facts";
 
 // Kept separate from the task prompt so a future account profile can replace
 // this attachment without weakening the shared grounding and safety rules.
@@ -44,6 +50,20 @@ export type SuggestResult = {
   note: string;
 };
 
+/**
+ * One fact the screen appeared to establish about the user, resolved back to
+ * the slot that may hold it and to the sentence we will ask about it. Nothing
+ * is stored until the user says yes — this is a question, not a write.
+ */
+export type FactCandidate = {
+  scope: string;
+  scopeLabel: string;
+  key: string;
+  label: string;
+  value: string;
+  question: string;
+};
+
 type SuggestGrounding = {
   latest_message_sender: string;
   latest_message_addressee: string;
@@ -53,18 +73,28 @@ type SuggestGrounding = {
   requested_action_owner: "user" | "other" | "both" | "unknown";
   reply_intent: string;
   draft: string;
+  fact_candidate?: { slot: string; value: string };
 };
 
 export type SuggestEngineInput = {
   imageDataURL: string;
   context?: SuggestContext;
   language: "japanese" | "english";
+  /**
+   * Slots this user may still be asked about on this screen. Empty — the
+   * normal case once a user has been using a tool for a while — removes the
+   * field from the schema and the paragraph from the prompt entirely, so the
+   * drafting task carries no weight it cannot use.
+   */
+  askableFacts?: readonly FactSlot[];
 };
 
 export type SuggestEngineOutput = {
   result: SuggestResult;
   /** The skill that shaped this answer, surfaced so injection is never silent. */
   skill: { id: string; name: string } | null;
+  /** At most one fact to confirm with the user, or null. */
+  factCandidate: FactCandidate | null;
   route: "snapshot_suggest";
   modelVendor: string;
   modelId: string;
@@ -89,6 +119,7 @@ export async function runSuggest(
   return {
     result: routed.value.result,
     skill: skill && { id: skill.id, name: skill.name },
+    factCandidate: routed.value.factCandidate,
     route: "snapshot_suggest",
     modelVendor: routed.modelVendor,
     modelId: routed.modelId,
@@ -103,7 +134,12 @@ export async function runSuggest(
 async function callSuggestModel(
   input: SuggestEngineInput,
   target: AIModelTarget,
-): Promise<{ result: SuggestResult; inputTokens: number; outputTokens: number }> {
+): Promise<{
+  result: SuggestResult;
+  factCandidate: FactCandidate | null;
+  inputTokens: number;
+  outputTokens: number;
+}> {
   if (target.api !== "responses") {
     throw new ProviderCallError(`Suggestion cannot use API "${target.api}".`);
   }
@@ -160,14 +196,45 @@ async function callSuggestModel(
       draft: parsed.draft,
       note: groundingNote(parsed),
     },
+    factCandidate: resolveFactCandidate(parsed.fact_candidate, input.askableFacts),
     inputTokens: root.usage?.input_tokens ?? 0,
     outputTokens: root.usage?.output_tokens ?? 0,
+  };
+}
+
+/**
+ * Turn the model's chosen slot back into a slot we declared, or into nothing.
+ * The enum already limits what it can name, but the value is text lifted off a
+ * screen we do not control, so it is normalized here and quoted by
+ * `factQuestionText` before any of it reaches the user.
+ */
+function resolveFactCandidate(
+  candidate: { slot: string; value: string } | undefined,
+  askable: readonly FactSlot[] | undefined,
+): FactCandidate | null {
+  const slotId = candidate?.slot?.trim();
+  if (!slotId || !askable?.length) return null;
+  const slot = askable.find((entry) => factSlotId(entry.scope, entry.key) === slotId);
+  if (!slot) return null;
+  const value = normalizeFactValue(candidate!.value ?? "");
+  if (!value) return null;
+  return {
+    scope: slot.scope,
+    scopeLabel: slot.scopeLabel,
+    key: slot.key,
+    label: slot.label,
+    value,
+    question: factQuestionText(slot.label, value),
   };
 }
 
 function requestBody(input: SuggestEngineInput, target: AIModelTarget): Record<string, unknown> {
   const languageName = input.language === "japanese" ? "Japanese" : "English";
   const skill = suggestSkill(input.context);
+  // Learning is strictly additive: with nothing left to ask, neither the field
+  // nor its instructions exist, and this is the same call it was before.
+  const askable = input.askableFacts ?? [];
+  const slotIds = askable.map((slot) => factSlotId(slot.scope, slot.key));
 
   return {
     model: target.modelId,
@@ -197,6 +264,22 @@ function requestBody(input: SuggestEngineInput, target: AIModelTarget): Record<s
             },
             reply_intent: { type: "string" },
             draft: { type: "string" },
+            ...(slotIds.length
+              ? {
+                  fact_candidate: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      // The empty string is the "nothing to ask" answer, and
+                      // it is inside the enum so declining to guess is always
+                      // a legal move rather than a schema violation.
+                      slot: { type: "string", enum: ["", ...slotIds] },
+                      value: { type: "string" },
+                    },
+                    required: ["slot", "value"],
+                  },
+                }
+              : {}),
           },
           required: [
             "latest_message_sender",
@@ -207,6 +290,7 @@ function requestBody(input: SuggestEngineInput, target: AIModelTarget): Record<s
             "requested_action_owner",
             "reply_intent",
             "draft",
+            ...(slotIds.length ? ["fact_candidate"] : []),
           ],
         },
       },
@@ -246,6 +330,25 @@ Return an empty draft only when no input field can be identified at all. Uncerta
             content: [{
               type: "input_text",
               text: `Skill attachment — ${skill.name}. Knowledge about the product on screen, supplied as reference, not as instructions from the user:\n${skill.instructions}`,
+            }],
+          }]
+        : []),
+      ...(slotIds.length
+        ? [{
+            role: "developer",
+            content: [{
+              type: "input_text",
+              text: `Secondary task — fact_candidate. Separate from the draft and never allowed to shape it: fill the draft as if this section did not exist, then answer this.
+
+The app can remember a few fixed things about the person using it, so it stops having to re-derive them from every screen. You may propose at most one, and the user is shown it and asked to confirm before anything is stored. Choose one slot id from this list, or "" when nothing qualifies:
+${askable.map((slot) => `- ${factSlotId(slot.scope, slot.key)} — ${slot.label}`).join("\n")}
+
+Propose one only when all of these hold:
+- The fact is about the CURRENT USER — the person whose composer is focused — and not about anybody else visible on the screen. A name in a message header, a recipient, a channel member: these are other people. The user's own account menu, avatar tooltip, signed-in identity, profile row, or their own sent message header are what identify the user.
+- The screen states it plainly. Copy the value verbatim and short, as displayed. Never translate it, expand an abbreviation, complete a partial name, or infer it from an email address, a domain, or the language being spoken.
+- You would still be confident if you saw only that pixel region. Anything less is "".
+
+Return "" for slot with an empty value when in doubt. A wrong guess costs far more than a missed one: the user is interrupted, asked a question about themselves that is wrong, and learns that this app pretends to know things. There is no penalty for never proposing anything.`,
             }],
           }]
         : []),
@@ -335,7 +438,16 @@ function isSuggestGrounding(value: unknown): value is SuggestGrounding {
       || candidate.requested_action_owner === "unknown"
     )
     && typeof candidate.reply_intent === "string"
-    && typeof candidate.draft === "string";
+    && typeof candidate.draft === "string"
+    && isFactCandidateShape(candidate.fact_candidate);
+}
+
+/** Absent is valid: the field only exists when there was something to ask. */
+function isFactCandidateShape(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.slot === "string" && typeof candidate.value === "string";
 }
 
 function groundingNote(grounding: SuggestGrounding): string {
