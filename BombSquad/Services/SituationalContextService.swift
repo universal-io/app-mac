@@ -86,7 +86,7 @@ enum SituationalContextService {
         }
 
         let focused = copyElement(appElement, kAXFocusedUIElementAttribute)
-        let focusedFieldEditable = focused.map(isEditableField) ?? false
+        let focusedFieldEditable = focused.map { editableVerdict($0).isEditable } ?? false
         let host = window.flatMap { BrowserHostLookup.host(in: $0) }
 
         // App identity alone still tells the review where the draft is going,
@@ -114,32 +114,96 @@ enum SituationalContextService {
               pid != ProcessInfo.processInfo.processIdentifier else { return false }
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, Budget.axMessagingTimeout)
-        guard let focused = copyElement(appElement, kAXFocusedUIElementAttribute) else { return false }
-        return isEditableField(focused)
+        guard let focused = copyElement(appElement, kAXFocusedUIElementAttribute) else {
+            FocusGateTrace.log("no focused element")
+            return false
+        }
+        let verdict = editableVerdict(focused)
+        FocusGateTrace.log(verdict.description)
+        return verdict.isEditable
+    }
+
+    /// Why the gate decided what it decided. Recorded because the decision is
+    /// invisible in the product: compose opening on a screen with no visible
+    /// input field is indistinguishable, from the outside, from a screen where
+    /// something offscreen or non-textual held focus. Guessing between those
+    /// from the resulting draft is not evidence — this is.
+    struct FocusVerdict {
+        let isEditable: Bool
+        let matched: String
+        let role: String
+        let subrole: String
+        let size: CGSize?
+        let position: CGPoint?
+
+        /// Shape only: role, subrole, geometry. Never the field's value — that
+        /// is the user's content, and a diagnostic has no business holding it.
+        var description: String {
+            let frame = size.map { "\(Int($0.width))x\(Int($0.height))" } ?? "?"
+            let origin = position.map { "(\(Int($0.x)),\(Int($0.y)))" } ?? "(?)"
+            return "editable=\(isEditable) matched=\(matched) role=\(role.isEmpty ? "-" : role) "
+                + "subrole=\(subrole.isEmpty ? "-" : subrole) size=\(frame) pos=\(origin)"
+        }
     }
 
     /// Whether the focused element is an editable text control we could
     /// responsibly propose text for. Secure (password) fields are never
     /// eligible — the proactive suggestion must not target them.
-    private static func isEditableField(_ element: AXUIElement) -> Bool {
+    static func editableVerdict(_ element: AXUIElement) -> FocusVerdict {
         let subrole = copyString(element, kAXSubroleAttribute) ?? ""
-        if subrole == "AXSecureTextField" { return false }
-        if subrole == "AXSearchField" { return true }
-
         let role = copyString(element, kAXRoleAttribute) ?? ""
-        if role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox" {
-            return true
+        let size = copySize(element, kAXSizeAttribute)
+        let position = copyPoint(element, kAXPositionAttribute)
+
+        func verdict(_ isEditable: Bool, _ matched: String) -> FocusVerdict {
+            FocusVerdict(
+                isEditable: isEditable,
+                matched: matched,
+                role: role,
+                subrole: subrole,
+                size: size,
+                position: position
+            )
         }
 
-        // Web/other text-ish controls: a settable string value is a reliable,
-        // generic signal of an editable field.
+        if subrole == "AXSecureTextField" { return verdict(false, "secureField") }
+        if subrole == "AXSearchField" { return verdict(true, "searchField") }
+        if role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox" {
+            return verdict(true, "textRole")
+        }
+
+        // Web/other text-ish controls: a settable string value is a generic
+        // signal of an editable field. It is also the loosest rule here, which
+        // is why the trace names it separately from a real text role.
         var settable: DarwinBoolean = false
         if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success,
            settable.boolValue,
            copyString(element, kAXValueAttribute) != nil {
-            return true
+            return verdict(true, "settableValue")
         }
-        return false
+        return verdict(false, "none")
+    }
+
+    private static func copySize(_ element: AXUIElement, _ attribute: String) -> CGSize? {
+        guard let value = copyAXValue(element, attribute) else { return nil }
+        var size = CGSize.zero
+        guard AXValueGetValue(value, .cgSize, &size) else { return nil }
+        return size
+    }
+
+    private static func copyPoint(_ element: AXUIElement, _ attribute: String) -> CGPoint? {
+        guard let value = copyAXValue(element, attribute) else { return nil }
+        var point = CGPoint.zero
+        guard AXValueGetValue(value, .cgPoint, &point) else { return nil }
+        return point
+    }
+
+    private static func copyAXValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID()
+        else { return nil }
+        return (value as! AXValue)
     }
 
     /// Expanding-scope search: collect text at each ancestor level of the
@@ -248,5 +312,19 @@ enum SituationalContextService {
             guard CFGetTypeID(child) == AXUIElementGetTypeID() else { return nil }
             return (child as! AXUIElement)
         }
+    }
+}
+
+/// Debug-only trace for the compose-versus-vision gate. Compose opening on a
+/// screen with no visible input field has been reported and cannot be explained
+/// from the outside: the draft the model produced is its reading of the screen,
+/// not a record of which element held Accessibility focus. This log is that
+/// record. Shape only — role, subrole, geometry, and which rule matched. Never
+/// the field's contents.
+enum FocusGateTrace {
+    static func log(_ message: String) {
+        #if DEBUG
+        NSLog("[FocusGate] %@", message)
+        #endif
     }
 }

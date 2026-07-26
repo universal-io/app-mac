@@ -277,6 +277,14 @@ final class VisionSession: ObservableObject {
         requestTask = Task { [weak self] in
             guard let self else { return }
             defer { self.isLoading = false }
+            // Phase timing: the gateway records only its own model call, so the
+            // waits on this side — the AX candidate walk and the product
+            // identity resolution, both of which run extra passes on Chromium —
+            // were invisible. A user reporting "vision is slow" could not be
+            // answered from server numbers alone.
+            let started = Date()
+            var candidatesMs = 0
+            var identityMs = 0
             do {
                 let fixedCandidates: [VisionObservation.Candidate]
                 let fixedDiagnostics: VisionObservationCaptureService.Diagnostics?
@@ -285,7 +293,9 @@ final class VisionSession: ObservableObject {
                         fixedCandidates = self.candidates
                         fixedDiagnostics = self.candidateDiagnostics
                     } else {
+                        let waitStarted = Date()
                         let snapshot = await self.candidateCaptureTask.value
+                        candidatesMs = Self.elapsedMs(since: waitStarted)
                         try Task.checkCancellation()
                         fixedCandidates = snapshot.axCandidates
                         fixedDiagnostics = snapshot.diagnostics
@@ -297,14 +307,25 @@ final class VisionSession: ObservableObject {
                     fixedCandidates = []
                     fixedDiagnostics = nil
                 }
+                let identityStarted = Date()
+                let identity = await self.resolvedIdentity()
+                identityMs = Self.elapsedMs(since: identityStarted)
+                let requestStarted = Date()
                 let response = try await client.understand(
                     attachment: self.attachment,
                     question: question,
                     turns: priorTurns,
                     candidates: fixedCandidates,
                     candidateDiagnostics: fixedDiagnostics,
-                    identity: await self.resolvedIdentity(),
+                    identity: identity,
                     language: self.outputLanguage
+                )
+                VisionTrace.log(
+                    "turn=\(question == nil ? "first" : "question") "
+                    + "candidatesWait=\(candidatesMs)ms identity=\(identityMs)ms "
+                    + "gatewayRoundTrip=\(Self.elapsedMs(since: requestStarted))ms "
+                    + "total=\(Self.elapsedMs(since: started))ms "
+                    + "candidates=\(fixedCandidates.count)"
                 )
                 try Task.checkCancellation()
                 guard response.captureID == expectedCaptureID,
@@ -315,6 +336,10 @@ final class VisionSession: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
+                VisionTrace.log(
+                    "failed after candidatesWait=\(candidatesMs)ms identity=\(identityMs)ms "
+                    + "total=\(Self.elapsedMs(since: started))ms"
+                )
 #if DEBUG
                 self.errorMessage =
                     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -323,6 +348,10 @@ final class VisionSession: ObservableObject {
 #endif
             }
         }
+    }
+
+    private static func elapsedMs(since start: Date) -> Int {
+        Int(Date().timeIntervalSince(start) * 1000)
     }
 
     private func installCopilotClickMonitor() {
@@ -556,5 +585,18 @@ final class VisionSession: ObservableObject {
               let app = NSRunningApplication(processIdentifier: pid),
               !app.isActive else { return }
         app.activate()
+    }
+}
+
+/// Debug-only phase timing for vision. The gateway's `latency_ms` covers its
+/// model call and nothing else, so everything this side spends — waiting for the
+/// AX candidate walk, resolving which product is on screen, the round trip
+/// itself — was unmeasured. "Vision feels slow" needs these numbers to be
+/// answerable; without them the only available answer is a guess.
+enum VisionTrace {
+    static func log(_ message: String) {
+        #if DEBUG
+        NSLog("[Vision] %@", message)
+        #endif
     }
 }
