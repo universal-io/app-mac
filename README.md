@@ -202,8 +202,13 @@ bundle ID で判定します。
 （reading）、その製品での自然な書き方（conventions）、使える機能（affordances）、注意すべき状態
 （attention）、そこで学ぶ価値のあるユーザーファクトのキー語彙を持ちます。用途に応じて渡す
 セクションを変え、文案生成にはreadingとconventions、Vision／Copilotにはreading・affordances・
-attentionを渡します。現行はSlack、Gmail、Google アナリティクス（GA4）です。Googleのような提供元
-単位ではなく、Gmail、Docs、SheetsのようにUIの意味が異なる製品単位で追加します。
+attentionを渡します。現行はSlack、Gmail、Google アナリティクス（GA4）、Stripeです。Googleのような
+提供元単位ではなく、Gmail、Docs、SheetsのようにUIの意味が異なる製品単位で追加します。
+
+**認証情報が写る画面では画面送信を伴う機能を使わないでください。** Stripeのシークレットキー、
+銀行口座、本人確認書類などは、スクリーンショットに写ればそのまま送信されます。Skill側にも
+「その種の値は読み上げず、場所と扱い方だけを述べる」規則を入れていますが、これはモデルの
+振る舞いの制約であり、送信そのものを止める仕組みではありません。
 
 ツールによって厚いセクションが変わります。SlackやGmailは書き方（conventions）が厚く、GA4のような
 操作系は逆にaffordancesとattentionが厚く、conventionsを持ちません。持たないセクションは

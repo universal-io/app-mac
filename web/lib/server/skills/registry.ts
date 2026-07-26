@@ -1,6 +1,7 @@
 import { GA4_SKILL } from "@/lib/server/skills/tools/ga4";
 import { GMAIL_SKILL } from "@/lib/server/skills/tools/gmail";
 import { SLACK_SKILL } from "@/lib/server/skills/tools/slack";
+import { STRIPE_SKILL } from "@/lib/server/skills/tools/stripe";
 import {
   GLOBAL_FACTS,
   GLOBAL_FACT_SCOPE,
@@ -22,6 +23,7 @@ const TOOL_SKILLS: readonly Skill[] = [
   SLACK_SKILL,
   GMAIL_SKILL,
   GA4_SKILL,
+  STRIPE_SKILL,
 ];
 
 const DOMAIN_SKILLS: readonly Skill[] = [];
