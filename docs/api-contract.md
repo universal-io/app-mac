@@ -198,7 +198,7 @@ attentionで、attentionは列挙禁止の抑制ルールとして渡す（確�
     "api": "responses",
     "image_detail": "original",
     "reasoning_effort": "medium",
-    "prompt_version": "responder-mission-v5-facts",
+    "prompt_version": "responder-mission-v6-user-facts",
     "skill": "slack",
     "fallback_used": false,
     "latency_ms": 0,
@@ -248,6 +248,10 @@ AI呼び出しもusage記録も行わない。プランが失効していても�
 - 質問の抑制状態は`bs_fact_prompts`（`ask_count` / `declined_at`）に持ち、値そのものは
   `bs_user_facts`にしか置かない。ユーザーごとの状態参照は`web/lib/server/facts-store.ts`が唯一の窓口で、
   語彙（`web/lib/server/skills/`）は純粋なデータのまま保つ
+- 確認済みファクトは`/ai/suggest`のプロンプトへ添付として注入する（`global`＋画面に効いている
+  Skillのscopeだけ）。注入対象と質問対象は同じ1回のルックアップから出す補集合で、埋まっていれば注入、
+  空いていれば質問になる。固定Personaは持たず、注入するものが無ければ添付ごと送らない。
+  usageには`injected_fact_count`だけを残す
 
 ```json
 {

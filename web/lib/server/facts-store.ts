@@ -21,41 +21,68 @@ import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
  * user who closed the panel three times has answered in the way that matters. */
 export const MAX_FACT_ASKS_PER_KEY = 3;
 
+/** One confirmed fact, ready to inject. The label travels with the value
+ * because the prompt needs to say what the value is, and the skill that
+ * declared the key is the only thing that knows. */
+export type InjectableFact = {
+  label: string;
+  value: string;
+};
+
+export type FactContext = {
+  /** Confirmed facts for this screen: global plus the active tool's scope, and
+   * deliberately nothing else. A user's Slack handle has no business shaping a
+   * draft written in Gmail. */
+  injectable: InjectableFact[];
+  /** Slots that may still be asked about: relevant, unknown, not declined, not
+   * exhausted. */
+  askable: FactSlot[];
+};
+
+const EMPTY_FACT_CONTEXT: FactContext = { injectable: [], askable: [] };
+
 /**
- * The slots this screen may ask about for this user: the vocabulary the active
- * skills declare, minus everything already known, declined, or exhausted.
+ * Everything the fact store has to say about one screen for one user, in a
+ * single lookup: what to inject and what may still be asked. The two answers
+ * come from the same two reads because they are complements — a filled slot is
+ * exactly the one not to ask about.
  *
- * A failure here returns an empty list rather than throwing. Asking is the
- * optional half of the suggestion route, so a database hiccup must cost the
- * user a question, never their draft.
+ * A failure returns the empty context rather than throwing. Facts are an
+ * accuracy layer on a route whose job is to produce a draft; a database hiccup
+ * must cost the user a little precision, never the draft itself.
  */
-export async function askableFactSlots(
+export async function loadFactContext(
   userId: string,
   signals: AppSignals | undefined,
-): Promise<FactSlot[]> {
+): Promise<FactContext> {
   const slots = allowedFactSlots(signals);
-  if (slots.length === 0) return [];
+  if (slots.length === 0) return EMPTY_FACT_CONTEXT;
 
   const admin = getSupabaseAdminClient();
-  const [known, prompts] = await Promise.all([
-    admin.from("bs_user_facts").select("scope, key").eq("user_id", userId),
+  const [stored, prompts] = await Promise.all([
+    admin.from("bs_user_facts").select("scope, key, value").eq("user_id", userId),
     admin
       .from("bs_fact_prompts")
       .select("scope, key, ask_count, declined_at")
       .eq("user_id", userId),
   ]);
-  if (known.error || prompts.error) {
+  if (stored.error || prompts.error) {
     console.error(
-      "[facts] askable lookup failed:",
-      known.error?.message ?? prompts.error?.message,
+      "[facts] context lookup failed:",
+      stored.error?.message ?? prompts.error?.message,
     );
-    return [];
+    return EMPTY_FACT_CONTEXT;
   }
 
-  const blocked = new Set<string>();
-  for (const row of (known.data ?? []) as Array<{ scope: string; key: string }>) {
-    blocked.add(factSlotId(row.scope, row.key));
+  const values = new Map<string, string>();
+  for (const row of (stored.data ?? []) as Array<{
+    scope: string;
+    key: string;
+    value: string;
+  }>) {
+    values.set(factSlotId(row.scope, row.key), row.value);
   }
+  const retired = new Set<string>();
   for (const row of (prompts.data ?? []) as Array<{
     scope: string;
     key: string;
@@ -63,11 +90,22 @@ export async function askableFactSlots(
     declined_at: string | null;
   }>) {
     if (row.declined_at || (row.ask_count ?? 0) >= MAX_FACT_ASKS_PER_KEY) {
-      blocked.add(factSlotId(row.scope, row.key));
+      retired.add(factSlotId(row.scope, row.key));
     }
   }
 
-  return slots.filter((slot) => !blocked.has(factSlotId(slot.scope, slot.key)));
+  const injectable: InjectableFact[] = [];
+  const askable: FactSlot[] = [];
+  for (const slot of slots) {
+    const id = factSlotId(slot.scope, slot.key);
+    const value = values.get(id);
+    if (value) {
+      injectable.push({ label: slot.label, value });
+    } else if (!retired.has(id)) {
+      askable.push(slot);
+    }
+  }
+  return { injectable, askable };
 }
 
 /**

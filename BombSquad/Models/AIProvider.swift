@@ -7,9 +7,10 @@ enum AppSettings {
     static let outputLanguageKey = "outputLanguage"
     static let localHistoryLimit = 100
 
+    /// The user's choice, or what their Mac implies until they make one.
     static func outputLanguage() -> OutputLanguage {
         let stored = UserDefaults.standard.string(forKey: outputLanguageKey)
-        return stored.flatMap(OutputLanguage.init(rawValue:)) ?? .japanese
+        return stored.flatMap(OutputLanguage.init(rawValue:)) ?? .systemDefault
     }
 
     static func isHistoryEnabled() -> Bool {

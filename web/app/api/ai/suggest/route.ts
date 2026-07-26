@@ -18,7 +18,7 @@ import {
   SUGGEST_REASONING_EFFORT,
 } from "@/lib/server/suggest-engine";
 import {
-  askableFactSlots,
+  loadFactContext,
   recordFactAskAfterResponse,
 } from "@/lib/server/facts-store";
 
@@ -78,10 +78,11 @@ export async function POST(request: Request): Promise<Response> {
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
 
-    // Read before the model call because it shapes the request: the model may
-    // only choose from slots this user can still be asked about. It is two
-    // indexed point reads against a table with a few dozen rows per account.
-    const askableFacts = await askableFactSlots(userId, context);
+    // Read before the model call because it shapes the request twice over:
+    // what the user has confirmed is injected, and what they have not can be
+    // asked about. Two indexed reads against tables holding a few dozen rows
+    // per account.
+    const factContext = await loadFactContext(userId, context);
 
     const metadata = {
       capture_id: captureId,
@@ -101,7 +102,8 @@ export async function POST(request: Request): Promise<Response> {
         imageDataURL: `data:${mediaType};base64,${imageBase64}`,
         context,
         language,
-        askableFacts,
+        askableFacts: factContext.askable,
+        facts: factContext.injectable,
       });
       const latencyMs = Date.now() - started;
       const factCandidate = output.factCandidate;
@@ -127,9 +129,11 @@ export async function POST(request: Request): Promise<Response> {
           ...metadata,
           fallback_used: output.fallbackUsed,
           operational_notice_codes: output.notices.map((notice) => notice.code),
-          // Whether a question was asked, never which fact or what value: the
-          // value came off the user's screen and usage holds no screen content.
+          // Whether a question was asked and how many facts were injected —
+          // never which fact or what value. Those came off the user's screen,
+          // and usage holds no screen content.
           fact_question_asked: Boolean(factCandidate),
+          injected_fact_count: factContext.injectable.length,
         },
       });
 

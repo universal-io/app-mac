@@ -4,18 +4,25 @@ struct GeneralSettingsView: View {
     @AppStorage(AppSettings.isHistoryEnabledKey) private var isHistoryEnabled = true
     @AppStorage(AppSettings.isContextCaptureEnabledKey) private var isContextCaptureEnabled = true
     @AppStorage(AppSettings.isProactiveSuggestEnabledKey) private var isProactiveSuggestEnabled = true
-    @AppStorage(AppSettings.outputLanguageKey) private var outputLanguageID = OutputLanguage.japanese.rawValue
+    // Same fallback as AppSettings.outputLanguage(), so the picker never shows
+    // a language the app is not actually using.
+    @AppStorage(AppSettings.outputLanguageKey)
+    private var outputLanguageID = OutputLanguage.systemDefault.rawValue
 
     let config: BombSquadConfig.Snapshot
 
     var body: some View {
         Form {
-            Section("出力言語") {
-                Picker("結果の言語", selection: $outputLanguageID) {
+            Section("言語") {
+                Picker("AIが返す言語", selection: $outputLanguageID) {
                     ForEach(OutputLanguage.allCases) { language in
                         Text(language.displayName).tag(language.rawValue)
                     }
                 }
+                Text("文案、レビュー、受信内容の要約、画面への回答をこの言語で返します。読み書きしている相手の言語とは無関係に選べます（日本語で書いて英語で送る、英語の画面を日本語で読む）。初期値はこのMacの言語設定です。アプリの表示自体は現在日本語のみです。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("接続") {
