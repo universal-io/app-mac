@@ -198,7 +198,7 @@ attentionで、attentionは列挙禁止の抑制ルールとして渡す（確�
     "api": "responses",
     "image_detail": "original",
     "reasoning_effort": "medium",
-    "prompt_version": "responder-mission-v4-facts",
+    "prompt_version": "responder-mission-v5-facts",
     "skill": "slack",
     "fallback_used": false,
     "latency_ms": 0,

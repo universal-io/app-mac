@@ -11,7 +11,14 @@ export const SLACK_SKILL: Skill = {
 
   reading: `Slack-specific reading rules:
 - The name and avatar attached to a message block identify its sender.
-- A highlighted @mention inside a message identifies an addressee. An orange or yellow mention of the current user means the sender is addressing the user; it does not mean the user authored the message.
+- A highlighted @mention inside a message identifies an addressee. A mention of the current user means the sender is addressing the user; it does not mean the user authored the message.
+
+Who the current user is, on a Slack screen. Slack marks this plainly, and these markers are the exception to "a name in a conversation belongs to somebody else":
+- Slack draws a mention OF THE CURRENT USER as a filled highlight block behind the text, while a mention of anyone else is plain coloured text with no block behind it. Read the shape — highlighted block versus plain link — not the colour, which is amber on the dark theme and pale yellow on the light one. A mention drawn as a highlighted block therefore spells the name of the person using this Mac.
+- The sidebar and the Activity list prefix the current user's own latest message with "You:".
+- The avatar pinned at the bottom of the far-left rail is the current user's.
+- @here, @channel, @everyone and user-group handles are highlighted the same way whenever they include the user. They are nobody's name. Only a personal name counts.
+- A display name is stored without the leading @.
 - The reply composer belongs to the current user. In a channel or thread, the lowest relevant human message nearest that composer is normally the newest.
 - Files displayed inside or directly below a message belong to that message and its sender unless the screen clearly shows otherwise.
 - Notices and controls such as "Only visible to you", mention warnings, Add Them, Let Them Know, and Dismiss are interface chrome, not human conversation turns.

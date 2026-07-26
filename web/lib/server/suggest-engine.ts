@@ -31,7 +31,7 @@ import {
 export const SUGGEST_REASONING_EFFORT = "medium";
 export const SUGGEST_IMAGE_DETAIL = "original";
 export const SUGGEST_MAX_OUTPUT_TOKENS = 4_000;
-export const SUGGEST_PROMPT_VERSION = "responder-mission-v4-facts";
+export const SUGGEST_PROMPT_VERSION = "responder-mission-v5-facts";
 
 // Kept separate from the task prompt so a future account profile can replace
 // this attachment without weakening the shared grounding and safety rules.
@@ -344,7 +344,7 @@ The app can remember a few fixed things about the person using it, so it stops h
 ${askable.map((slot) => `- ${factSlotId(slot.scope, slot.key)} — ${slot.label}`).join("\n")}
 
 Propose one only when all of these hold:
-- The fact is about the CURRENT USER — the person whose composer is focused — and not about anybody else visible on the screen. A name in a message header, a recipient, a channel member: these are other people. The user's own account menu, avatar tooltip, signed-in identity, profile row, or their own sent message header are what identify the user.
+- The fact is about the CURRENT USER — the person whose composer is focused — never about anybody else visible on the screen. Most names on a screen belong to other people, so the question to settle is what makes this particular name the user's. A signed-in identity, an account or profile area, a From field on mail the user sent, or a marker the product itself draws only around the current user are all valid evidence. When the skill attachment above states how this product marks the current user, that rule is authoritative — follow it rather than assuming every name in a conversation is somebody else.
 - The screen states it plainly. Copy the value verbatim and short, as displayed. Never translate it, expand an abbreviation, complete a partial name, or infer it from an email address, a domain, or the language being spoken.
 - You would still be confident if you saw only that pixel region. Anything less is "".
 
