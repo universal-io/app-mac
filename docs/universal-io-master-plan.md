@@ -249,6 +249,18 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 
 - 現在、新規ユーザーは全員`free`・月500件で作成される。`standard` / `pro` / `team` /
   `enterprise`のplan catalogは存在するが、購入・自動割当・Stripe連携は未実装である。
+- 販売する最初のプランは`standard`のみ、月額のみ、通貨はJPY（2026-07-27決定）。上限は月5000で、
+  変更は`bs_plans`の1行UPDATEだけで済む（コードにも環境変数にも上限を持たせない）。
+  JPYを選ぶ理由は、日本アカウントの決済通貨がJPYであり、USD請求は毎回の為替手数料と顧客側の
+  海外取引手数料を生み、総額表示義務との整合も悪いため。グローバル展開時はStripeの多通貨価格で
+  USDを追加し、商品は作り直さない。
+- price idとplanの対応は`bs_plan_prices`が持つ（`supabase/migrations/20260727000000_plan_prices.sql`）。
+  1プランに複数のprice idが付く（sandbox／live、価格は編集不可なので値上げごとに増える、間隔・通貨の
+  追加）ため、列ではなく対応表とする。**planが何を与えるかは`bs_plans`だけが決める**という境界は動かさない。
+- Stripeの鍵は`STRIPE_SECRET_KEY`と`STRIPE_WEBHOOK_SECRET`の2つだけをGateway環境に置く。
+  ホスト型Checkoutを使うためpublishable keyは持たない。macOSクライアントはStripeを直接呼ばない。
+  本番環境にサンドボックス鍵を置く期間があるため、Gatewayが鍵の接頭辞から現在のモードを判定し
+  管理画面へ表示する（差し替え忘れの検出）。
 - 管理画面へ入れる`ADMIN_EMAILS`と商用planは別概念である。管理者であることだけではquotaや
   billingを免除しない。次期設計では権限、契約、利用制限を独立した軸として扱う。
 - Stripe課金の有無に加え、社内運用、招待テスター、無償提供など、請求や通常制限を適用しない
