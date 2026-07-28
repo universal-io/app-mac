@@ -38,6 +38,20 @@ const MAX_PREFLIGHT_CACHE_ENTRIES = 256;
 const authCache = new Map<string, { value: AuthContext; expiresAt: number }>();
 const quotaCache = new Map<string, number>();
 
+/**
+ * Entitlement statuses that may use the product.
+ *
+ * `past_due` is included as a grace state. Stripe's Smart Retries run for weeks
+ * after a card fails, and cutting a paying customer off at the first failed
+ * retry punishes an expiring card harder than a real cancellation. When the
+ * retries are finally exhausted Stripe cancels the subscription, and the
+ * webhook drops the account to free/active rather than to a blocking status —
+ * so losing access is the end of that process, not its beginning.
+ */
+export function isUsableEntitlementStatus(status: string): boolean {
+  return status === "active" || status === "trialing" || status === "past_due";
+}
+
 /** Thrown by shared helpers; route handlers convert it via `errorResponse`. */
 export class GatewayError extends Error {
   readonly status: number;
@@ -81,8 +95,7 @@ export async function authenticate(
   if (cached && cached.expiresAt > Date.now()) {
     if (
       requireActiveEntitlement
-      && cached.value.entitlement.status !== "active"
-      && cached.value.entitlement.status !== "trialing"
+      && !isUsableEntitlementStatus(cached.value.entitlement.status)
     ) {
       throw new GatewayError(
         402,
@@ -119,9 +132,7 @@ export async function authenticate(
     .maybeSingle();
   if (
     !entitlement ||
-    (requireActiveEntitlement &&
-      entitlement.status !== "active" &&
-      entitlement.status !== "trialing")
+    (requireActiveEntitlement && !isUsableEntitlementStatus(entitlement.status))
   ) {
     throw new GatewayError(
       402,

@@ -9,6 +9,7 @@ import { getServerEnv } from "@/lib/server/env";
 import { AI_MODEL_ROUTES } from "@/lib/server/ai-routing";
 import { authenticate, GatewayError } from "@/lib/server/gateway";
 import { getPlanConfig } from "@/lib/server/plans";
+import { stripeMode } from "@/lib/server/stripe";
 import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 
 /** Platform authority (bs_profiles.role), separate from the tenant-scoped
@@ -90,8 +91,29 @@ export type ModelConfigRow = {
   api: string;
 };
 
+/**
+ * Which Stripe environment the Gateway is actually wired to, and what it can
+ * currently sell. Production runs on a sandbox key while billing is brought up,
+ * so `mode: "sandbox"` on a live deployment is the state this exists to make
+ * visible — the same idea as the app's warning bar for a non-production Gateway.
+ */
+export type BillingConfig = {
+  /** null = no STRIPE_SECRET_KEY, or a key whose prefix we do not recognise. */
+  mode: "live" | "sandbox" | null;
+  /** Presence only. Without it every webhook is rejected. */
+  webhookSecretPresent: boolean;
+  /** Prices sellable in the current mode, from bs_plan_prices. */
+  purchasablePrices: {
+    plan: string;
+    priceId: string;
+    interval: string;
+    currency: string;
+  }[];
+};
+
 export type EffectiveConfig = {
   models: ModelConfigRow[];
+  billing: BillingConfig;
   /** Free-tier monthly cap, sourced from the plan catalog (bs_plans, §5-c).
    * `value: null` means unlimited. `source` is always "plan" now that the
    * catalog is the single knob — kept as a field so the UI can label it. */
@@ -106,6 +128,7 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
   const env = getServerEnv();
   const freePlan = await getPlanConfig("free");
   return {
+    billing: await billingConfig(),
     models: Object.values(AI_MODEL_ROUTES).flatMap((route) => [
       {
         label: route.label,
@@ -132,5 +155,35 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
       gemini: Boolean(env.geminiApiKey),
       anthropic: Boolean(env.anthropicApiKey),
     },
+  };
+}
+
+async function billingConfig(): Promise<BillingConfig> {
+  const env = getServerEnv();
+  const mode = stripeMode();
+  if (!mode) {
+    return { mode: null, webhookSecretPresent: Boolean(env.stripeWebhookSecret), purchasablePrices: [] };
+  }
+
+  const admin = getSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("bs_plan_prices")
+    .select("plan, stripe_price_id, billing_interval, currency")
+    .eq("livemode", mode === "live")
+    .eq("is_purchasable", true)
+    .order("plan", { ascending: true });
+  if (error) {
+    console.error("[admin] plan price load failed:", error.message);
+  }
+
+  return {
+    mode,
+    webhookSecretPresent: Boolean(env.stripeWebhookSecret),
+    purchasablePrices: (data ?? []).map((row) => ({
+      plan: row.plan,
+      priceId: row.stripe_price_id,
+      interval: row.billing_interval,
+      currency: row.currency,
+    })),
   };
 }

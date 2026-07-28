@@ -152,8 +152,10 @@ web/
   ADMIN_EMAILS で認可。今回の事故の再発防止が主目的。
 - **v1（アカウント運用）**: plan、account class、契約状態、個別quota overrideを管理し、変更者・
   時刻・理由を監査する。招待テスター、社内、無償提供をStripe契約なしで明示的に設定できる。
-- **v1.1（Stripe）**: Product / Priceとplanの対応、Checkout、Customer Portal、署名検証済みwebhook、
-  冪等なsubscription反映を実装する。Stripeの状態を直接権限判定せず、webhookでentitlementへ反映する。
+- **v1.1（Stripe）**: 実装済み。Product / Priceとplanの対応（`bs_plan_prices`）、Checkout、
+  Customer Portal、署名検証済みwebhook、冪等なsubscription反映（`bs_stripe_events`）。
+  Stripeの状態を直接権限判定せず、webhookでentitlementへ反映する。実効モードは管理画面「設定」に表示する。
+  残るのは本番有効化（本番価格の作成と`livemode=true`行の追加）と顧客ポータルのStripe側設定。
 - **v2（運用の深掘り）**: 既存の月次rollupを使う長期推移、テスターcohort・テナント別ドリルダウン、
   モデル単価に基づくコスト概算、予算・エラー率・レイテンシのアラートを追加する。
 - **v3（実効モデル設定）**: `AI_MODEL_ROUTES` と同じschemaをDB設定テーブルへ昇格し、管理画面から
@@ -186,7 +188,8 @@ web/
   購入導線も自動割当もなく、手動運用前提である。
 - `/admin`の権限は`ADMIN_EMAILS`で決まり、`bs_entitlements.plan`とは独立している。
   したがって管理者であってもfreeのままなら通常quotaが適用される。
-- `bs_entitlements`にはStripe ID列があるが、Checkout、webhook、Customer Portalは未実装である。
+- `bs_entitlements`のStripe ID列は、Checkout（customer作成時）とwebhook（subscription反映時）が
+  書き込む。管理画面はStripe連携中のplanを変更できない（`STRIPE_LINKED`）。
 
 ### 9-b. 分離する3つの軸
 
@@ -211,7 +214,7 @@ Stripeを通さない無償・社内・テスターアカウントもaccount cla
 1. **account model migration**: account class、管理role、期限、監査ログを設計し、既存freeユーザーを
    `standard`へ安全にbackfillする。
 2. **手動運用UI**: Stripeなしでpremium候補、tester、complimentary、internalを設定できるようにする。
-3. **Stripe test mode**: Product / Price対応表、Checkout、Portal、webhook署名、イベント冪等性を実装する。
+3. **Stripe test mode**: 実装済み（Product / Price対応表、Checkout、Portal、webhook署名、イベント冪等性）。
 4. **tester monitoring**: cohort、最終利用、機能別件数、成功率、fallback、エラー、レイテンシを表示する。
 5. **cost estimate**: model pricing snapshotを日付付きで保持し、input/output tokenと音声秒数から概算する。
    provider請求との差を定期確認し、価格改定時に過去集計を書き換えない。

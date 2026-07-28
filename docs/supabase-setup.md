@@ -79,9 +79,11 @@ Optional Supabase configuration path when launching the built app outside the re
 - `ANTHROPIC_API_KEY`
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
-- `STRIPE_PRICE_PRO_MONTHLY`
-- `STRIPE_PRICE_TEAM_MONTHLY`
-- `STRIPE_PRICE_ENTERPRISE_MONTHLY`
+
+Stripeはこの2つだけを持つ。price idをenvへ置かない（`bs_plan_prices`が対応表の正本で、
+1プランに複数のprice idが付く）。ホスト型Checkoutを使うためpublishable keyも持たない。
+`STRIPE_SECRET_KEY`の接頭辞（`sk_test_` / `sk_live_`）が実効モードを決め、同じ接頭辞が
+`bs_plan_prices.livemode`のどちら側を販売対象にするかも決める。モードは管理画面「設定」に表示する。
 
 Provider data controls（envではなく各provider管理画面）:
 

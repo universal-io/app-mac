@@ -247,8 +247,9 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 
 ### 次期開発: アカウント、課金、テスター運用
 
-- 現在、新規ユーザーは全員`free`・月500件で作成される。`standard` / `pro` / `team` /
-  `enterprise`のplan catalogは存在するが、購入・自動割当・Stripe連携は未実装である。
+- 新規ユーザーは全員`free`・月500件で作成される。`standard`はCheckout・顧客ポータル・webhook反映まで
+  実装済みで、sandbox鍵での検証段階にある。`pro` / `team` / `enterprise`はcatalogだけが存在し、
+  販売価格も上限（現在null＝無制限）も未定である。
 - 販売する最初のプランは`standard`のみ、月額のみ、通貨はJPY（2026-07-27決定）。開始時点は
   ¥1,980／月2000回（1回あたり約¥1）。**この数字の正本はドキュメントではない** — 金額はStripeの
   price、枠は`bs_plans.monthly_usage_limit`が正本で、変更に本書の更新は要らない。ここに記録するのは
@@ -270,6 +271,11 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 - price idとplanの対応は`bs_plan_prices`が持つ（`supabase/migrations/20260727000000_plan_prices.sql`）。
   1プランに複数のprice idが付く（sandbox／live、価格は編集不可なので値上げごとに増える、間隔・通貨の
   追加）ため、列ではなく対応表とする。**planが何を与えるかは`bs_plans`だけが決める**という境界は動かさない。
+- トライアルは付けない。`free`=500がすでに試用の役割を持つため、カード登録後の無料期間は二重になる。
+- 支払い失敗中（`past_due`）は有料プランを維持する猶予とする。Stripeの再試行は数週間続くので、
+  初回失敗で止めるとカード更新中の顧客を実際の解約よりきつく扱うことになる。アクセスを失うのは
+  Stripeが最終的に解約した時点で、そこで`free`へ落とす。`canceled`をentitlementへ書かない
+  （無料枠まで消える）、契約IDを残さない（退会できなくなる）という2点は変えない。
 - Stripeの鍵は`STRIPE_SECRET_KEY`と`STRIPE_WEBHOOK_SECRET`の2つだけをGateway環境に置く。
   ホスト型Checkoutを使うためpublishable keyは持たない。macOSクライアントはStripeを直接呼ばない。
   本番環境にサンドボックス鍵を置く期間があるため、Gatewayが鍵の接頭辞から現在のモードを判定し

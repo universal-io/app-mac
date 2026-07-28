@@ -86,7 +86,7 @@ export default function AdminPage() {
             I<span className="text-iris">{"//"}</span>O Admin
           </span>
           <p className="mt-1 text-sm text-slate">
-            利用統計・ユーザー運用・モデル設定
+            利用統計・ユーザー運用・実効設定
           </p>
         </header>
 
@@ -111,7 +111,7 @@ type AdminTab = "dashboard" | "users" | "models";
 const ADMIN_TABS: { id: AdminTab; label: string }[] = [
   { id: "dashboard", label: "ダッシュボード" },
   { id: "users", label: "ユーザー" },
-  { id: "models", label: "モデル設定" },
+  { id: "models", label: "設定" },
 ];
 
 function AdminBody({ data, token }: { data: Overview; token: string }) {
@@ -131,7 +131,10 @@ function AdminBody({ data, token }: { data: Overview; token: string }) {
       ) : tab === "users" ? (
         <UsersSection token={token} />
       ) : (
-        <EffectiveConfigSection config={config} />
+        <div className="flex flex-col gap-8">
+          <EffectiveConfigSection config={config} />
+          <BillingConfigSection billing={config.billing} />
+        </div>
       )}
     </div>
   );
@@ -205,6 +208,71 @@ function EffectiveConfigSection({ config }: { config: EffectiveConfig }) {
           </span>
         ))}
       </div>
+    </Section>
+  );
+}
+
+// --- Stripe mode and sellable prices ---------------------------------------
+// Exists to catch one specific mistake: shipping to production while the
+// Gateway still holds a sandbox key. Read from the key prefix, not from the
+// deployment, because only the key decides which environment is really in play.
+
+function BillingConfigSection({ billing }: { billing: EffectiveConfig["billing"] }) {
+  return (
+    <Section
+      title="課金（Stripe）"
+      note="鍵の接頭辞から判定した実効モード。販売可能な価格は bs_plan_prices が正本。"
+    >
+      {billing.mode === "sandbox" ? (
+        <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          サンドボックス鍵で動作中です。実際の課金は発生しません。本番公開前に
+          <span className="font-medium"> STRIPE_SECRET_KEY </span>
+          を本番鍵へ差し替え、本番価格の行を bs_plan_prices に追加してください。
+        </p>
+      ) : billing.mode === null ? (
+        <p className="mb-4 rounded-md border border-line bg-paper px-3 py-2 text-sm text-slate">
+          STRIPE_SECRET_KEY が未設定です（課金は無効）。
+        </p>
+      ) : null}
+
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+        <span className="text-slate">
+          モード:{" "}
+          <span className="text-ink">
+            {billing.mode === "live"
+              ? "本番（live）"
+              : billing.mode === "sandbox"
+                ? "サンドボックス（test）"
+                : "未設定"}
+          </span>
+        </span>
+        <span className="text-slate">
+          Webhook署名シークレット:{" "}
+          <span className="text-ink">
+            {billing.webhookSecretPresent ? "● 設定済み" : "○ 未設定"}
+          </span>
+        </span>
+      </div>
+
+      {billing.purchasablePrices.length === 0 ? (
+        <Empty />
+      ) : (
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <Row header cells={["プラン", "価格ID", "間隔", "通貨"]} />
+          </thead>
+          <tbody>
+            {billing.purchasablePrices.map((p) => (
+              <tr key={p.priceId}>
+                <Cell>{p.plan}</Cell>
+                <Cell mono>{p.priceId}</Cell>
+                <Cell>{p.interval === "month" ? "月次" : "年次"}</Cell>
+                <Cell mono>{p.currency}</Cell>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </Section>
   );
 }

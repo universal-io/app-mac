@@ -11,6 +11,11 @@ export type ServerEnv = {
   anthropicApiKey: string | null;
   /** Lowercased emails allowed into /admin (docs/admin-dashboard-plan.md §2). */
   adminEmails: string[];
+  /** Stripe secret key. Its `sk_test_`/`sk_live_` prefix is also what decides
+   * which `bs_plan_prices.livemode` rows are sellable — see lib/server/stripe.ts. */
+  stripeSecretKey: string | null;
+  /** Signing secret of the one webhook endpoint. Absent = webhooks rejected. */
+  stripeWebhookSecret: string | null;
 };
 
 export function getServerEnv(): ServerEnv {
@@ -39,6 +44,12 @@ export function getServerEnv(): ServerEnv {
     // Comma-separated allowlist for the admin console (v0 authorization;
     // admin-dashboard-plan §2). Empty list means nobody is an admin.
     adminEmails: parseEmailList(process.env.ADMIN_EMAILS),
+    // Billing needs exactly these two. There is no publishable key: Checkout
+    // and the customer portal are hosted by Stripe and reached by redirect, so
+    // no client ever holds a Stripe credential. Price ids are not env vars
+    // either — bs_plan_prices maps them to plans.
+    stripeSecretKey: normalize(process.env.STRIPE_SECRET_KEY),
+    stripeWebhookSecret: normalize(process.env.STRIPE_WEBHOOK_SECRET),
   };
 }
 

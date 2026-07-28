@@ -39,6 +39,8 @@
 
 主なcodeは `BAD_REQUEST`、`UNAUTHENTICATED`、`REAUTH_REQUIRED`、`PAYMENT_REQUIRED`、
 `QUOTA_EXCEEDED`、`RATE_LIMITED`、`PROVIDER_ERROR`、`INTERNAL_ERROR`。
+課金は加えて `BILLING_UNAVAILABLE`、`PLAN_NOT_PURCHASABLE`、`SUBSCRIPTION_EXISTS`、
+`NO_BILLING_ACCOUNT` を返す。
 
 全AI成功応答の `meta` は次のモデル情報を持つ。
 
@@ -273,12 +275,50 @@ AI呼び出しもusage記録も行わない。プランが失効していても�
 macOSは表示するだけ。ツールを1つ増やしてもクライアントは変更しない。
 全件でも数十行のため、cursor・差分・tombstoneは持たない。
 
+## 課金
+
+macOSはStripeを直接呼ばない。Gatewayがホスト型URLを返し、クライアントはそれをブラウザで開くだけで、
+publishable keyもprice idもクライアントは持たない。
+
+- `POST /billing/checkout` — body `{"plan":"standard","interval":"month"}`（`interval`は任意、既定`month`）。
+  成功時 `{"url","plan","price_id","interval","currency"}` を返す。**price idはリクエストから受け取らない** —
+  `bs_plan_prices`から現在のモード（鍵の接頭辞）かつ`is_purchasable`の行を引く。同一planに複数行あれば
+  最新を使い、旧価格の契約者はそのまま残る。既に契約がある場合は`SUBSCRIPTION_EXISTS`（409）で拒否し、
+  プラン変更・解約はportalへ送る。販売対象が無ければ`PLAN_NOT_PURCHASABLE`（404）。
+- `POST /billing/portal` — 成功時 `{"url"}`。解約・支払い方法変更はStripeの顧客ポータルで行い、
+  アプリ側に再実装しない。customer未作成なら`NO_BILLING_ACCOUNT`（404）。
+- どちらも失効・past_dueのアカウントから呼べる（買う人・カードを直す人こそ呼ぶため、
+  entitlement statusでゲートしない）。鍵が無い場合は`BILLING_UNAVAILABLE`（503）。
+
+`POST /stripe/webhook` はStripe専用で、Bearer認証を持たない（**署名が資格情報**）。
+`STRIPE_WEBHOOK_SECRET`未設定なら503、署名不正なら400（再送させない）。処理するのは
+`checkout.session.completed`、`customer.subscription.created` / `updated` / `deleted`、
+`invoice.paid`、`invoice.payment_failed`の6種で、それ以外は200で受けて無視する。
+
+- 6種すべてが同じ処理へ収束する。**イベントのpayloadを信用せず、subscriptionをStripeから
+  読み直す**。イベントはendpointのAPI versionで配送され順序も保証されないため、古い`updated`が
+  新しい状態を上書きし得る。読み直せば常に現在の真実を書くので、再送も自然に冪等になる。
+- 冪等性は`bs_stripe_events`（event id PK）が持つ。`applied_at`が入っていれば重複として無視し、
+  受信済みだが未適用なら再適用する。失敗時は500を返してStripeに再送させる。
+- price id → plan は`bs_plan_prices`で解決する。対応行が無ければ適用せず500を返す（行を足せば
+  再送で成功する。推測でplanを与えない）。
+- entitlementへの反映は状態の**翻訳**で、コピーではない。`trialing` / `active` / `past_due`は
+  売れたplanを維持し、それ以外（`canceled`、`unpaid`、`incomplete`、`incomplete_expired`、`paused`）は
+  `free` / `active`へ落として`stripe_subscription_id`を消す。`canceled`をそのまま書かない理由は、
+  それがentitlement判定を落として**無料枠まで使えなくなる**ため。契約IDを残さない理由は、
+  残ると退会が永久にできなくなるため。
+- `past_due`は猶予として利用を継続させる（Smart Retriesは数週間走る）。アクセスを失うのは
+  Stripeが最終的に解約した時点で、リトライの初回失敗ではない。
+- `account_class`と`monthly_review_limit`はwebhookで触らない。誰が支払うかと個別override は
+  Stripeイベントが変える理由にならない。
+
 ## アカウント・管理
 
 - `GET /account`
 - `DELETE /account` — body `{"confirmation":"DELETE"}`。直近10分以内の認証を要求し、
   有効なsubscriptionがある場合は`ACTIVE_SUBSCRIPTION`で拒否する。
-- `GET /admin/overview`
+- `GET /admin/overview` — `config.billing`に実効モード（鍵の接頭辞由来）、webhook署名シークレットの
+  有無、販売可能な価格一覧を含む。
 
 v3で文体・関係性メモリを廃止したため、`/ai/memory/distill` と `/memory/cards` は存在しない。
 `input.memory`を送るクライアントも無い。ユーザーに関する事実の記憶はv3で別機構として設計する
