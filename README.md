@@ -289,10 +289,11 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 
 ### Gatewayのデプロイ
 
-**`main` へのコミット＝本番Gatewayデプロイ**です（Vercelのgit連携。`vercel` CLIもCI workflowも
-使いません）。`web/` を触った変更は `main` に載るまで本番へ届かないので、実機検証の前に必ず
-`main` へマージします。過去に「クライアントは正しいのに文案が出ない」障害の唯一の原因が、
-routeが`main`に無かったことでした。macOSクライアントだけの変更はGatewayに影響しません。
+**`origin/main` へのpush＝本番Gatewayデプロイ**です（Vercelのgit連携。`vercel` CLIもCI workflowも
+使いません）。Vercelが見るのはGitHub上の`main`なので、ローカルでコミットしただけでは何も起きません。
+`web/` を触った変更は push するまで本番へ届かないので、実機検証の前に必ず `main` へマージして
+pushします。過去に「クライアントは正しいのに文案が出ない」障害の唯一の原因が、routeが本番の`main`に
+無かったことでした。macOSクライアントだけの変更はGatewayに影響しません。
 
 `main` 以外のブランチをpushするとVercelのPreviewが生成されますが、Deployment Protection配下で
 外部からは到達できず、固定エイリアスも持ちません。アプリは常に `api.universal-io.com`
