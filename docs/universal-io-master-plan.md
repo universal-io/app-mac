@@ -209,7 +209,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard安全化（改訂設計確定・実装前）
+### R9 — Focused Visionとclipboard安全化（A1実装済み）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
@@ -228,6 +228,12 @@ Unicode keyboard eventを製品fallbackにしない。
 clipboard restoreが本番ツリーに存在しないこと。実装前の復帰点はtag
 `pre-focused-vision-r9-20260730`（`1aea597`）。設計、マイルストーン、commit境界、検証の正本は
 [focused-vision-plan.md](focused-vision-plan.md)。
+
+- **A0（完了）** 復帰点、改訂設計、プロジェクトA/Bの境界を確定した。
+- **A1（完了）** focused elementと祖先選択を1つの値snapshotへ固定するAX取得層を追加した。
+  Chromium/Electronの両AX属性、captureと並行可能なbounded retry、secure field除外、
+  timeout・失効要素の安全な退化、純粋な起動判定をunit testで固定した。現行の右Shift起動、
+  Transform、SelectionGrabber、本番Gateway経路にはまだ接続していない。
 
 ## リリース判定
 

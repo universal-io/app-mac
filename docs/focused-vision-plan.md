@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: 改訂設計確定・実装前
+最終更新: 2026-07-30 ／ ステータス: A1 AX focus snapshot完了
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -444,6 +444,12 @@ Vision requestへ任意のfocus targetを追加する。
 - この段階では本番の起動経路を切り替えない。
 
 コミット境界: 新しいsnapshot層とunit testだけ。現行Transform／SelectionGrabberは維持。
+
+完了（2026-07-30）: `AXFocusSnapshotService`がfocused elementと最も近い祖先の非空選択を
+同じ値snapshotへ収める。Vision captureと同じ両AX属性、短いmessaging timeout、
+成長中だけのbounded retryを使い、AX要素参照をtask外へ残さない。secure fieldは内容・label・frameを
+読まず通常Visionへ退化し、timeoutと失効要素も値statusへ閉じ込める。純粋な起動判定とretry境界を
+unit testで固定した。この段階ではSessionCoordinatorへ接続せず、現行本番経路は不変。
 
 ### A2 — Vision focus target
 
