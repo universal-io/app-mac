@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: A5 Transform撤去実装完了
+最終更新: 2026-07-30 ／ ステータス: A6 clipboard復元撤去完了
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -531,6 +531,15 @@ panel分岐、ウォームアップを削除した。Gatewayの`/api/ai/transfor
 - クリップボード破壊の再現手順と、送信中にユーザーが⌘Cする競合試験を行う。
 
 コミット境界: 退避・復元が本番ツリーから0件になり、今回の破壊原因が構造上消える。
+
+完了（2026-07-30）: `ClipboardBackup`と未使用の`ClipboardDeployer`を削除した。
+`PasteDeployer`は明示送信時に本文だけを標準clipboardへ書き、対象アプリを前面化して合成⌘Vを
+1回送る。送信後の遅延restoreは行わないため、その間にユーザーが行った新しいコピーを時間差で
+上書きする処理は存在しない。Accessibility拒否または⌘V event生成失敗時は、本文がclipboardへ
+コピー済みであることと対象欄で手動⌘Vすることをmodal alertで明示する。拒否時はAccessibility設定を
+開く選択肢も出す。未標準の`org.nspasteboard.TransientType`は実機証明が無いため付与していない。
+リッチテキスト、画像、ファイル、複数item、送信直後のユーザー⌘Cとの競合は
+[manual-golden-paths.md](manual-golden-paths.md)へ固定し、A7の署名付き実機検証で実施する。
 
 ### A7 — 統合検証と完了記録
 

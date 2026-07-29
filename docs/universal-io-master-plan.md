@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-30 ／ ステータス: `v0.2.0` 正式公開済み、R9 A5実装済み
+最終更新: 2026-07-30 ／ ステータス: `v0.2.0` 正式公開済み、R9 A6実装済み
 
 ## 製品
 
@@ -207,7 +207,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard安全化（A5実装済み）
+### R9 — Focused Visionとclipboard安全化（A6実装済み）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
@@ -250,6 +250,10 @@ clipboard restoreが本番ツリーに存在しないこと。実装前の復帰
   model routing、entitlement feature、ウォームアップを削除した。`review`はComposeだけを受理し、
   選択対象の理解は`VisionSession`と`/api/ai/vision`へ一本化した。ロールバック用・念のための
   旧実装は保持せず、必要な復帰はGit tag／履歴から行う。
+- **A6（完了）** `ClipboardBackup`と遅延restoreを削除した。Compose送信は本文だけをclipboardへ
+  書いて合成⌘Vを1回送り、本文を残す。Accessibility拒否またはevent生成失敗時は手動⌘Vを明示し、
+  拒否時は設定を開く選択肢も出す。未実証のTransientTypeは付けず、送信後のユーザー⌘Cを時間差で
+  上書きする経路を構造上なくした。
 
 ## リリース判定
 
