@@ -103,4 +103,16 @@ struct BombSquadAccountSummary: Equatable {
     var cancelAtText: String? {
         cancelAt.map(GatewayTimestamp.dayText)
     }
+
+    /// What to show for 契約状態.
+    ///
+    /// A cancelled subscription keeps `status: active` until the paid period runs
+    /// out, so the raw label reads "有効" — indistinguishable from an ordinary
+    /// renewal to the one person who most needs to see the difference. When an end
+    /// date exists, the state names the completed cancellation and how long access
+    /// lasts, which is the whole question a user has after cancelling.
+    var stateText: String {
+        guard let cancelAtText else { return state.label }
+        return "解約手続き完了（\(cancelAtText)まで有効）"
+    }
 }

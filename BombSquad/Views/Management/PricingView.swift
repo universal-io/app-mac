@@ -24,6 +24,41 @@ struct PricingView: View {
         viewModel.accountSummary?.plan.isPaid ?? false
     }
 
+    private var isCancelling: Bool {
+        viewModel.accountSummary?.cancelAt != nil
+    }
+
+    /// Names what the user came to do, not the screen it opens.
+    ///
+    /// "お支払い管理" was tested and failed: the person who wanted to cancel could
+    /// not tell that this was the way to do it. The portal does handle payment
+    /// methods and invoices too, but cancelling is the errand nobody can guess, so
+    /// it gets the label and the rest goes in the caption. The trailing ellipsis is
+    /// the macOS convention for a command that needs more input before it completes
+    /// — clicking this opens Stripe, it does not cancel anything by itself.
+    private var paymentButtonTitle: String {
+        if !isPaidPlan { return "請求書・お支払い方法…" }
+        if isCancelling { return "解約の取り消し・お支払い方法…" }
+        return "サブスクリプションを解約…"
+    }
+
+    /// Names the other things the portal does, so the button can be about the one
+    /// thing that needed naming.
+    private var description: String {
+        guard canManagePayment else {
+            return "プランの詳細とお申し込みは Web で確認できます。"
+        }
+        return isPaidPlan && !isCancelling
+            ? "解約は Stripe の画面で行います。支払い方法の変更と請求書の確認も同じ画面です。"
+            : "支払い方法の変更と請求書の確認は Stripe の画面で行います。"
+    }
+
+    private var paymentButtonHint: String {
+        isPaidPlan && !isCancelling
+            ? "解約手続きを行う Stripe の画面をブラウザで開きます"
+            : "支払い方法の変更や請求書の確認を行う Stripe の画面をブラウザで開きます"
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "creditcard")
@@ -34,23 +69,23 @@ struct PricingView: View {
                 .font(.title2.weight(.semibold))
 
             if viewModel.hasSession, let summary = viewModel.accountSummary {
-                Text("現在のプラン: \(summary.plan.label)（\(summary.state.label)）")
+                Text("現在のプラン: \(summary.plan.label)")
                     .foregroundStyle(.secondary)
+
+                // Only when it says something the plan name does not. A cancelled
+                // or past-due subscription needs stating here, not just on the
+                // account page: this is the screen the user cancelled from and the
+                // one they come back to if they doubt it worked. A plain active
+                // plan needs no second line.
+                if summary.cancelAt != nil || summary.state != .active {
+                    Text(summary.stateText)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            // Said here as well as on the account page, because this is the screen
-            // the user was on when they cancelled and the one they will come back
-            // to if they doubt it worked.
-            if let cancelAtText = viewModel.accountSummary?.cancelAtText {
-                Text("\(cancelAtText)に終了予定です。それまでは今のプランのままご利用いただけます。")
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Text(canManagePayment
-                 ? "解約、支払い方法の変更、請求書の確認は Stripe の画面で行います。"
-                 : "プランの詳細とお申し込みは Web で確認できます。")
+            Text(description)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -100,13 +135,13 @@ struct PricingView: View {
             viewModel.openBillingPortal()
         } label: {
             Label(
-                viewModel.isOpeningBillingPortal ? "開いています…" : "お支払い管理",
+                viewModel.isOpeningBillingPortal ? "開いています…" : paymentButtonTitle,
                 systemImage: "arrow.up.forward.square"
             )
             .frame(maxWidth: .infinity)
         }
         .disabled(viewModel.isOpeningBillingPortal)
-        .accessibilityHint("解約や支払い方法の変更を行う Stripe の画面をブラウザで開きます")
+        .accessibilityHint(paymentButtonHint)
     }
 
     private var pricingButton: some View {

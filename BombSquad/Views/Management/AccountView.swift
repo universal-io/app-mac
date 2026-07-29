@@ -49,14 +49,10 @@ struct AccountView: View {
                     if let summary = viewModel.accountSummary {
                         infoRow("プラン", summary.plan.label)
                         Divider()
-                        infoRow("契約状態", summary.state.label)
-                        // A cancelled subscription stays active until the paid
-                        // period runs out, so "有効" alone would look like nothing
-                        // happened. Shown right under the status it qualifies.
-                        if let cancelAtText = summary.cancelAtText {
-                            Divider()
-                            infoRow("終了予定", "\(cancelAtText)（それまでご利用いただけます）")
-                        }
+                        // Carries the cancellation and its end date when there is
+                        // one: a cancelled plan stays `active` for weeks, so the
+                        // bare status would look like nothing happened.
+                        infoRow("契約状態", summary.stateText)
                         Divider()
                         infoRow("月間利用枠", "\(summary.monthlyReviewLimit) 回")
                     }

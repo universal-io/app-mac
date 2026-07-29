@@ -34,6 +34,8 @@ final class AuthViewModel: ObservableObject {
     private lazy var authClient = BombSquadAuthClient.shared
     private var authStateTask: Task<Void, Never>?
     private var initializedUserID: UUID?
+    /// Live only between opening the customer portal and the next activation.
+    private var portalReturnObserver: NSObjectProtocol?
 
     init(startImmediately: Bool = true) {
         guard startImmediately else { return }
@@ -45,6 +47,9 @@ final class AuthViewModel: ObservableObject {
 
     deinit {
         authStateTask?.cancel()
+        if let portalReturnObserver {
+            NotificationCenter.default.removeObserver(portalReturnObserver)
+        }
     }
 
     var isConfigured: Bool {
@@ -166,6 +171,7 @@ final class AuthViewModel: ObservableObject {
                 await MainActor.run {
                     NSWorkspace.shared.open(url)
                     self.isOpeningBillingPortal = false
+                    self.refreshWhenBackFromPortal()
                 }
             } catch {
                 await MainActor.run {
@@ -177,6 +183,44 @@ final class AuthViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Refreshes the account once the user comes back from the portal.
+    ///
+    /// The subscription was changed on a website this app cannot observe, so
+    /// without this the account page keeps showing the plan they just cancelled —
+    /// which is exactly the moment a user concludes the cancellation failed.
+    ///
+    /// Deliberately armed by an actual portal visit rather than left listening on
+    /// every activation: this app is summoned by a hotkey many times an hour, and
+    /// a refresh per activation would put a network request in front of ordinary
+    /// use.
+    ///
+    /// Two reads, because the webhook is racing the user. Stripe delivers and the
+    /// gateway applies in a second or two, and someone who cancels and immediately
+    /// switches back can win that race; the first read would then show the old
+    /// plan and stay wrong until the page is reopened.
+    private func refreshWhenBackFromPortal() {
+        clearPortalReturnObserver()
+        portalReturnObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.clearPortalReturnObserver()
+                await self.refreshAccount()
+                try? await Task.sleep(for: .seconds(3))
+                await self.refreshAccount()
+            }
+        }
+    }
+
+    private func clearPortalReturnObserver() {
+        guard let portalReturnObserver else { return }
+        NotificationCenter.default.removeObserver(portalReturnObserver)
+        self.portalReturnObserver = nil
     }
 
     func deleteAccount() {
