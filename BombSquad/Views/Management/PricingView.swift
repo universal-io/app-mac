@@ -108,6 +108,16 @@ struct PricingView: View {
         .task {
             await viewModel.refreshAccount()
         }
+        // This is the screen a purchase starts from — the web pricing page is one
+        // click away — so it is also where the user returns expecting to see what
+        // they bought.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            viewModel.refreshAfterExternalBillingChange()
+        }
     }
 
     /// A subscriber came here to manage what they already pay for, so that is

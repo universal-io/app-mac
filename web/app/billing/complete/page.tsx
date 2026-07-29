@@ -18,7 +18,7 @@ export default function BillingCompletePage() {
       <section className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-[0_1px_2px_rgba(16,17,20,0.04)]">
         <h1 className="text-base font-semibold">お手続きが完了しました</h1>
         <p className="mt-2 text-sm leading-6 text-body">
-          Universal IO に戻ってお使いください。プランの反映には数秒かかることがあります。
+          Universal IO に戻るとプランが反映されます。反映まで数秒かかることがあります。
         </p>
         <a
           href={PRODUCT_SITE_URL}

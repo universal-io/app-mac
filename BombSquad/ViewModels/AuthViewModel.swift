@@ -36,6 +36,8 @@ final class AuthViewModel: ObservableObject {
     private var initializedUserID: UUID?
     /// Live only between opening the customer portal and the next activation.
     private var portalReturnObserver: NSObjectProtocol?
+    /// Coalesces the overlapping triggers of `refreshAfterExternalBillingChange`.
+    private var isReconcilingBilling = false
 
     init(startImmediately: Bool = true) {
         guard startImmediately else { return }
@@ -185,21 +187,43 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    /// Refreshes the account once the user comes back from the portal.
+    /// Re-reads the account after something outside this app may have changed the
+    /// subscription.
     ///
-    /// The subscription was changed on a website this app cannot observe, so
-    /// without this the account page keeps showing the plan they just cancelled —
-    /// which is exactly the moment a user concludes the cancellation failed.
+    /// Buying and cancelling both happen in a browser, on Stripe's pages or the
+    /// product site, and this app cannot observe either. Whatever the app is
+    /// holding is therefore stale from the moment the user leaves, and the stale
+    /// value is the dangerous one: someone who has just been charged and comes back
+    /// to "フリー" concludes their money vanished.
     ///
-    /// Deliberately armed by an actual portal visit rather than left listening on
-    /// every activation: this app is summoned by a hotkey many times an hour, and
-    /// a refresh per activation would put a network request in front of ordinary
-    /// use.
+    /// Read twice, a few seconds apart. Stripe delivers the webhook and the gateway
+    /// applies it in one to two seconds, and a user who finishes checkout and
+    /// switches straight back beats that. A single read would show the old plan and
+    /// keep showing it until the page happened to be reopened.
     ///
-    /// Two reads, because the webhook is racing the user. Stripe delivers and the
-    /// gateway applies in a second or two, and someone who cancels and immediately
-    /// switches back can win that race; the first read would then show the old
-    /// plan and stay wrong until the page is reopened.
+    /// Coalesced, because the triggers overlap on purpose: returning from the
+    /// portal and the window becoming active are usually the same instant.
+    func refreshAfterExternalBillingChange() {
+        guard hasSession, !isReconcilingBilling else { return }
+        isReconcilingBilling = true
+        Task {
+            await refreshAccount()
+            try? await Task.sleep(for: .seconds(3))
+            await refreshAccount()
+            isReconcilingBilling = false
+        }
+    }
+
+    /// Arms a one-shot reconcile for a portal visit started from this app.
+    ///
+    /// The billing screens also reconcile whenever the app becomes active, but that
+    /// only helps while one of them is on screen. A user who opens the portal and
+    /// then navigates elsewhere in the window still needs the plan to catch up, so
+    /// the trip itself is what arms this.
+    ///
+    /// Not a standing listener on every activation: this app is summoned by a
+    /// hotkey many times an hour, and account state is not worth a request in front
+    /// of ordinary use.
     private func refreshWhenBackFromPortal() {
         clearPortalReturnObserver()
         portalReturnObserver = NotificationCenter.default.addObserver(
@@ -210,9 +234,7 @@ final class AuthViewModel: ObservableObject {
             guard let self else { return }
             Task { @MainActor in
                 self.clearPortalReturnObserver()
-                await self.refreshAccount()
-                try? await Task.sleep(for: .seconds(3))
-                await self.refreshAccount()
+                self.refreshAfterExternalBillingChange()
             }
         }
     }

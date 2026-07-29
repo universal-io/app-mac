@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The account section of the management window. This is the single
@@ -98,6 +99,17 @@ struct AccountView: View {
         // shown; existing values stay on screen while the request runs.
         .task {
             await viewModel.refreshAccount()
+        }
+        // And again whenever the user comes back to the app with this page open.
+        // Buying and cancelling both finish in a browser, so the plan on screen is
+        // stale exactly when it matters most — a subscriber who just paid and reads
+        // "フリー" here has every reason to think the payment was lost.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            viewModel.refreshAfterExternalBillingChange()
         }
     }
 
