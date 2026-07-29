@@ -16,6 +16,7 @@ import {
   VISION_IMAGE_DETAIL,
   VISION_REASONING_EFFORT,
   type VisionCandidate,
+  type VisionFocusTarget,
   type VisionTurn,
 } from "@/lib/server/vision-engine";
 
@@ -25,6 +26,10 @@ const MAX_TURNS = 20;
 const MAX_TURN_CHARS = 4_000;
 const MAX_CANDIDATES = 500;
 const MAX_CONTEXT_FIELD_CHARS = 1_024;
+const MAX_FOCUS_TEXT_CHARS = 12_000;
+const MAX_FOCUS_ROLE_CHARS = 128;
+const MAX_FOCUS_LABEL_CHARS = 512;
+const MAX_FOCUS_COORDINATE = 100_000;
 
 type VisionRequestBody = {
   request_id?: string;
@@ -62,6 +67,21 @@ type VisionRequestBody = {
       goal?: string;
       previous_instruction?: string;
     };
+    focus_target?: {
+      kind?: string;
+      text?: string;
+      role?: string;
+      label?: string;
+      frame?: {
+        x?: number;
+        y?: number;
+        width?: number;
+        height?: number;
+      };
+      source?: string;
+      truncated?: boolean;
+    };
+    visual_selection_hint?: boolean;
     candidates?: Array<{
       id?: string;
       source?: string;
@@ -119,6 +139,26 @@ export async function POST(request: Request): Promise<Response> {
           previousInstruction: body.input!.guidance.previous_instruction!,
         }
       : undefined;
+    const rawFocusTarget = body.input!.focus_target;
+    const focusTarget = rawFocusTarget
+      ? {
+          kind: rawFocusTarget.kind!,
+          text: rawFocusTarget.text,
+          role: rawFocusTarget.role,
+          label: rawFocusTarget.label,
+          frame: rawFocusTarget.frame
+            ? {
+                x: rawFocusTarget.frame.x!,
+                y: rawFocusTarget.frame.y!,
+                width: rawFocusTarget.frame.width!,
+                height: rawFocusTarget.frame.height!,
+              }
+            : undefined,
+          source: rawFocusTarget.source!,
+          truncated: rawFocusTarget.truncated!,
+        } as VisionFocusTarget
+      : undefined;
+    const visualSelectionHint = body.input!.visual_selection_hint === true;
 
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
@@ -150,6 +190,8 @@ export async function POST(request: Request): Promise<Response> {
         turns,
         candidates,
         guidance,
+        focusTarget,
+        visualSelectionHint,
         context,
         language,
       });
@@ -308,6 +350,29 @@ function validateBody(
   ) {
     return errorResponse(400, "BAD_REQUEST", "input.turns is invalid.", requestId);
   }
+  const focusTarget = body.input?.focus_target;
+  if (focusTarget !== undefined && !isValidFocusTarget(focusTarget)) {
+    return errorResponse(400, "BAD_REQUEST", "input.focus_target is invalid.", requestId);
+  }
+  if (
+    body.input?.visual_selection_hint !== undefined
+    && typeof body.input.visual_selection_hint !== "boolean"
+  ) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "input.visual_selection_hint is invalid.",
+      requestId,
+    );
+  }
+  if (focusTarget && body.input?.visual_selection_hint === true) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "input.focus_target and input.visual_selection_hint are mutually exclusive.",
+      requestId,
+    );
+  }
   const candidates = body.input?.candidates ?? [];
   if (
     !Array.isArray(candidates)
@@ -415,6 +480,69 @@ function validateBody(
     return errorResponse(400, "BAD_REQUEST", "client.platform is required.", requestId);
   }
   return null;
+}
+
+function isValidFocusTarget(
+  target: NonNullable<NonNullable<VisionRequestBody["input"]>["focus_target"]>,
+): boolean {
+  const validPair = (
+    (target.kind === "selected_text" && target.source === "ax_selected_text")
+    || (target.kind === "accessibility_element" && target.source === "ax_element")
+    || (target.kind === "region" && target.source === "user_region")
+  );
+  if (!validPair || typeof target.truncated !== "boolean") return false;
+
+  const fields: Array<[unknown, number]> = [
+    [target.text, MAX_FOCUS_TEXT_CHARS],
+    [target.role, MAX_FOCUS_ROLE_CHARS],
+    [target.label, MAX_FOCUS_LABEL_CHARS],
+  ];
+  if (fields.some(([value, limit]) => (
+    value !== undefined
+    && (
+      typeof value !== "string"
+      || value.trim().length === 0
+      || value.length > limit
+      || hasForbiddenControlCharacters(value)
+    )
+  ))) {
+    return false;
+  }
+
+  if (target.frame !== undefined) {
+    if (
+      typeof target.frame !== "object"
+      || target.frame === null
+      || Array.isArray(target.frame)
+    ) {
+      return false;
+    }
+    const { x, y, width, height } = target.frame;
+    if (
+      typeof x !== "number" || !Number.isFinite(x) || x < 0 || x > MAX_FOCUS_COORDINATE
+      || typeof y !== "number" || !Number.isFinite(y) || y < 0 || y > MAX_FOCUS_COORDINATE
+      || typeof width !== "number" || !Number.isFinite(width)
+      || width <= 0 || width > MAX_FOCUS_COORDINATE
+      || typeof height !== "number" || !Number.isFinite(height)
+      || height <= 0 || height > MAX_FOCUS_COORDINATE
+    ) {
+      return false;
+    }
+  }
+
+  if (target.kind === "selected_text") {
+    return typeof target.text === "string" && target.text.trim().length > 0;
+  }
+  if (target.kind === "accessibility_element") {
+    return target.role !== undefined
+      || target.label !== undefined
+      || target.frame !== undefined;
+  }
+  return target.frame !== undefined;
+}
+
+function hasForbiddenControlCharacters(value: string): boolean {
+  return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);
 }
 
 function candidateDiagnosticsForUsage(

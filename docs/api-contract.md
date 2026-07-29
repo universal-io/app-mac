@@ -113,12 +113,23 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 - `input.turns`: 最大20件
 - `input.candidates`: 同一captureから取得したAX/DOM候補、最大500件
 - `input.guidance`: Copilot進捗時の目的と直前案内。`question`とは排他
+- `input.focus_target`: 任意。Focused Visionのセッション内対象。未指定なら従来の通常Visionと同一。
+  `kind`は`selected_text` / `accessibility_element` / `region`、`source`はそれぞれ
+  `ax_selected_text` / `ax_element` / `user_region`。`text`は最大12,000文字、`role`は128文字、
+  `label`は512文字で、禁止制御文字を含めない。`frame`はAXグローバル座標ではなくcapture左上を
+  原点とするピクセル座標で、capture外は切り詰める。`truncated`でtext切り詰めを明示する。
+- `input.visual_selection_hint`: 任意の真偽値。AXで対象を確定できないが画像上に選択ハイライトが
+  あり得る場合だけtrueとし、`focus_target`とは排他。画像から特定できなければ通常Visionへ退化する。
 - `input.context`: 任意（`app_name` / `bundle_id` / `window_title` / `host`、各1,024文字まで）。
   Skill判定と画面の出所提示のためだけの参照データで保存しない。判定規則はsuggestと同じで、
   `host`が一次シグナル、ネイティブアプリは`bundle_id`。`candidate_diagnostics`には
   アプリ名・ウインドウタイトルを入れない（あちらはusageへ渡る運用情報）
 - 実装: `web/app/api/ai/vision/route.ts`
 - クライアント: `GatewayVisionClient`
+
+`focus_target`と`visual_selection_hint`はVision promptだけで使い、usage metadata、運用ログ、
+応答へ保存しない。通常Vision、Focused Vision、継続質問は同じmodel routeと応答契約を使う。
+Copilotの新captureへ古いfocus targetのframeを引き継がない。
 
 成功応答:
 

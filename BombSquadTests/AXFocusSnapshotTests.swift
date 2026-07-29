@@ -120,6 +120,29 @@ final class AXFocusSnapshotTests: XCTestCase {
         ))
     }
 
+    func testSelectedTextBecomesFocusTarget() {
+        let snapshot = makeSnapshot(
+            selectedText: "選択部分",
+            role: "AXStaticText"
+        )
+
+        let target = VisionFocusTarget.from(snapshot: snapshot)
+
+        XCTAssertEqual(target?.kind, .selectedText)
+        XCTAssertEqual(target?.text, "選択部分")
+        XCTAssertEqual(target?.source, .axSelectedText)
+    }
+
+    func testSecureSnapshotNeverBecomesFocusTarget() {
+        let snapshot = makeSnapshot(
+            selectedText: "secret",
+            role: "AXTextField",
+            isSecureField: true
+        )
+
+        XCTAssertNil(VisionFocusTarget.from(snapshot: snapshot))
+    }
+
     private func makeSnapshot(
         selectedText: String? = nil,
         role: String? = nil,

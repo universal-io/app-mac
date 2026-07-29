@@ -209,7 +209,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard安全化（A1実装済み）
+### R9 — Focused Visionとclipboard安全化（A2実装済み）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
@@ -234,6 +234,10 @@ clipboard restoreが本番ツリーに存在しないこと。実装前の復帰
   Chromium/Electronの両AX属性、captureと並行可能なbounded retry、secure field除外、
   timeout・失効要素の安全な退化、純粋な起動判定をunit testで固定した。現行の右Shift起動、
   Transform、SelectionGrabber、本番Gateway経路にはまだ接続していない。
+- **A2（完了）** 任意のVision focus targetをSession、macOS request、Gateway validation、
+  Vision promptへ後方互換で追加した。選択テキスト、AX要素、領域とcapture内ピクセルframeを扱い、
+  AX対象未確定時は画像上の選択をbest-effortで探す。対象情報はusage／運用ログへ保存せず、
+  通常Visionの未指定requestと現行本番入口は変えていない。
 
 ## リリース判定
 

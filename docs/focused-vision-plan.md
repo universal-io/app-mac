@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: A1 AX focus snapshot完了
+最終更新: 2026-07-30 ／ ステータス: A2 Vision focus target完了
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -459,6 +459,14 @@ unit testで固定した。この段階ではSessionCoordinatorへ接続せず�
 - focus targetをusageとログへ保存しない。
 
 コミット境界: APIの後方互換な追加とテスト。まだUIと起動経路は切り替えない。
+
+完了（2026-07-30）: `VisionFocusTarget`を`VisionSession`内の任意データとして追加し、
+`GatewayVisionClient`から`POST /api/ai/vision`、Gateway validation、Vision promptまで通した。
+AXグローバルframeは送信時にcapture左上原点のピクセル座標へ変換し、capture外を切り詰める。
+text上限、role／label上限、禁止制御文字、kind／sourceの組み合わせ、frame範囲を検証する。
+対象未確定時の`visual_selection_hint`は画像からbest-effortで選択を探し、見つからなければ通常Visionへ
+退化する。focus targetとhintはusage／運用ログへ保存せず、Copilotの新captureへ古いframeを渡さない。
+未指定時はrequest fieldもprompt追加も無く、現行通常Visionと同一。UIと起動経路はまだ不変。
 
 ### A3 — Focused Vision UI
 
