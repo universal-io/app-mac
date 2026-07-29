@@ -28,6 +28,49 @@ struct VisionFocusTarget: Equatable {
     let frame: CGRect?
     let source: Source
 
+    var displayTitle: String {
+        switch kind {
+        case .selectedText:
+            return "選択中のテキスト"
+        case .region:
+            return "選択した領域"
+        case .accessibilityElement:
+            switch role {
+            case "AXButton":
+                return "選択中のボタン"
+            case "AXLink":
+                return "選択中のリンク"
+            case "AXImage":
+                return "選択中の画像"
+            case "AXCheckBox":
+                return "選択中のチェックボックス"
+            case "AXRadioButton":
+                return "選択中のラジオボタン"
+            case "AXTab":
+                return "選択中のタブ"
+            case "AXRow":
+                return "選択中の行"
+            case "AXCell":
+                return "選択中のセル"
+            case "AXTextField", "AXTextArea":
+                return "選択中のテキストフィールド"
+            default:
+                return "選択中の画面要素"
+            }
+        }
+    }
+
+    var sourceDescription: String {
+        switch source {
+        case .axSelectedText:
+            return "選択テキスト"
+        case .axElement:
+            return "画面要素"
+        case .userRegion:
+            return "選択領域"
+        }
+    }
+
     static func from(snapshot: AXFocusSnapshot) -> VisionFocusTarget? {
         guard !snapshot.isSecureField else { return nil }
         if let text = normalized(snapshot.selectedText), !text.isEmpty {
@@ -116,6 +159,25 @@ struct VisionFocusTarget: Equatable {
             guard payload["frame"] != nil else { return nil }
         }
         return payload
+    }
+
+    /// Returns the target in the preview's normalized top-left coordinate
+    /// space. A target outside the captured display, or a capture whose
+    /// origin is unknown, deliberately has no drawable location.
+    func normalizedFrame(in attachment: ScreenshotAttachment) -> CGRect? {
+        guard let pixelFrame = capturePixelFrame(for: attachment),
+              let pixelWidth = attachment.pixelWidth,
+              let pixelHeight = attachment.pixelHeight,
+              pixelWidth > 0,
+              pixelHeight > 0 else {
+            return nil
+        }
+        return CGRect(
+            x: pixelFrame.minX / CGFloat(pixelWidth),
+            y: pixelFrame.minY / CGFloat(pixelHeight),
+            width: pixelFrame.width / CGFloat(pixelWidth),
+            height: pixelFrame.height / CGFloat(pixelHeight)
+        )
     }
 
     private var sourceMatchesKind: Bool {

@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: A2 Vision focus target完了
+最終更新: 2026-07-30 ／ ステータス: A3 Focused Vision UI完了
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -475,6 +475,16 @@ text上限、role／label上限、禁止制御文字、kind／sourceの組み合
 - VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Motionを確認する。
 
 コミット境界: focus targetを注入したVisionを開けば完成体験になるが、Transformはまだ本番入口。
+
+完了（2026-07-30）: 既存`VisionSessionView`へfocus targetがある時だけ対象カードを追加した。
+カードは選択テキスト、role由来の中立名、AX label、取得元、capture上の位置有無を示し、長文は
+4行へ折りたたんだまま全文をスクロール表示できる。AXグローバルframeは同じcapture内の正規化座標へ
+投影し、system accent色の枠と「選択対象」ラベルを併用する。capture位置が不明または範囲外なら
+古い／推測位置を描かず、その状態を文字とアイコンで示す。通常Visionと同じ会話、Skill、
+fallback notice、Copilot経路を維持し、Copilotが新captureを得た後は従来どおり新しい案内位置を優先する。
+VoiceOverでは対象、解説、継続入力、操作の順序を指定し、全文表示はkeyboard操作可能。
+Increase Contrastでは枠を太くし、Reduce Transparencyでは不透明背景、Reduce Motionでは
+自動zoomと会話scrollのanimationを止める。右ShiftとTransformの本番入口はまだ不変。
 
 ### A4 — 起動経路切替と合成⌘C撤去
 

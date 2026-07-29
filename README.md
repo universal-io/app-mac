@@ -102,8 +102,9 @@ Composeのclipboard非依存化はプロジェクトBとして分離する。AX�
 [マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。実装完了までは現行Transformと
 `/api/ai/transform`が本番経路であり、目標仕様と混同しない。
 
-現在はA2まで完了し、AX focus snapshotと任意のVision focus target契約を内部追加済みである。
-右Shift起動とUIはまだ切り替えていないため、現行Transformの本番挙動は変わっていない。
+現在はA3まで完了し、AX focus snapshot、任意のVision focus target契約、既存Visionパネル内の
+対象カードとcaptureハイライトを追加済みである。右Shift起動はまだ切り替えていないため、
+現行Transformの本番挙動は変わっていない。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 

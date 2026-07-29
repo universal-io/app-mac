@@ -70,6 +70,46 @@ final class VisionFocusTargetTests: XCTestCase {
 
         XCTAssertEqual(payload["text"] as? String, "text only")
         XCTAssertNil(payload["frame"])
+        XCTAssertNil(target.normalizedFrame(in: unknown))
+    }
+
+    func testNormalizedFrameUsesClippedCaptureCoordinates() throws {
+        let snapshot = AXFocusSnapshot(
+            selectedText: "partly visible",
+            role: "AXStaticText",
+            label: nil,
+            frame: CGRect(x: 50, y: 150, width: 100, height: 100),
+            isEditable: false,
+            isSecureField: false,
+            isElementSelected: false,
+            status: .complete,
+            collectionPasses: 1
+        )
+        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
+        let frame = try XCTUnwrap(target.normalizedFrame(in: attachment()))
+
+        XCTAssertEqual(frame.minX, 0, accuracy: 0.0001)
+        XCTAssertEqual(frame.minY, 0, accuracy: 0.0001)
+        XCTAssertEqual(frame.width, 0.125, accuracy: 0.0001)
+        XCTAssertEqual(frame.height, 1.0 / 6.0, accuracy: 0.0001)
+    }
+
+    func testPresentationUsesNeutralRoleAndSourceNames() throws {
+        let snapshot = AXFocusSnapshot(
+            selectedText: nil,
+            role: "AXButton",
+            label: "送信",
+            frame: CGRect(x: 120, y: 220, width: 80, height: 30),
+            isEditable: false,
+            isSecureField: false,
+            isElementSelected: true,
+            status: .complete,
+            collectionPasses: 1
+        )
+        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
+
+        XCTAssertEqual(target.displayTitle, "選択中のボタン")
+        XCTAssertEqual(target.sourceDescription, "画面要素")
     }
 
     func testTextIsBoundedAndControlCharactersAreRemoved() throws {
