@@ -290,6 +290,12 @@ publishable keyもprice idもクライアントは持たない。
 - どちらも失効・past_dueのアカウントから呼べる（買う人・カードを直す人こそ呼ぶため、
   entitlement statusでゲートしない）。鍵が無い場合は`BILLING_UNAVAILABLE`（503）。
 
+購入導線の入口は`/billing/start?plan=standard`（ページ、APIではない）。製品サイトの料金ページから
+リンクする。未ログインなら`/auth?next=/billing/start?plan=…`へ送り、ログイン後に同じ場所へ戻して
+Checkoutを開始する。ログイン済みならそのままCheckoutへ進む。契約済みの場合は`SUBSCRIPTION_EXISTS`を
+受けて「お支払い管理から」と案内する。Checkoutセッション作成は1回だけ実行する
+（認証リスナーの再レンダリングで二重にPOSTしない）。
+
 `POST /stripe/webhook` はStripe専用で、Bearer認証を持たない（**署名が資格情報**）。
 `STRIPE_WEBHOOK_SECRET`未設定なら503、署名不正なら400（再送させない）。処理するのは
 `checkout.session.completed`、`customer.subscription.created` / `updated` / `deleted`、
