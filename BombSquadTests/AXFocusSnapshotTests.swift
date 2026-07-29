@@ -56,6 +56,30 @@ final class AXFocusSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .vision)
+        XCTAssertFalse(AXFocusLaunchDecision.shouldLookForVisualSelection(in: snapshot))
+    }
+
+    func testMissingAXSelectionEnablesBestEffortVisualHint() {
+        let snapshot = makeSnapshot(
+            selectedText: nil,
+            role: "AXWebArea",
+            isEditable: false
+        )
+
+        XCTAssertTrue(AXFocusLaunchDecision.shouldLookForVisualSelection(in: snapshot))
+    }
+
+    func testAccessibilityDenialDoesNotClaimAVisualSelection() {
+        let snapshot = AXFocusSnapshot.unavailable(.permissionDenied)
+
+        XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .vision)
+        XCTAssertFalse(AXFocusLaunchDecision.shouldLookForVisualSelection(in: snapshot))
+    }
+
+    func testParallelSummonCaptureCanResolveToCompose() {
+        XCTAssertTrue(
+            AppMode.capturing(returnTo: .idle).canTransition(to: .compose)
+        )
     }
 
     func testColdTreeRetriesWhileFocusIsUnavailable() {

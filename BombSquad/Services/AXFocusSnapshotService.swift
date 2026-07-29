@@ -42,8 +42,8 @@ struct AXFocusSnapshot: Equatable {
     }
 }
 
-/// Pure launch decision kept separate from AX reads so all precedence rules can
-/// be exhaustively tested before the production summon path switches in A4.
+/// Pure launch decision kept separate from AX reads so all precedence rules are
+/// exhaustively tested and the production summon path observes one focus state.
 enum AXFocusLaunchDecision {
     enum Destination: Equatable {
         case focusedVision
@@ -60,6 +60,21 @@ enum AXFocusLaunchDecision {
             return .focusedVision
         }
         return snapshot.isEditable ? .compose : .vision
+    }
+
+    /// When a non-secure AX read produced no target, Vision may inspect the
+    /// capture for a visible selection highlight. The prompt remains
+    /// best-effort and falls back to ordinary full-screen reading.
+    static func shouldLookForVisualSelection(in snapshot: AXFocusSnapshot) -> Bool {
+        guard destination(for: snapshot) == .vision, !snapshot.isSecureField else {
+            return false
+        }
+        switch snapshot.status {
+        case .permissionDenied, .invalidTarget:
+            return false
+        case .complete, .noFocusedElement, .timedOut, .invalidatedElement:
+            return true
+        }
     }
 
     private static func isMeaningfulSelectedElement(_ snapshot: AXFocusSnapshot) -> Bool {
@@ -95,8 +110,8 @@ enum AXFocusSnapshotRetryPolicy {
 }
 
 /// Reads focused element metadata and the nearest non-empty ancestor selection
-/// in one bounded operation. `snapshotTask` is intentionally not connected to
-/// SessionCoordinator until A4; callers can start it beside screen capture.
+/// in one bounded operation. The coordinator starts this task beside screen
+/// capture, before Universal I/O activates its own panel.
 enum AXFocusSnapshotService {
     private enum Budget {
         // Keep these aligned with VisionObservationCaptureService.IdentityBudget.

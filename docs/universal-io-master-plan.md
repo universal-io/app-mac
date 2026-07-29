@@ -209,7 +209,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard安全化（A3実装済み）
+### R9 — Focused Visionとclipboard安全化（A4実装済み）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
@@ -243,6 +243,11 @@ clipboard restoreが本番ツリーに存在しないこと。実装前の復帰
   両立する。同じ会話、Skill、fallback notice、Copilot経路を維持し、VoiceOver順序、
   Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionへ対応した。
   右ShiftとTransformの本番入口はまだ切り替えていない。
+- **A4（完了）** 右Shift起動を単一の`AXFocusSnapshot`判定へ切り替え、選択対象ありは
+  Focused Vision、選択なし＋編集可能はCompose、それ以外は通常Visionへ分岐する。AXのbounded retry、
+  画面capture、製品identity取得はパネル前面化前に並行し、Composeへ進む場合は同じcaptureを
+  先読みに転用する。`SelectionGrabber`、合成⌘C、起動時のclipboard読取・復元、0.12秒固定待機を
+  削除した。旧TransformコードとrouteはA5まで残るが、本番入口からは到達しない。
 
 ## リリース判定
 

@@ -15,7 +15,7 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 | 機能 | 一次モデル | 二次モデル |
 |---|---|---|
 | Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
-| Transform（選択テキストの解説） | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
+| 旧Transform互換（本番入口なし、A5で撤去予定） | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 先回り文案 | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
@@ -46,8 +46,8 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
 - Compose上部はブラウザ名やウインドウタイトルではなく、適用ツールと実際の参照元
   （画面画像／AX周辺テキスト）を表示する。詳細から取得テキストと保存範囲を確認でき、
   AX周辺テキストだけをそのセッションから除外できる。
-- 受信変換: 選択中の文章を読み取り、要点と返信案を表示
-- Vision: スクリーンショットを読み、質問への回答や次の操作位置を提示
+- Vision: スクリーンショットを読み、質問への回答や次の操作位置を提示。選択テキストまたは
+  選択要素がある時は、同じVisionパネルで対象を優先して説明
 - Copilot: ユーザーの操作後に画面を再取得し、目的に到達するまで次の一手を案内
 - 履歴: 実際に送信した内容のローカル履歴
 
@@ -99,12 +99,13 @@ Composeのclipboard非依存化はプロジェクトBとして分離する。AX�
 
 意図、目標構造、移行順、受け入れ条件は
 [focused-vision-plan.md](docs/focused-vision-plan.md)、進捗は
-[マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。実装完了までは現行Transformと
-`/api/ai/transform`が本番経路であり、目標仕様と混同しない。
+[マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。A4以降の本番起動はFocused Visionへ
+切り替わっている。旧Transformと`/api/ai/transform`はA5で互換境界を確認して撤去する。
 
-現在はA3まで完了し、AX focus snapshot、任意のVision focus target契約、既存Visionパネル内の
-対象カードとcaptureハイライトを追加済みである。右Shift起動はまだ切り替えていないため、
-現行Transformの本番挙動は変わっていない。
+現在はA4まで完了し、右Shift起動は同じAX focus snapshotから、選択対象ありならFocused Vision、
+選択なし＋編集可能ならCompose、それ以外なら通常Visionへ分岐する。snapshotと画面captureは
+パネル前面化前に並行し、起動時の合成⌘C、clipboard読取・復元、0.12秒固定待機は廃止済み。
+旧TransformコードとGateway routeはA5の互換境界確認まで残るが、本番入口からは到達しない。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -130,7 +131,7 @@ Composeのclipboard非依存化はプロジェクトBとして分離する。AX�
 
 - 入力履歴はComposeで実際に送信した原文と最終文だけを、ログイン中のユーザー専用領域へ
   最新100件保存する。
-  Transformの選択文、解説、返信案、コピー結果は履歴へ保存しない。
+  Focused Visionの選択内容、画面画像、解説、会話は履歴へ保存しない。
 - 未送信のCompose下書きもユーザー単位でこのMacへ保存する。送信した下書きは消去する。
 - 履歴・下書きはSupabase user IDごとに分離する。ログアウト時はローカルDBを閉じ、
   別アカウントへ内容を表示・注入・同期しない。旧版の未分離データは、起動時に復元できた既存
@@ -172,7 +173,7 @@ macOS アプリは AI プロバイダーを直接呼びません。認証済み�
 |---|---|---|
 | 入力レビュー | `ComposeSession` / `GatewayReviewClient` | `POST /api/ai/review` |
 | 音声入力 | `GatewayTranscriber` | `POST /api/ai/transcribe` |
-| 受信変換 | `TransformSession` / `GatewayTransformClient` | `POST /api/ai/transform` |
+| 旧Transform互換（本番入口なし） | `TransformSession` / `GatewayTransformClient` | `POST /api/ai/transform` |
 | Vision / Copilot | `VisionSession` / `GatewayVisionClient` | `POST /api/ai/vision` |
 | 先回り文案 | `ComposeSession` / `GatewaySuggestClient` | `POST /api/ai/suggest` |
 
@@ -232,9 +233,10 @@ macOSはStripeも直接呼びません。Gatewayがホスト型Checkoutまたは
 ## 操作
 
 - 右 Shift 1回: 入力パネル内のフォーカス切替（自分の下書き ⇄ 文案／レビュー結果）
-- 右 Shift 2回: 起動 / Vision開始 / 閉じる。起動時は、選択テキストがあれば受信変換、編集可能な
-  入力欄にフォーカスがあればコンポーズ、どちらも無ければ最初からVision（書き込む先が無いため）。
-  コンポーズからさらに右 Shift 2回でVisionへ。フォーカス判定は前面化する前に同期で行う
+- 右 Shift 2回: 起動 / Vision開始 / 閉じる。起動時は、AXで選択テキストまたは意味のある選択要素を
+  取得できればFocused Vision、選択なしで編集可能な入力欄ならCompose、それ以外は通常Vision。
+  AX snapshotと画面captureはパネル前面化前に並行し、clipboardへ触れない。Composeからさらに
+  右 Shift 2回で先読みcaptureを使ってVisionへ進む
 - 右 Shift 長押し: 音声入力
 - Esc: パネルを閉じる
 - 入力パネルの「レビュー」ボタン: 自分の下書きをレビュー

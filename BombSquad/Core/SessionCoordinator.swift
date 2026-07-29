@@ -63,6 +63,7 @@ final class SessionCoordinator {
     private var transcriptionTask: Task<Void, Never>?
     private var transcriptionWarmupTask: Task<Void, Never>?
     private var captureTask: Task<Void, Never>?
+    private var focusSnapshotTask: Task<AXFocusSnapshot, Never>?
     private var captureGeneration = 0
     /// Full-screen shot taken silently the moment compose is summoned, so a
     /// later Shift double-tap into Vision reuses it with zero capture latency.
@@ -184,58 +185,32 @@ final class SessionCoordinator {
         }
     }
 
-    /// Right-Shift double-tap from idle. Text selected in the front app opens
-    /// the receiving-side transform flow. Otherwise the decision is by focus:
-    /// an editable field focused → compose (write into it); nothing focused →
-    /// Vision from the start (there is no field to write to, so read the screen
-    /// instead). Focus is read synchronously here, before our panel activates.
+    /// Right-Shift double-tap from idle. One value-only AX snapshot decides the
+    /// destination: a meaningful selection → Focused Vision, otherwise an
+    /// editable field → Compose, everything else → ordinary Vision. Screenshot
+    /// capture runs beside the bounded AX read; no synthetic copy or fixed wait
+    /// touches the user's clipboard.
     private func summonSelectionAware() {
-        SelectionGrabber.grab { [weak self] selection in
-            Task { @MainActor [weak self] in
-                guard let self, self.stateMachine.mode == .idle else { return }
-                if let selection {
-                    self.presentTransformSession(with: selection)
-                    return
-                }
-                let editable = NSWorkspace.shared.frontmostApplication.map {
-                    SituationalContextService.focusedFieldIsEditable(pid: $0.processIdentifier)
-                } ?? false
-                if editable {
-                    self.presentComposeSession()
-                } else {
-                    self.presentVisionFromIdle()
-                }
-            }
-        }
-    }
-
-    /// No selection and no editable field focused: go straight to Vision on the
-    /// current screen (silent full-screen capture, no selection overlay). Falls
-    /// back to compose when screen recording is unavailable, so the summon is
-    /// never a dead end.
-    private func presentVisionFromIdle() {
         guard stateMachine.mode == .idle else { return }
-        guard ScreenCapturePermission.isGranted else {
-            presentComposeSession()
-            return
-        }
-        summonTargetApp = NSWorkspace.shared.frontmostApplication
+        let targetApp = NSWorkspace.shared.frontmostApplication
+        summonTargetApp = targetApp
         // Resolve the working screen while that app is still frontmost; once our
         // panel activates, the frontmost app is us.
-        ActiveDisplay.pin(to: summonTargetApp)
-        // Before the capture, not after it: the screenshot is the longest thing
-        // in this path, and resolving the product underneath it in parallel is
-        // what lets the opening observation arrive with its skill attached.
+        ActiveDisplay.pin(to: targetApp)
+        let targetPID = targetApp?.processIdentifier ?? 0
+        let snapshotTask = AXFocusSnapshotService.snapshotTask(pid: targetPID)
+        focusSnapshotTask?.cancel()
+        focusSnapshotTask = snapshotTask
         visionIdentityTask = VisionObservationCaptureService.identityTask(
-            preferredPID: summonTargetApp?.processIdentifier
+            preferredPID: targetApp?.processIdentifier
         )
-        composeSession?.tearDown()
-        composeSession = nil
-        transformSession?.tearDown()
-        transformSession = nil
-        guard stateMachine.transition(to: .capturing(returnTo: .idle), reason: "idleVisionSummon")
+        guard stateMachine.transition(
+            to: .capturing(returnTo: .idle),
+            reason: "idleAXFocusSummon"
+        )
         else { return }
 
+        let startedAt = Date()
         captureGeneration += 1
         let generation = captureGeneration
         captureTask?.cancel()
@@ -243,18 +218,86 @@ final class SessionCoordinator {
             guard let self else { return }
             let displayID = ActiveDisplay.displayID(of: ActiveDisplay.screen())
             let completion: CaptureCompletion
-            do {
-                let attachment = try await self.screenshotCapture.captureFullScreen(displayID: displayID)
-                completion = .attachment(attachment)
-            } catch {
-                completion = .failed(UserFacingError.message(for: error))
+            if ScreenCapturePermission.isGranted {
+                do {
+                    let attachment = try await self.screenshotCapture.captureFullScreen(
+                        displayID: displayID
+                    )
+                    completion = .attachment(attachment)
+                } catch {
+                    completion = .failed(UserFacingError.message(for: error))
+                }
+            } else {
+                completion = .failed(
+                    "Visionには画面収録の許可が必要です。システム設定の"
+                        + "「プライバシーとセキュリティ」から画面収録を許可してください。"
+                )
             }
-            guard !Task.isCancelled else { return }
+            let snapshot = await snapshotTask.value
+            guard !Task.isCancelled else {
+                if case .attachment(let attachment) = completion {
+                    try? FileManager.default.removeItem(at: attachment.url)
+                }
+                return
+            }
             await MainActor.run {
-                guard self.captureGeneration == generation else { return }
+                guard self.captureGeneration == generation,
+                      case .capturing(returnTo: .idle) = self.stateMachine.mode else {
+                    if case .attachment(let attachment) = completion {
+                        try? FileManager.default.removeItem(at: attachment.url)
+                    }
+                    return
+                }
                 self.captureTask = nil
-                self.handleVisionCaptureCompletion(completion, composeSession: nil)
+                self.focusSnapshotTask = nil
+                CoreTrace.event(
+                    "coordinator.axFocusResolved",
+                    mode: self.stateMachine.mode,
+                    details: [
+                        "elapsedMs": Int(Date().timeIntervalSince(startedAt) * 1_000),
+                        "passes": snapshot.collectionPasses,
+                        "status": String(describing: snapshot.status),
+                        "destination": String(
+                            describing: AXFocusLaunchDecision.destination(for: snapshot)
+                        ),
+                    ]
+                )
+                self.completeIdleSummon(snapshot: snapshot, capture: completion)
             }
+        }
+    }
+
+    private func completeIdleSummon(
+        snapshot: AXFocusSnapshot,
+        capture: CaptureCompletion
+    ) {
+        switch AXFocusLaunchDecision.destination(for: snapshot) {
+        case .focusedVision:
+            handleVisionCaptureCompletion(
+                capture,
+                composeSession: nil,
+                focusTarget: VisionFocusTarget.from(snapshot: snapshot)
+            )
+        case .compose:
+            visionIdentityTask?.cancel()
+            visionIdentityTask = nil
+            let preCapture: ScreenshotAttachment?
+            if case .attachment(let attachment) = capture {
+                preCapture = attachment
+            } else {
+                preCapture = nil
+            }
+            presentComposeSession(
+                focusEditable: snapshot.isEditable,
+                preCapture: preCapture
+            )
+        case .vision:
+            handleVisionCaptureCompletion(
+                capture,
+                composeSession: nil,
+                visualSelectionHint: AXFocusLaunchDecision
+                    .shouldLookForVisualSelection(in: snapshot)
+            )
         }
     }
 
@@ -267,7 +310,10 @@ final class SessionCoordinator {
 
     /// Compose summon captures the paste target and L1 context before the
     /// panel activates and steals focus from the originating app.
-    private func presentComposeSession() {
+    private func presentComposeSession(
+        focusEditable: Bool? = nil,
+        preCapture: ScreenshotAttachment? = nil
+    ) {
         let target = NSWorkspace.shared.frontmostApplication
         summonTargetApp = target
         // Both of these read the source app while it is still frontmost: the
@@ -276,7 +322,7 @@ final class SessionCoordinator {
         ActiveDisplay.pin(to: target)
         // Capture focus editability synchronously, before the panel activates
         // and the source app loses first responder.
-        composeFocusEditable = target.map {
+        composeFocusEditable = focusEditable ?? target.map {
             SituationalContextService.focusedFieldIsEditable(pid: $0.processIdentifier)
         } ?? false
         let rootContextTask = SituationalContextService.captureTask()
@@ -296,6 +342,9 @@ final class SessionCoordinator {
             session.tearDown()
             composeSession = nil
             summonTargetApp = nil
+            if let preCapture {
+                try? FileManager.default.removeItem(at: preCapture.url)
+            }
             return
         }
         Task {
@@ -311,7 +360,11 @@ final class SessionCoordinator {
            GatewaySuggestClient.make() != nil {
             session.markSuggestionPreparing()
         }
-        startComposePreCapture()
+        if let preCapture {
+            adoptComposePreCapture(preCapture)
+        } else {
+            startComposePreCapture()
+        }
     }
 
     /// Transform summon shares the same summon-time context capture, but the
@@ -529,6 +582,8 @@ final class SessionCoordinator {
         captureGeneration += 1
         captureTask?.cancel()
         captureTask = nil
+        focusSnapshotTask?.cancel()
+        focusSnapshotTask = nil
         suggestionTask?.cancel()
         suggestionTask = nil
         transcriptionTask?.cancel()
@@ -589,6 +644,17 @@ final class SessionCoordinator {
                 }
             }
         }
+    }
+
+    /// A right-Shift summon already captured the screen beside its AX read.
+    /// Keep that exact image as Compose's pre-capture instead of taking a
+    /// second shot after the panel has opened.
+    private func adoptComposePreCapture(_ attachment: ScreenshotAttachment) {
+        discardComposePreCapture()
+        composeGeneration += 1
+        let generation = composeGeneration
+        composePreCapture = attachment
+        maybeStartComposeSuggestion(attachment: attachment, generation: generation)
     }
 
     /// Ask the Gateway for a proactive draft for the focused external field,
@@ -774,7 +840,9 @@ final class SessionCoordinator {
 
     private func handleVisionCaptureCompletion(
         _ completion: CaptureCompletion,
-        composeSession: ComposeSession?
+        composeSession: ComposeSession?,
+        focusTarget: VisionFocusTarget? = nil,
+        visualSelectionHint: Bool = false
     ) {
         // Any entry into a VisionSession retires the pending compose suggestion.
         suggestionTask?.cancel()
@@ -798,6 +866,8 @@ final class SessionCoordinator {
                 preferredTargetPID: summonTargetApp?.processIdentifier,
                 candidateCaptureTask: candidateCaptureTask,
                 identityTask: identityTask,
+                focusTarget: focusTarget,
+                visualSelectionHint: visualSelectionHint,
                 onRequestModeTransition: { [weak self] target, reason in
                     self?.transitionVision(to: target, reason: reason) ?? false
                 },

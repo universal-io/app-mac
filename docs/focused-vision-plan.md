@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: A3 Focused Vision UI完了
+最終更新: 2026-07-30 ／ ステータス: A4 起動経路切替完了
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -64,11 +64,11 @@ Focused Vision
 5. Compose入力のclipboard非依存化は、主要アプリでの実測を終えてから別プロジェクトとして
    採否を決める。未証明の入力方式をFocused Visionの出荷条件にしない。
 
-## 2. 現行構造の問題
+## 2. A4改修前の構造的問題
 
-### 2.1 右Shift起動が必ずクリップボードへ触る
+### 2.1 右Shift起動が必ずクリップボードへ触っていた
 
-現行の右Shift 2回は、Compose、Transform、Visionのどれを開くか決める前に
+A4改修前の右Shift 2回は、Compose、Transform、Visionのどれを開くか決める前に
 `SelectionGrabber`が合成⌘Cを送る。
 
 ```text
@@ -495,6 +495,17 @@ Increase Contrastでは枠を太くし、Reduce Transparencyでは不透明背�
 - 0.12秒固定待機が起動経路から消えたことを計測する。
 
 コミット境界: 新入口への切替と旧読取経路の削除を同時に行う。ここから起動時clipboard不変。
+
+完了（2026-07-30）: `SessionCoordinator`の右Shift idle起動を、単一の
+`AXFocusSnapshot`による純粋判定へ切り替えた。snapshot task、full-screen capture、
+Vision identity取得を呼び出し元アプリが前面の間に開始し、AXのbounded retryをcapture待ちへ重ねる。
+選択テキストまたは意味のある選択要素は`VisionFocusTarget`としてFocused Visionへ渡し、
+選択なし＋編集可能はCompose、それ以外は通常Visionへ進む。AXで対象を得られない非secure画面だけ
+`visual_selection_hint`を渡し、Accessibility拒否とsecure fieldでは推測しない。Composeへ進む時は
+並行取得済みcaptureを先読み画像へ所有権移譲し、別captureと別AX walkを増やさない。
+`SelectionGrabber`を削除したため、起動経路には合成⌘C、clipboard読取・復元、0.12秒固定待機が
+存在しない。旧TransformのSession／View／client／routeはA5まで互換残置するが、本番入口からは
+到達しない。
 
 ### A5 — Transform撤去
 
