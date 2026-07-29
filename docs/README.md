@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-最終更新: 2026-07-25 ／ ステータス: 現行
+最終更新: 2026-07-30 ／ ステータス: 現行
 
 このファイルがドキュメントの唯一の入口です。実装の正は現行コード、製品計画の正は
 `universal-io-master-plan.md`、APIの正は `api-contract.md` です。
@@ -19,7 +19,7 @@
 | [supabase-setup.md](supabase-setup.md) | 認証・データ基盤の設定 |
 | [admin-dashboard-plan.md](admin-dashboard-plan.md) | 本番Admin Console |
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
-| [focused-vision-plan.md](focused-vision-plan.md) | TransformのVision統合とclipboard非依存化の仕様 |
+| [focused-vision-plan.md](focused-vision-plan.md) | TransformのVision統合、clipboard安全化、AX入力研究の仕様 |
 
 ## 参照資料
 

@@ -1,12 +1,39 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-29 ／ ステータス: 設計確定・実装前
+最終更新: 2026-07-30 ／ ステータス: 改訂設計確定・実装前
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
-システムクリップボードを借用する構造を廃止するプロジェクトの仕様書である。
+システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
 進捗は[マスタープラン R9](universal-io-master-plan.md)、現行実装のAPI契約は
 [api-contract.md](api-contract.md)を正とする。実装が完了するまで、現行Transform契約と
 本書の目標契約を混同しない。
+
+## 0. 復帰点と変更管理
+
+実装前の復帰点は次で固定する。
+
+```text
+tag:    pre-focused-vision-r9-20260730
+commit: 1aea597c4c9bad6088a69d67ad689c01c45aaade
+branch: feat/focused-vision-r9
+```
+
+このタグは、Focused Visionのコード変更を1行も含まない当時の`main`を指す。プロジェクトA全体が
+不採用になった場合は、このタグから新しい復旧ブランチを作る。公開済み履歴を破壊するresetや
+force pushは使わない。
+
+```bash
+git switch -c recover/pre-focused-vision pre-focused-vision-r9-20260730
+```
+
+変更は§13のマイルストーンごとに、機械検証が通った地点でコミットする。各コミットは次のどちらかを
+満たす単独で理解可能な境界にする。
+
+- 内部構造だけを追加し、現行本番経路の挙動を変えない。
+- 新経路を完成させると同時に、置換された旧経路を削除する。
+
+長期feature flag、二重の本番route、失敗したprobeやfixtureを完成後のツリーへ残さない。
+プロジェクトBの実験物はリポジトリ外に置き、結果だけを本書へ記録する。
 
 ## 1. なぜやるか
 
@@ -27,13 +54,15 @@ Focused Vision
   → 対象を文脈内で説明する → 追加質問 → 必要ならCopilot
 ```
 
-この再定義には4つの目的がある。
+この再定義には5つの目的がある。
 
 1. Transformという実態に合わない名前と独立パネルを廃止する。
 2. 選択箇所の説明を、画面全体・Skill・継続質問・Copilotと同じ理解経路へ載せる。
 3. VisionとTransformに重複しているSession、View、Gateway route、プロンプトを統合する。
-4. 合成⌘C／⌘Vとクリップボード退避・復元を廃止し、ユーザーのクリップボードを
-   バックグラウンド処理から完全に隔離する。
+4. 起動時の合成⌘Cと全てのクリップボード退避・復元を廃止し、時間差でユーザーのコピーを
+   上書きする構造をなくす。
+5. Compose入力のclipboard非依存化は、主要アプリでの実測を終えてから別プロジェクトとして
+   採否を決める。未証明の入力方式をFocused Visionの出荷条件にしない。
 
 ## 2. 現行構造の問題
 
@@ -77,7 +106,7 @@ Focused Vision
 
 実装完了後の製品surfaceは3つとする。
 
-1. **Compose** — 対象入力欄へ入れる文章を作成・レビューし、ユーザーの確定で直接入力する。
+1. **Compose** — 対象入力欄へ入れる文章を作成・レビューし、ユーザーの確定で入力する。
 2. **Vision** — 現在の画面または選択対象を理解し、質問へ答える。
 3. **Copilot** — Visionの理解を引き継ぎ、ユーザー操作後に画面を再評価して次の一手を示す。
 
@@ -97,8 +126,8 @@ VisionSession
 
 ### 4.1 右Shift 2回
 
-パネルを前面化する前に、呼び出し元アプリのfocused elementをAccessibility APIで同期取得する。
-合成⌘Cは送らない。
+パネルを前面化する前に、呼び出し元アプリのAccessibility treeを読み始める。合成⌘Cは送らない。
+選択取得、編集可能判定、画面captureは並行して進め、固定の2秒待機をユーザーへ課さない。
 
 ```text
 右Shift 2回
@@ -112,14 +141,24 @@ VisionSession
        → 通常のVision
 ```
 
-選択検出と編集可能判定は同じfocused element snapshotから導く。別々のAX walkで時点や対象を
-ずらさない。選択対象がある場合は、編集可能な入力欄内の選択であってもFocused Visionを優先する。
-ユーザーは選択によって「この部分を見てほしい」と明示しているためである。
+選択検出と編集可能判定は同じ`AXFocusSnapshot`から導く。別々のAX walkで時点や対象をずらさない。
+選択対象がある場合は、編集可能な入力欄内の選択であってもFocused Visionを優先する。現行Transformの
+意味を維持し、ユーザーが選択によって「この部分を見てほしい」と明示したものとして扱う。
+
+Chromium / ElectronはAX treeを遅延構築する。アプリ要素へ`AXEnhancedUserInterface`と
+`AXManualAccessibility`の両方を設定し、focused elementから祖先（通常`AXWebArea`）まで調べる。
+treeが成長している間だけ、画面captureと並行してbounded retryする。既存の
+`VisionObservationCaptureService`と異なる待機・有効化方式を新設しない。
 
 ### 4.2 AXで選択を取得できない場合
 
 合成⌘Cへfallbackしない。編集可能なfocused elementならCompose、それ以外なら通常Visionへ
 安全に退化する。クリップボードを触ってまで自動判定の網羅率を上げない。
+
+Safari、Apple Mail、AX treeが冷えたChromium等では、公開・文書化されたAX属性から本文選択を
+取得できない場合がある。この場合はcaptureに選択ハイライトが見えている可能性をVision promptへ
+伝え、画像から対象を特定するbest-effort経路を使う。特定できなければ通常Visionとして答える。
+未文書のtext marker属性、AppleScript、ページ内JavaScriptは初期実装のfallbackにしない。
 
 ### 4.3 他の起動操作
 
@@ -160,12 +199,13 @@ struct VisionFocusTarget {
 
 ### 5.1 取得優先順位
 
-1. focused elementの`AXSelectedText`が非空なら、文字列と可能なら
-   `AXBoundsForRange`相当の矩形を使う。
-2. 文字列だけ取得できたら、位置なしのselectedTextとして使う。
-3. 選択文字列は無いが、明示的に選択・フォーカスされた意味のあるUI要素を取得できたら、
+1. focused elementから祖先へwalkし、`AXSelectedText`が非空な最も近い意味のある要素を探す。
+2. 文字列と選択rangeが取れれば、公開parameterized attributeから矩形を取得する。
+3. 文字列だけ取得できたら、位置なしのselectedTextとして使う。
+4. 選択文字列は無いが、明示的に選択・フォーカスされた意味のあるUI要素を取得できたら、
    role、label、frameを使う。
-4. いずれも無ければfocus targetなしの通常Visionとする。
+5. AX対象が無くcaptureに視覚的な選択があり得る場合は、対象未確定のヒントだけをVisionへ渡す。
+6. いずれも無ければfocus targetなしの通常Visionとする。
 
 画面上の任意領域をマウスで囲う既存のcapture操作は`region`として同じ型へ合流できるが、
 このプロジェクトの最初の完成条件はAX選択と通常Visionの統合までとする。
@@ -213,47 +253,70 @@ Vision promptが「対象を最優先で説明する」と解釈する。画面�
 
 ### 7.1 不変条件
 
-**ユーザーが明示的にコピーを選んだ時以外、Universal I/Oは標準クリップボードを読み書きしない。**
+**起動・選択取得・モード判定では標準クリップボードを絶対に読み書きしない。標準クリップボードへ
+書くのは、ユーザーが「コピー」またはComposeの「送信」を明示的に確定した時だけとする。**
 
 禁止:
 
 - 起動モード判定のための合成⌘C
 - 選択テキスト取得のための合成⌘C
-- Compose送信のための一時書き込み＋合成⌘V
 - 標準クリップボードの退避・復元
 - AX失敗時の無言のclipboard fallback
+- タイマー後に過去の内容を書き戻す処理
 
 許可:
 
 - ユーザーが「コピー」を押した時の通常の文字列書き込み
+- ユーザーがComposeの「送信」を確定した時、対象欄へ合成⌘Vするために送信本文を書き込むこと
 - ユーザーが通常の⌘CをUniversal I/O自身の選択可能テキスト上で実行すること
+
+Compose送信では退避も復元もしない。送信本文が標準クリップボードへ残ることを予測可能な副作用とする。
+これにより、遅延提供flavorの破損、空snapshot、changeCount競合、送信後の時間差上書きを構造上なくす。
+`org.nspasteboard.TransientType`は履歴アプリ向けの未標準な慣習なので、対象アプリで文字列pasteと
+履歴除外を実測できた場合だけbest-effortで付与し、保証にはしない。
 
 名前付きpasteboardは他アプリの⌘C／⌘Vと接続しないため、隠れた受け渡しの代替には使わない。
 テスト用の隔離pasteboardには使用できる。
 
-### 7.2 Composeの直接入力
+### 7.2 Composeの当面の入力（プロジェクトA）
 
-Composeはfocused elementのidentityをパネル前面化前に取得し、ユーザー確定後に次の順で入力する。
+プロジェクトAでは、Compose送信の互換性を維持するためclipboard＋合成⌘Vを使う。ただし
+`ClipboardBackup`による退避・復元は削除する。
 
-1. 対象アプリを前面化する。
-2. 保存したAX elementが有効で、`AXSelectedText`がsettableなら選択範囲を置換する。
-3. `AXValue`と選択範囲を安全に扱える場合は、カーソル位置または選択範囲へ文字列を挿入する。
-4. AX直接設定が使えない場合は、対象のfirst responderへUnicode keyboard eventで文字列を入力する。
-5. いずれも成功を確認できなければ、パネルを閉じずに「この入力欄へ直接入力できません」と表示する。
-   ユーザーが明示的に選べる「コピー」を提示する。
+1. ユーザーが送信を確定する。
+2. 送信本文だけを標準クリップボードへ書く。
+3. パネルを閉じて対象アプリを前面化する。
+4. 合成⌘Vを1回送る。
+5. clipboard内容を復元しない。
 
-直接入力の要件:
+Accessibility権限が無い場合は、現行どおり本文をclipboardへ残して手動pasteを案内する。
+送信履歴の成功境界は、合成⌘Vを送れたことと対象アプリ内で実際に反映されたことが同義ではないため、
+プロジェクトBで再検討する。
 
-- 既存内容を意図せず全置換しない。
-- 選択範囲があれば置換し、無ければカーソル位置へ挿入する。
-- 改行を含む複数行、日本語、絵文字、結合文字を壊さない。
-- secure fieldへ入力しない。
-- AX elementが失効・別要素へ変化した場合、別の入力欄へ推測で送らない。
-- 成功が確認できない時に履歴へ「送信済み」と記録しない。
-- 失敗時の明示コピーはユーザー操作が完了した時だけ履歴の扱いを決める。
+### 7.3 Compose直接入力の研究（プロジェクトB）
 
-Unicode eventは標準クリップボードを使わないが、すべてのアプリでの動作を保証しない。
-AX直接入力とUnicode fallbackの対応表は実機検証から作り、アプリ名による本番分岐をハードコードしない。
+AX直接入力は確定仕様にしない。リポジトリ外の固定bundle IDを持つ短命probeで実測し、次を全て
+満たす対象だけ採用候補とする。
+
+- 書き込み前の全体値を取得できる。
+- 選択範囲またはカーソル位置を取得できる。
+- 期待する変更後の全体値を決定できる。
+- 書き込み後に同じ値をread-backできる。
+- 既存内容、改行、日本語、絵文字、結合文字を壊さない。
+- Undo、selection、IME compositionの挙動を実機で確認できる。
+- APIの成功値だけで成功判定しない。
+
+`AXValue`を汎用的なカーソル挿入に使わない。contenteditable等、read-back oracleを確立できない対象では
+試験書き込み自体をしない。Unicode keyboard eventは改行と受信側フレームワークの解釈を保証できないため、
+製品fallbackにしない。
+
+probeの結果により、プロジェクトBは次のいずれかを選ぶ。
+
+1. 実証済みのネイティブ対象だけAX直接入力し、それ以外はclipboard＋⌘V。
+2. 信頼できる成功判定を作れなければ、全対象でclipboard＋⌘Vを維持する。
+3. clipboard変更を許容しない製品判断なら、自動入力をやめて明示コピーへ変更する。
+
+この決定はプロジェクトAの出荷を妨げない。
 
 ## 8. Gateway目標契約
 
@@ -306,41 +369,43 @@ Vision requestへ任意のfocus targetを追加する。
 - `GatewayTransformClient`
 - `TransformInterpretationResult`
 - `SelectionGrabber`
-- `PasteDeployer`
 - `ClipboardBackup`
 - `.transform` AppMode
 - Transform専用prompt、route、routing entry、ウォームアップ
 
 追加・拡張:
 
-- `AXFocusSnapshot` — focused element、編集可能性、選択対象を同時取得
+- `AXFocusSnapshot` — focused element、祖先選択、編集可能性、選択対象を同時取得
 - `VisionFocusTarget` — Visionへ渡すセッション内対象
-- `AXTextInputService` — 選択置換／カーソル挿入／成功判定
-- `UnicodeTextInputService` — clipboardを使わない限定fallback
-- `DirectInputDeployer` — Composeから上記入力戦略を実行
 - `VisionSession` / `GatewayVisionClient` — 任意focus target
 - `VisionSessionView` — 対象カードとハイライト
+- `PasteDeployer` — プロジェクトAでは退避・復元をせず、明示送信時だけclipboard＋⌘V
 
 `Deployer` protocolはテスト境界として維持できるが、「deploy＝clipboardへコピー」という
-現行コメントと実装は廃止する。
+現行コメントは、明示送信と明示コピーの違いが分かる記述へ更新する。プロジェクトBで直接入力を
+採用する場合だけ、実証済みのAX入力serviceを追加する。
 
 ## 10. 失敗時のUX
 
 - 選択取得失敗: エラーを出さず通常VisionまたはComposeへ退化する。
 - screen recording拒否: Focused Visionは画像なしの旧Transformへ戻さない。
   Visionを利用するため画面収録が必要だと説明し、許可導線を出す。
-- Accessibility拒否: 選択検出と直接入力を実行せず、通常Visionまたは明示コピーを案内する。
-- 直接入力失敗: パネルを閉じず、本文を保持し、再試行と明示コピーを提示する。
+- Accessibility拒否: 選択検出を実行せず、通常Visionへ退化する。Compose送信本文はclipboardへ残し、
+  手動pasteを案内する。
+- 合成⌘Vを送れない: 本文をclipboardへ保持し、手動pasteを案内する。
 - コピー成功: inlineで短く通知し、modal alertを出さない。
 - モデル失敗: 現行Visionの共通fallback notice／共通エラーを使う。
 
-失敗を理由に、ユーザーに知らせず別の入力欄へ送る、クリップボードを変更する、送信履歴へ成功として
-記録することは禁止する。
+失敗を理由に、ユーザーに知らせず別の入力欄へ送る、過去のclipboard内容を時間差で復元する、
+送信履歴へ未確認の成功を記録することは禁止する。
 
 ## 11. データ・プライバシー
 
 - Focused Visionは画面画像を本番Gatewayへ送る。対象テキストだけのTransformより送信範囲が広がるため、
   UIで「画面画像」と「選択対象」を参照元として明示する。
+- text-onlyだったTransformより画像token、レイテンシ、原価が増える。これは「選択対象を画面全体との
+  関係で説明する」ための意識的な交換である。初期実装では画像を省かず、実測後にcrop、低detail、
+  オンデバイスOCR＋縮小画像を検討する。
 - 既存Visionと同じく画像と会話を永続化しない。一時画像は正常終了時、残骸は次回起動時に削除する。
 - 選択テキスト、role、label、frame、画像、質問、回答をusageへ保存しない。
 - 認証情報、銀行口座、本人確認書類等が写る画面では使わないという既存注意を維持する。
@@ -359,52 +424,108 @@ Vision requestへ任意のfocus targetを追加する。
 
 ## 13. 実装順序
 
-本番ツリーに二方式を常設しない。短命ブランチ内で以下を順に完成させ、採用時に現行方式を置換する。
+本番ツリーに新旧方式を常設しない。プロジェクトAは安全化とFocused Visionを完成させ、
+プロジェクトBはAと分離したprobe・製品判断として扱う。
 
-### M1 — AX focus snapshot
+### A0 — 設計と復帰点（本コミット）
 
-- focused element、編集可能性、selected text、role、label、frameを1回のsnapshotで取得する。
-- secure field除外、AX timeout、失効要素を扱う。
+- 復帰タグ、開始commit、作業branchを§0へ記録する。
+- レビューで撤回されたAXValue汎用挿入、Unicode fallback、clipboard完全不使用の完了条件を削除する。
+- A／Bのマイルストーン、検証、commit境界を確定する。
+
+完了条件: ドキュメントだけが変更され、`git diff --check`が通る。
+
+### A1 — AX focus snapshot
+
+- focused element、祖先selected text、role、label、frame、編集可能性を1つのsnapshotで取得する。
+- `AXEnhancedUserInterface`と`AXManualAccessibility`を設定する。
+- captureと並行するbounded retry、secure field除外、AX timeout、失効要素を扱う。
 - 右Shift起動の判定を純粋関数としてテストする。
+- この段階では本番の起動経路を切り替えない。
 
-### M2 — Focused Vision
+コミット境界: 新しいsnapshot層とunit testだけ。現行Transform／SelectionGrabberは維持。
 
-- focus targetをVision request、prompt、Session、Viewへ通す。
-- 通常Visionと同じ会話・Skill・Copilot経路で初期解説を返す。
-- 対象カードとハイライトを実装する。
+### A2 — Vision focus target
 
-### M3 — Transform撤去
+- focus targetをVision request、Gateway validation、prompt、Sessionへ通す。
+- focus targetが無い通常Visionのrequest／responseを変えない。
+- AX対象が無い時の視覚的選択ヒントをpromptへ追加する。
+- focus targetをusageとログへ保存しない。
 
-- `.transform`状態、Session、View、client、route、model routingを削除する。
-- 旧Transformの主要な利用意図がFocused Visionで満たされることを実機確認する。
-- 現行公開クライアントとのGateway互換境界を確認してからendpointを削除する。
+コミット境界: APIの後方互換な追加とテスト。まだUIと起動経路は切り替えない。
 
-### M4 — Compose直接入力
+### A3 — Focused Vision UI
 
-- AXSelectedText／AXValueによる挿入・置換を実装する。
-- Unicode keyboard event fallbackを実装する。
-- 失敗時の明示コピーと送信履歴の成功境界を実装する。
+- 既存Visionパネルへ対象カードとハイライトを追加する。
+- 通常Visionと同じ会話、Skill、fallback notice、Copilot経路で初期解説を返す。
+- VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Motionを確認する。
 
-### M5 — clipboard借用の完全削除
+コミット境界: focus targetを注入したVisionを開けば完成体験になるが、Transformはまだ本番入口。
 
-- `SelectionGrabber`、`PasteDeployer`、`ClipboardBackup`を削除する。
-- 合成⌘C／⌘V、遅延復元、標準クリップボードの暗黙read/writeが0件であることを検索と実機で確認する。
+### A4 — 起動経路切替と合成⌘C撤去
+
+- 右Shift起動を`AXFocusSnapshot`判定へ一括置換する。
+- 選択あり→Focused Vision、選択なし＋編集可能→Compose、それ以外→通常Visionとする。
+- `SelectionGrabber`と合成⌘Cを同じ変更で削除する。
+- 選択取得失敗時にclipboardへfallbackしない。
+- 0.12秒固定待機が起動経路から消えたことを計測する。
+
+コミット境界: 新入口への切替と旧読取経路の削除を同時に行う。ここから起動時clipboard不変。
+
+### A5 — Transform撤去
+
+- `.transform`状態、Session、View、client、prompt、route、routing entry、ウォームアップを削除する。
+- 旧公開クライアントとのGateway互換境界を確認してから`/api/ai/transform`を削除する。
+- 現行Transformの利用意図がFocused Visionで満たされることを実機確認する。
+- 製品surfaceの正本をCompose / Vision / Copilotへ更新する。
+
+コミット境界: Focused Visionが旧Transformを完全に置換し、二重routeを残さない。
+
+### A6 — clipboard復元撤去
+
+- `ClipboardBackup`を削除する。
+- `PasteDeployer`は明示送信時だけ本文を書き、合成⌘V後に復元しない。
+- Accessibility拒否時は本文をclipboardへ残して手動pasteを案内する。
+- TransientTypeは対象アプリでの実測に通った場合だけ付ける。
+- クリップボード破壊の再現手順と、送信中にユーザーが⌘Cする競合試験を行う。
+
+コミット境界: 退避・復元が本番ツリーから0件になり、今回の破壊原因が構造上消える。
+
+### A7 — 統合検証と完了記録
+
+- macOS unit test、署名なしDebug build、Web lint／TypeScript／production buildを通す。
+- §14の実機検証を行う。
 - README、API契約、golden paths、マスタープランを完了状態へ更新する。
+- 変更全体を開始タグと比較し、無関係な実験物が無いことを確認する。
 
-M2だけを本番採用してM4/M5を先送りしない。本プロジェクトの完了条件はTransform統合だけでなく、
-隠れたクリップボード依存が全て消えることである。
+コミット境界: プロジェクトAの完了記録。main統合判断が可能な状態。
+
+### B0 — AX入力probe（Aと独立）
+
+- リポジトリ外に固定bundle IDの短命.appを作る。
+- TextEdit、ローカルHTML、Chrome、Slack、Safariの順に、read／write／read-backを検証する。
+- Undo、selection、複数行、日本語、絵文字、IME compositionを記録する。
+- Unicode eventは製品実装ではなく、制約確認だけ行う。
+- probe本体は削除し、再現手順、OS／アプリversion、結果表だけを本書へ残す。
+
+### B1 — 入力方式の製品判断
+
+B0の結果から§7.3の3案のどれかを選ぶ。採用方式、対象範囲、成功判定、失敗UX、履歴境界を
+仕様化してから、別の短命branchで実装する。Bの失敗や不採用はAをrollbackする理由にしない。
 
 ## 14. 検証
 
 ### 自動検証
 
 - 選択あり／空選択／編集可能／非編集／secure fieldの起動判定
+- focused element／祖先／AXWebAreaの選択探索
+- coldなChromium treeのbounded retryと期限終了
 - AX selected textだけ、frameだけ、両方、どちらも無いfocus target
 - focus targetのrequest encoding、上限、制御文字、座標変換
 - 通常Vision requestがfocus target追加後も変わらないこと
-- Composeの挿入、選択置換、複数行、日本語、絵文字
-- AX失敗時のUnicode fallbackと、両方失敗時に履歴を保存しないこと
-- 明示コピー以外からpasteboard APIへ到達しない構造検査
+- 起動・選択取得からpasteboard APIと合成⌘Cへ到達しない構造検査
+- `ClipboardBackup`と遅延restoreが存在しない構造検査
+- Compose送信時だけclipboard writeと合成⌘Vへ到達すること
 - Web lint、TypeScript、production build、macOS unit test、署名なしDebug build
 
 ### 実機検証
@@ -415,21 +536,22 @@ M2だけを本番採用してM4/M5を先送りしない。本プロジェクト�
 - WebKit: Safari上のGmail
 - Chromium: Chrome上のGmail、Slack
 - Electron: SlackまたはVS Code
-- 複数行、選択置換、カーソル挿入、日本語、英語、絵文字
+- 選択なし、単一要素選択、複数ノード選択、編集欄内選択
 - AX selected textを返す画面／返さない画面
 - Accessibility拒否／画面収録拒否
-- 入力欄が消えた、別タブへ移動した、対象アプリを終了した場合
+- cold／warmなChromium AX tree
+- 画像上の選択ハイライトだけを使うbest-effort経路
 
 クリップボード回帰:
 
 1. リッチテキスト、画像、ファイル、複数itemを標準クリップボードへ入れる。
-2. 通常Vision、Focused Vision、Compose送信、Copilotを実行する。
-3. 各操作後にchangeCountと全flavorが変化していないことを確認する。
-4. 操作中に別アプリで⌘Cし、その新しい内容が保持されることを確認する。
-5. Universal I/O終了後も同じ内容を貼り付けられることを確認する。
-6. 明示的な「コピー」を押した時だけ、期待した文字列へ置き換わることを確認する。
+2. 通常Vision、Focused Vision、Copilotを実行し、changeCountと全flavorが変化しないことを確認する。
+3. Compose送信を実行し、送信本文がclipboardへ残り、時間差で古い内容へ戻らないことを確認する。
+4. Compose送信の直後に別アプリで⌘Cし、その新しい内容が上書きされないことを確認する。
+5. Universal I/O終了後も最新内容を貼り付けられることを確認する。
+6. HTML／UTF-8／UTF-16／空string flavorを含む元の再現手順でclipboardが壊れないことを確認する。
 
-## 15. 受け入れ条件
+## 15. プロジェクトAの受け入れ条件
 
 以下を全て満たした時だけ完了とする。
 
@@ -437,18 +559,23 @@ M2だけを本番採用してM4/M5を先送りしない。本プロジェクト�
 - 選択対象がある時、同じVisionパネルで対象を優先した初期解説が返る。
 - 同じsessionで追加質問とCopilot開始ができる。
 - 選択が取れない画面では、clipboardへfallbackせず通常VisionまたはComposeが動く。
-- Composeが標準クリップボードを変更せず対象欄へ入力できる。
-- 直接入力できない場合は本文を失わず、明示コピーをユーザーが選べる。
-- `TransformSession`、`/api/ai/transform`、`SelectionGrabber`、`PasteDeployer`、
-  `ClipboardBackup`、合成⌘C／⌘Vが本番ツリーに存在しない。
-- ユーザーが明示的にコピーした時以外、標準クリップボードのchangeCountと内容が変わらない。
+- `TransformSession`、`/api/ai/transform`、`SelectionGrabber`、`ClipboardBackup`、合成⌘C、
+  clipboard restoreが本番ツリーに存在しない。
+- 起動、選択取得、通常Vision、Focused Vision、Copilotが標準クリップボードを変更しない。
+- Compose送信時だけ送信本文がclipboardへ残り、その後に過去内容を書き戻さない。
+- Compose送信中にユーザーが行った新しいコピーを時間差で上書きしない。
 - 通常Vision、Skill、fallback notice、Copilot、Composeレビューの既存品質が落ちていない。
 - 入力本文、選択内容、画像、画面情報がusageや診断ログへ保存されない。
+- 開始タグ`pre-focused-vision-r9-20260730`からの差分に、常設の実験経路や無関係な変更が無い。
 
 ## 16. 非目標
 
 - Universal I/Oが他アプリを自律操作すること
-- AX非対応アプリのためにclipboard借用を復活させること
+- プロジェクトAだけでComposeをclipboard非依存にすること
+- AX writeの成功をAPI戻り値だけで判定すること
+- `AXValue`を汎用カーソル挿入に使うこと
+- Unicode keyboard eventを製品fallbackにすること
+- 未文書のtext marker属性やブラウザJavaScriptを初期fallbackにすること
 - Focused Vision専用モデルや長期feature flagを作ること
 - Transformの旧レイアウトをVision内へそのまま移植すること
 - 選択対象や会話を永続化すること
@@ -459,9 +586,12 @@ M2だけを本番採用してM4/M5を先送りしない。本プロジェクト�
 - Transformは廃止し、Focused Visionへ統合する。
 - Focused Visionは独立surfaceではなくVisionの任意focus targetである。
 - 選択取得はAccessibility APIだけを使い、合成⌘Cへfallbackしない。
+- Chromium／Electronでは両AX属性、祖先walk、captureと並行するbounded retryを使う。
+- AXで対象を取れない場合、画像上の選択をbest-effortで読み、失敗時は通常Visionへ退化する。
 - Focused Visionは画面画像を使い、画面全体の文脈内で対象を説明する。
-- ComposeはAX直接入力を第一経路、Unicode eventを限定fallbackとする。
-- 自動入力に失敗した時だけ、ユーザーが選べる明示コピーを提示する。
-- バックグラウンドの標準クリップボードread/writeと退避・復元を全廃する。
+- 編集可能欄内でも、非collapsed選択があればFocused Visionを優先する。
+- プロジェクトAではComposeのclipboard＋⌘Vを維持するが、退避・復元は全廃する。
+- AX直接入力はプロジェクトBのprobe結果が出るまで未採用とする。
+- Unicode keyboard eventは製品fallbackにしない。
+- Focused Visionの画像利用によるコストと送信範囲の増加を意識的に受け入れ、実測後に最適化する。
 - 実装完了まで現行API契約を正とし、目標契約は本書で管理する。
-
