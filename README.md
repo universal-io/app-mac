@@ -2,6 +2,10 @@
 
 Universal I/O は、入力・受信・画面理解をひとつの操作体系にまとめる macOS アプリです。
 
+> **設計思想の正本**（北極星＝ユーザー起点の世界モデル、作る順序）は
+> [docs/design-philosophy.md](docs/design-philosophy.md)。本書が「現在どう動くか」、
+> あちらが「どういう思想でどの順に作るか」を扱います。
+
 ## 重要: 本番AIモデルとfallback
 
 全AIモデルの一次・二次ルートは

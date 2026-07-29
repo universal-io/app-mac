@@ -11,6 +11,7 @@
 |---|---|
 | [../README.md](../README.md) | 現行機能、実行経路、開発手順 |
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョンとリリース・マイルストーン |
+| [design-philosophy.md](design-philosophy.md) | 設計思想（北極星＝ユーザー起点の世界モデル、作る順序） |
 | [api-contract.md](api-contract.md) | macOSクライアントと本番Gatewayの契約 |
 | [manual-golden-paths.md](manual-golden-paths.md) | リリース前の手動検証 |
 | [dev-prod-app-identity.md](dev-prod-app-identity.md) | 開発版と本番版のアプリ正体分離（Launchpad/Launch Services 対策） |
