@@ -101,12 +101,14 @@ Composeのclipboard非依存化はプロジェクトBとして分離する。AX�
 [マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。右Shiftの本番起動は
 Focused Visionへ切り替わり、独立Transformと`/api/ai/transform`は撤去済み。
 
-現在はA6まで完了し、右Shift起動は同じAX focus snapshotから、選択対象ありならFocused Vision、
+現在はA7の自動検証まで完了し、右Shift起動は同じAX focus snapshotから、選択対象ありならFocused Vision、
 選択なし＋編集可能ならCompose、それ以外なら通常Visionへ分岐する。snapshotと画面captureは
 パネル前面化前に並行し、起動時の合成⌘C、clipboard読取・復元、0.12秒固定待機は廃止済み。
 製品surfaceはCompose / Vision / Copilotの3つで、選択対象の理解もVisionの同一sessionとrouteを使う。
 Compose送信は本文をclipboardへ書いて合成⌘Vを1回送るが、過去内容は復元しない。Accessibilityを
 利用できない場合は本文を残し、手動⌘Vまたは設定を開く選択肢を明示する。
+macOSのunit test／署名なしDebug buildとWebのlint／型検査／production build、開始tagからの
+差分監査は通過済み。署名付きアプリによる実機Golden Pathsはmain統合前の残作業である。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 

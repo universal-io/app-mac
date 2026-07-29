@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: A6 clipboard復元撤去完了
+最終更新: 2026-07-30 ／ ステータス: A7自動検証完了・署名付き実機検証待ち
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -549,6 +549,18 @@ panel分岐、ウォームアップを削除した。Gatewayの`/api/ai/transfor
 - 変更全体を開始タグと比較し、無関係な実験物が無いことを確認する。
 
 コミット境界: プロジェクトAの完了記録。main統合判断が可能な状態。
+
+自動検証完了（2026-07-30）: XcodeGen生成、macOS署名なしDebug build、macOS unit test
+28件、Web lint、TypeScript、production buildがすべて成功した。production buildのAI routeは
+`review`、`suggest`、`transcribe`、`vision`の4つだけである。構造検査では本番ツリーの
+`TransformSession`、`/api/ai/transform`、`SelectionGrabber`、`ClipboardBackup`、合成⌘C、
+遅延clipboard restoreが0件で、clipboard writeと合成⌘Vは`PasteDeployer`の明示送信に限定された。
+開始tag `pre-focused-vision-r9-20260730`からの追加ファイルはFocused Visionのmodel／AX取得層と
+対応unit testの4件だけで、恒久的な実験物や無関係な追加物は無い。
+
+残作業: §14と[manual-golden-paths.md](manual-golden-paths.md)の署名付き実機検証。権限、Keychain、
+実アプリのAX tree、paste処理、clipboard競合は署名なしCLI buildでは証明しない。これらが完了するまで
+プロジェクトA完了およびmain統合可能とは判定しない。
 
 ### B0 — AX入力probe（Aと独立）
 

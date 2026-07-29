@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-30 ／ ステータス: `v0.2.0` 正式公開済み、R9 A6実装済み
+最終更新: 2026-07-30 ／ ステータス: `v0.2.0` 正式公開済み、R9 A7自動検証済み・実機検証待ち
 
 ## 製品
 
@@ -207,7 +207,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard安全化（A6実装済み）
+### R9 — Focused Visionとclipboard安全化（A7自動検証済み・実機検証待ち）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
@@ -254,6 +254,11 @@ clipboard restoreが本番ツリーに存在しないこと。実装前の復帰
   書いて合成⌘Vを1回送り、本文を残す。Accessibility拒否またはevent生成失敗時は手動⌘Vを明示し、
   拒否時は設定を開く選択肢も出す。未実証のTransientTypeは付けず、送信後のユーザー⌘Cを時間差で
   上書きする経路を構造上なくした。
+- **A7（自動検証完了・実機検証待ち）** XcodeGen、macOS署名なしDebug build、28 unit test、
+  Web lint／TypeScript／production buildが成功した。旧Transform、起動時のclipboard／合成⌘C、
+  遅延restoreが本番ツリーに無いことと、開始tagから恒久的な実験物が増えていないことを確認した。
+  署名付きアプリでのFocused Vision対象アプリ群、権限拒否、clipboard競合のGolden Pathsは未実施で、
+  完了およびmain統合の判定条件として残る。
 
 ## リリース判定
 
