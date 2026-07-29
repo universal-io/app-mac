@@ -12,7 +12,6 @@ import {
 
 export type AIFeature =
   | "review"
-  | "transform"
   | "vision"
   | "suggest"
   | "transcribe";
@@ -34,11 +33,6 @@ export const AI_MODEL_ROUTES: Readonly<Record<AIFeature, AIModelRoute>> = {
     label: "Compose review",
     primary: { vendor: "openai", modelId: "gpt-5.6-luna", api: "chat_completions" },
     secondary: { vendor: "groq", modelId: "openai/gpt-oss-120b", api: "chat_completions" },
-  },
-  transform: {
-    label: "Transform",
-    primary: { vendor: "openai", modelId: "gpt-5.6-luna", api: "responses" },
-    secondary: { vendor: "openai", modelId: "gpt-5.4-mini", api: "responses" },
   },
   vision: {
     label: "Vision / Copilot",

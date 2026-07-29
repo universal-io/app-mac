@@ -3,6 +3,7 @@
 作成: 2026-07-06 ／ ステータス: **v1 step1-2 実装済み・本番稼働中**
 （2026-07-23 更新: v1以降へアカウント区分、Stripe、テスター監視、APIコスト管理を追加。
 2026-07-24 更新: §10 step1（account model migration）＋ step2（手動運用UI）実装。
+2026-07-30 更新: 独立Transform撤去に合わせて現行feature／operation一覧を更新。
 `bs_profiles.role`＋`bs_entitlements.account_class`＋`bs_admin_audit_log`を追加し、
 `assertAdmin`をenv→DBロール化（ADMIN_EMAILSは和集合のブートストラップとして併存）。
 現行実装は`web/app/admin/page.tsx`・`web/lib/server/admin.ts`・`admin-stats.ts`・
@@ -71,7 +72,7 @@ lib/server/admin.ts
 | Vision / Copilot | 一次 | openai | gpt-5.6-luna | responses |
 | Vision / Copilot | 二次 | openai | gpt-5.4-mini | responses |
 
-- Review、Transform、Vision/Copilot、Transcribe、Memoryの全機能を表示する。
+- Review、Vision/Copilot、Transcribe、Memoryの全機能を表示する。
 - 一次・二次の順序とAPI方式を隠さない。個別engineにはモデル名を置かない。
 - API キーの設定状況（groq / openai / gemini / anthropic が設定済みか）を
   ●/○ で表示（キー値は絶対に出さない、有無だけ）。
@@ -85,7 +86,7 @@ lib/server/admin.ts
 
 ### 3-c. 内訳テーブル
 今月分（`created_at >= currentMonthStartUTC()`）を軸で集計:
-- **operation 別**: review / transform / vision / transcribe / distill の件数・成功率・平均レイテンシ・トークン合計
+- **operation 別**: review / vision / transcribe / distill の件数・成功率・平均レイテンシ・トークン合計
 - **モデル別**: `model_vendor` + `model_id` ごとの件数（どのモデルがどれだけ使われたか）
 - **日次推移**: 直近30日の日別リクエスト数（棒 or 折れ線。dataviz スキル準拠）
 
@@ -220,5 +221,5 @@ Stripeを通さない無償・社内・テスターアカウントもaccount cla
    provider請求との差を定期確認し、価格改定時に過去集計を書き換えない。
 6. **alerts**: 日次・月次予算、ユーザー単位の急増、エラー率、fallback率の閾値通知を追加する。
 
-管理画面へ入力本文、AI回答、画像、音声、Transform選択文を表示しない。テスターの利用状況は
+管理画面へ入力本文、AI回答、画像、音声、Visionの選択対象を表示しない。テスターの利用状況は
 operation、時刻、モデル、unit、成否、レイテンシ等の運用メタデータだけで把握する。

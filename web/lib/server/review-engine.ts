@@ -7,11 +7,10 @@ import {
 } from "@/lib/server/ai-routing";
 import type { OperationalNotice } from "@/lib/server/operational-notice";
 import {
-  systemPrompt,
+  COMPOSE_SYSTEM,
   userContent,
   JSON_INSTRUCTION,
   type OutputLanguageCode,
-  type ReviewMode,
   type SituationalContextPayload,
 } from "@/lib/server/prompts";
 
@@ -41,7 +40,6 @@ export type ReviewEngineOutput = {
 };
 
 type EngineInput = {
-  mode: ReviewMode;
   draft: string;
   language: OutputLanguageCode;
   context?: SituationalContextPayload;
@@ -55,9 +53,8 @@ function prepareCall(input: EngineInput, target: AIModelTarget): {
   if (target.api !== "chat_completions") {
     throw new ProviderCallError(`Review cannot use API "${target.api}".`);
   }
-  const system = systemPrompt(input.mode);
   const user =
-    userContent(input.mode, input.draft, input.language, input.context) +
+    userContent(input.draft, input.language, input.context) +
     "\n\n" +
     JSON_INSTRUCTION;
 
@@ -65,7 +62,7 @@ function prepareCall(input: EngineInput, target: AIModelTarget): {
     model: target.modelId,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: system },
+      { role: "system", content: COMPOSE_SYSTEM },
       { role: "user", content: user },
     ],
   };

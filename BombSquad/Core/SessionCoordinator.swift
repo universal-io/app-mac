@@ -39,8 +39,8 @@ enum AppEvent: CustomStringConvertible {
 /// drives the `PanelController`. This is the ONLY place that decides what a
 /// gesture means in a given mode.
 ///
-/// Phase 1 introduced the machinery; Phase 3 moved compose, transform,
-/// Vision, Navigator, and Copilot here; Phase 4 made it the live path.
+/// Phase 1 introduced the machinery; Phase 3 moved Compose, Vision,
+/// Navigator, and Copilot here; Phase 4 made it the live path.
 @MainActor
 final class SessionCoordinator {
     private enum CaptureCompletion {
@@ -56,7 +56,6 @@ final class SessionCoordinator {
     private let screenshotCaptureCue = ScreenshotCaptureCuePresenter()
     private let screenshotSelection = ScreenshotSelectionOverlay()
     private var composeSession: ComposeSession?
-    private var transformSession: TransformSession?
     private var visionSession: VisionSession?
     private var summonTargetApp: NSRunningApplication?
     private var isDictating = false
@@ -176,8 +175,6 @@ final class SessionCoordinator {
             if !enterVisionReusingPreCapture() {
                 beginVisionCaptureFromCompose()
             }
-        case .transform:
-            close(reason: "doubleTapTransform")
         case .capturing(let returnTo):
             // Abandon the capture session entirely: back to standby.
             _ = returnTo
@@ -333,8 +330,6 @@ final class SessionCoordinator {
             deployer: deployer,
             contextCaptureTask: Task { await rootContextTask.value }
         )
-        transformSession?.tearDown()
-        transformSession = nil
         visionSession?.tearDown()
         visionSession = nil
         composeSession = session
@@ -367,34 +362,6 @@ final class SessionCoordinator {
         }
     }
 
-    /// Transform summon shares the same summon-time context capture, but the
-    /// exit is clipboard-only so no target app handle is retained.
-    private func presentTransformSession(with selection: String) {
-        Task {
-            await GatewayAIWarmup.warm([.transform])
-        }
-        // The screen is resolved from the app the selection came from, which is
-        // still frontmost at this point; the app handle itself is not retained
-        // because the transform exit is clipboard-only.
-        ActiveDisplay.pin(to: NSWorkspace.shared.frontmostApplication)
-        summonTargetApp = nil
-        let rootContextTask = SituationalContextService.captureTask()
-        let session = TransformSession(
-            receivedText: selection,
-            contextCaptureTask: Task { await rootContextTask.value }
-        )
-        composeSession?.tearDown()
-        composeSession = nil
-        visionSession?.tearDown()
-        visionSession = nil
-        transformSession = session
-        guard stateMachine.transition(to: .transform, reason: "summonSelection") else {
-            session.tearDown()
-            transformSession = nil
-            return
-        }
-    }
-
     private func close(reason: String) {
         guard stateMachine.mode != .idle else { return }
         // Explicit dismissal should put the user back where the panel was
@@ -415,8 +382,6 @@ final class SessionCoordinator {
         screenshotSelection.cancel()
         composeSession?.tearDown()
         composeSession = nil
-        transformSession?.tearDown()
-        transformSession = nil
         visionSession?.tearDown()
         visionSession = nil
         summonTargetApp = nil
@@ -972,11 +937,6 @@ final class SessionCoordinator {
                             self?.panelController.setComposeExpanded(expanded)
                         }
                     ),
-                    for: mode
-                )
-            } else if mode == .transform, let transformSession {
-                panelController.present(
-                    FoundationTransformRootView(session: transformSession),
                     for: mode
                 )
             } else if mode == .vision, let visionSession {

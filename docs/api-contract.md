@@ -1,6 +1,6 @@
 # Universal I/O Gateway API契約
 
-最終更新: 2026-07-25 ／ ステータス: 現行
+最終更新: 2026-07-30 ／ ステータス: 現行
 
 ## 共通
 
@@ -11,7 +11,7 @@
 - Gateway内のモデル順序は `web/lib/server/ai-routing.ts` が唯一の正本。全AI機能が一次・二次を
   1つずつ持ち、一次失敗時だけ二次を1回実行する。
 - `request_id` は全AIリクエストで必須。
-- `review`、`transcribe`、`transform`、`vision`、`suggest`の各routeは
+- `review`、`transcribe`、`vision`、`suggest`の各routeは
   認証付きGETをウォームアップとして受け付ける。認証・quota前処理だけを実行して成功時`204`を返し、
   providerを呼ばずusageも記録しない。
 - POSTのusage記録は応答後に実行するため、成功・モデルエラーとも記録DBの待ち時間を応答へ加えない。
@@ -73,6 +73,7 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 入力文章をレビューする。通常応答はSSEで、`delta`の後に最終`result`を返す。
 
 - `operation`: `review`
+- `mode`: `compose`
 - `input.draft`: 必須
 - `input.context`: 任意
 - 実装: `web/app/api/ai/review/route.ts`
@@ -89,16 +90,6 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 
 POST成功応答の`meta.timing_ms`と`Server-Timing`は
 `auth` / `quota` / `provider` / `usage` / `total`のミリ秒内訳を返す。
-
-## POST /ai/transform
-
-選択された受信文章を整理し、状況・依頼・返信案を返す。
-
-- `operation`: `transform`
-- `input.text`: 必須、最大16,000文字
-- `input.context`: 任意
-- 実装: `web/app/api/ai/transform/route.ts`
-- クライアント: `GatewayTransformClient`
 
 ## POST /ai/vision
 

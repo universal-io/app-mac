@@ -1,12 +1,11 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: A4 起動経路切替完了
+最終更新: 2026-07-30 ／ ステータス: A5 Transform撤去実装完了
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
 進捗は[マスタープラン R9](universal-io-master-plan.md)、現行実装のAPI契約は
-[api-contract.md](api-contract.md)を正とする。実装が完了するまで、現行Transform契約と
-本書の目標契約を混同しない。
+[api-contract.md](api-contract.md)を正とする。独立Transform契約はA5で撤去済み。
 
 ## 0. 復帰点と変更管理
 
@@ -504,17 +503,24 @@ Vision identity取得を呼び出し元アプリが前面の間に開始し、AX
 `visual_selection_hint`を渡し、Accessibility拒否とsecure fieldでは推測しない。Composeへ進む時は
 並行取得済みcaptureを先読み画像へ所有権移譲し、別captureと別AX walkを増やさない。
 `SelectionGrabber`を削除したため、起動経路には合成⌘C、clipboard読取・復元、0.12秒固定待機が
-存在しない。旧TransformのSession／View／client／routeはA5まで互換残置するが、本番入口からは
-到達しない。
+存在しない。A4ではコミット境界を起動切替に限定したため旧Transform実装が未参照で残ったが、
+実行時互換やrollback用途ではない。A5でGit履歴以外に残さず削除する。
 
 ### A5 — Transform撤去
 
 - `.transform`状態、Session、View、client、prompt、route、routing entry、ウォームアップを削除する。
-- 旧公開クライアントとのGateway互換境界を確認してから`/api/ai/transform`を削除する。
+- `/api/ai/transform`を削除し、旧クライアント用の互換routeを残さない。
 - 現行Transformの利用意図がFocused Visionで満たされることを実機確認する。
 - 製品surfaceの正本をCompose / Vision / Copilotへ更新する。
 
 コミット境界: Focused Visionが旧Transformを完全に置換し、二重routeを残さない。
+
+完了（2026-07-30）: macOSの`.transform`状態、Session、View、model、provider/client、
+panel分岐、ウォームアップを削除した。Gatewayの`/api/ai/transform`、transform engine、
+専用prompt、model routing、entitlement featureも削除し、`/api/ai/review`はComposeだけを
+受理する。製品surfaceとAPI正本をCompose / Vision / Copilotへ更新した。旧実装はrollback用にも
+残さず、必要な復帰は開始tagまたはGit履歴から行う。Focused Visionの実機確認項目は
+[manual-golden-paths.md](manual-golden-paths.md)に維持し、A7の統合検証で実施する。
 
 ### A6 — clipboard復元撤去
 

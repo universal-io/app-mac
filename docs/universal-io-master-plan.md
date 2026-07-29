@@ -1,18 +1,17 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-30 ／ ステータス: `v0.2.0` 正式公開済み、R9改訂設計確定
+最終更新: 2026-07-30 ／ ステータス: `v0.2.0` 正式公開済み、R9 A5実装済み
 
 ## 製品
 
 Universal I/O は、人が情報を送る・受け取る・画面上で行動する間に入り、意図と表現を
 整える中間レイヤーである。自律操作ではなく、最終判断と操作はユーザーが行う。
 
-製品surfaceは4つだけとする。
+製品surfaceは3つだけとする。
 
 1. Compose: 自分の文章を作り、必要ならレビューして送信する。
-2. Transform: 受信文章を理解し、返信や次の行動を準備する。
-3. Vision: 現在の画面を読み、質問へ答える。
-4. Copilot: 画面上の次の一手を示し、ユーザー操作後に再評価する。
+2. Vision: 現在の画面または選択対象を読み、質問へ答える。
+3. Copilot: 画面上の次の一手を示し、ユーザー操作後に再評価する。
 
 ## 現行アーキテクチャ
 
@@ -20,7 +19,6 @@ Universal I/O は、人が情報を送る・受け取る・画面上で行動す
 macOS UI
   └─ SessionCoordinator
        ├─ ComposeSession  ── /api/ai/review
-       ├─ TransformSession ─ /api/ai/transform
        ├─ VisionSession ──── /api/ai/vision
        └─ GatewayTranscriber /api/ai/transcribe
                               │
@@ -72,7 +70,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 ## データ境界
 
 - 認証、entitlement、usageはSupabaseを正とする。
-- 下書きとCompose送信履歴はMacローカル。履歴上限は100件。Transformは一切履歴化しない。
+- 下書きとCompose送信履歴はMacローカル。履歴上限は100件。Visionの対象・画像・会話は履歴化しない。
 - スクリーンショット、音声、周辺コンテクストは処理用で、Gatewayへ恒久保存しない。一時画像は
   セッション終了時、異常終了で残った画像は次回起動時に削除する。
 - ローカル履歴・下書きはSupabase user ID単位で物理分離し、ログアウト時にDBを閉じる。
@@ -91,7 +89,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 
 - 現行Visionを正式な `VisionSession` と `/api/ai/vision` に昇格。
 - 旧Vision、Navigator v3/v4、Run、shadow、harness、fixture、local Gateway、BYOKを削除。
-- Compose、Transform、Transcribe、Memoryを本番Gateway専用に統一。
+- Compose、Transcribe、Memoryを本番Gateway専用に統一。
 - 実験資料とアーカイブをGit履歴へ戻し、作業ツリーから削除。
 
 ### R2 — 機械検証（完了、2026-07-22）
@@ -104,7 +102,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 
 ### R3 — 本番E2E（進行中）
 
-- ログイン、レビュー、音声入力、受信変換、Vision、Copilot、履歴を実機確認。
+- ログイン、レビュー、音声入力、Focused Vision、通常Vision、Copilot、履歴を実機確認。
 - 本番Gatewayで全routeがJSON/SSE契約を返し、404 HTMLを返さない。
 - 全AI機能で実モデルと `fallback_used` をクライアントとusageで確認する。
 - 一次失敗時は二次で成功して共通noticeが表示され、両方失敗時は共通エラーになる。
@@ -209,7 +207,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard安全化（A4実装済み）
+### R9 — Focused Visionとclipboard安全化（A5実装済み）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
@@ -248,13 +246,17 @@ clipboard restoreが本番ツリーに存在しないこと。実装前の復帰
   画面capture、製品identity取得はパネル前面化前に並行し、Composeへ進む場合は同じcaptureを
   先読みに転用する。`SelectionGrabber`、合成⌘C、起動時のclipboard読取・復元、0.12秒固定待機を
   削除した。旧TransformコードとrouteはA5まで残るが、本番入口からは到達しない。
+- **A5（完了）** `.transform`状態、Session、View、model、client、prompt、Gateway route、
+  model routing、entitlement feature、ウォームアップを削除した。`review`はComposeだけを受理し、
+  選択対象の理解は`VisionSession`と`/api/ai/vision`へ一本化した。ロールバック用・念のための
+  旧実装は保持せず、必要な復帰はGit tag／履歴から行う。
 
 ## リリース判定
 
 以下をすべて満たした時だけ公開する。
 
 - R2〜R4が完了している。
-- 主要5 AI endpointに旧・代替endpointが存在せず、各routeのモデル指定が共通SSOTだけにある。
+- 主要4 AI endpointに旧・代替endpointが存在せず、各routeのモデル指定が共通SSOTだけにある。
 - 重大度Highの既知不具合が0件。
 - Composeのレビュー後フォーカス、自動返信、音声入力、Vision初回応答が実機で再現可能。
 - rollback先と本番Gatewayの互換性が確認されている。

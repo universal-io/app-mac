@@ -6,7 +6,6 @@ import Foundation
 enum GatewayAIWarmup {
     enum Feature: String, CaseIterable {
         case review
-        case transform
         case vision
         case suggest
         case transcribe

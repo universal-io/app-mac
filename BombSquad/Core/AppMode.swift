@@ -9,8 +9,6 @@ enum AppMode: Equatable, CustomStringConvertible {
     case idle
     /// Sending side: draft → review → deploy.
     case compose
-    /// Receiving side: selected text → readable version. Exit is copy-only.
-    case transform
     /// See → understand → respond: screenshot interpretation with actions.
     case vision
     /// Multi-turn screen navigation chat on top of a vision session.
@@ -25,7 +23,6 @@ enum AppMode: Equatable, CustomStringConvertible {
         switch self {
         case .idle: return "idle"
         case .compose: return "compose"
-        case .transform: return "transform"
         case .vision: return "vision"
         case .navigator: return "navigator"
         case .copilot: return "copilot"
@@ -48,7 +45,7 @@ enum AppMode: Equatable, CustomStringConvertible {
         if self == next { return false }
         switch (self, next) {
         // Explicit compose summons (menu bar / hold-to-talk).
-        case (.idle, .compose), (.idle, .transform):
+        case (.idle, .compose):
             return true
         // Right-Shift summon resolves AX focus while capturing the screen.
         case (.idle, .capturing):

@@ -28,12 +28,6 @@ struct PanelSpec: Equatable {
                 placement: .centered,
                 closesOnResignActive: true
             )
-        case .transform:
-            return PanelSpec(
-                size: CGSize(width: 680, height: 660),
-                placement: .centered,
-                closesOnResignActive: true
-            )
         case .vision, .navigator:
             return PanelSpec(
                 size: CGSize(width: 960, height: 640),

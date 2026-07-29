@@ -15,7 +15,6 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 | 機能 | 一次モデル | 二次モデル |
 |---|---|---|
 | Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
-| 旧Transform互換（本番入口なし、A5で撤去予定） | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 先回り文案 | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
@@ -99,13 +98,13 @@ Composeのclipboard非依存化はプロジェクトBとして分離する。AX�
 
 意図、目標構造、移行順、受け入れ条件は
 [focused-vision-plan.md](docs/focused-vision-plan.md)、進捗は
-[マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。A4以降の本番起動はFocused Visionへ
-切り替わっている。旧Transformと`/api/ai/transform`はA5で互換境界を確認して撤去する。
+[マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。右Shiftの本番起動は
+Focused Visionへ切り替わり、独立Transformと`/api/ai/transform`は撤去済み。
 
-現在はA4まで完了し、右Shift起動は同じAX focus snapshotから、選択対象ありならFocused Vision、
+現在はA5まで完了し、右Shift起動は同じAX focus snapshotから、選択対象ありならFocused Vision、
 選択なし＋編集可能ならCompose、それ以外なら通常Visionへ分岐する。snapshotと画面captureは
 パネル前面化前に並行し、起動時の合成⌘C、clipboard読取・復元、0.12秒固定待機は廃止済み。
-旧TransformコードとGateway routeはA5の互換境界確認まで残るが、本番入口からは到達しない。
+製品surfaceはCompose / Vision / Copilotの3つで、選択対象の理解もVisionの同一sessionとrouteを使う。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -173,7 +172,6 @@ macOS アプリは AI プロバイダーを直接呼びません。認証済み�
 |---|---|---|
 | 入力レビュー | `ComposeSession` / `GatewayReviewClient` | `POST /api/ai/review` |
 | 音声入力 | `GatewayTranscriber` | `POST /api/ai/transcribe` |
-| 旧Transform互換（本番入口なし） | `TransformSession` / `GatewayTransformClient` | `POST /api/ai/transform` |
 | Vision / Copilot | `VisionSession` / `GatewayVisionClient` | `POST /api/ai/vision` |
 | 先回り文案 | `ComposeSession` / `GatewaySuggestClient` | `POST /api/ai/suggest` |
 

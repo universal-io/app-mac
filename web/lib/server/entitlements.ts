@@ -9,7 +9,6 @@ import { getPlanConfig } from "@/lib/server/plans";
 /** Feature identifiers exposed by the current product. */
 export const ALL_FEATURES = [
   "compose",
-  "transform",
   "vision",
   "copilot",
 ] as const;
