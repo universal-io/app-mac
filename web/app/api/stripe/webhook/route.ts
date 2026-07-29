@@ -87,7 +87,7 @@ export async function POST(request: Request): Promise<Response> {
     // Operational only: which tenant moved to which plan. No payment amounts,
     // no customer details.
     console.log(
-      `[stripe/webhook] ${event.type} -> tenant ${outcome.tenantId} plan=${outcome.plan} status=${outcome.status}`,
+      `[stripe/webhook] ${event.type} -> tenant ${outcome.tenantId} plan=${outcome.plan} status=${outcome.status} cancel_at=${outcome.cancelAt ?? "none"}`,
     );
     return Response.json({ received: true, handled: true });
   } catch (error) {

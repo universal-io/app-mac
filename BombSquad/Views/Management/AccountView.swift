@@ -50,6 +50,13 @@ struct AccountView: View {
                         infoRow("プラン", summary.plan.label)
                         Divider()
                         infoRow("契約状態", summary.state.label)
+                        // A cancelled subscription stays active until the paid
+                        // period runs out, so "有効" alone would look like nothing
+                        // happened. Shown right under the status it qualifies.
+                        if let cancelAtText = summary.cancelAtText {
+                            Divider()
+                            infoRow("終了予定", "\(cancelAtText)（それまでご利用いただけます）")
+                        }
                         Divider()
                         infoRow("月間利用枠", "\(summary.monthlyReviewLimit) 回")
                     }
@@ -169,16 +176,6 @@ struct AccountView: View {
     }
 
     private func formatResetDate(_ iso: String) -> String {
-        // The gateway emits JS toISOString() (fractional seconds); plain
-        // ISO 8601 is accepted too.
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = fractional.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else {
-            return iso
-        }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ja_JP")
-        formatter.dateFormat = "yyyy年M月d日"
-        return formatter.string(from: date)
+        GatewayTimestamp.dayText(fromISO: iso)
     }
 }

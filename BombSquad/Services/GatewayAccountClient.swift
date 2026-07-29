@@ -37,7 +37,8 @@ struct GatewayAccountClient {
             plan: BombSquadPlan(id: envelope.account.plan),
             state: .fromRawValue(envelope.account.status),
             monthlyReviewLimit: envelope.account.monthlyReviewLimit,
-            hasBillingAccount: envelope.account.hasBillingAccount ?? false
+            hasBillingAccount: envelope.account.hasBillingAccount ?? false,
+            cancelAt: envelope.account.cancelAt.flatMap(GatewayTimestamp.date(from:))
         )
     }
 
@@ -61,12 +62,15 @@ private struct AccountResponse: Decodable {
         // Optional so a build running against a gateway that predates this field
         // still decodes; absence means "no portal", which is the safe reading.
         let hasBillingAccount: Bool?
+        /// Null or absent means the plan renews.
+        let cancelAt: String?
 
         private enum CodingKeys: String, CodingKey {
             case email, plan, status
             case tenantID = "tenant_id"
             case monthlyReviewLimit = "monthly_review_limit"
             case hasBillingAccount = "has_billing_account"
+            case cancelAt = "cancel_at"
         }
     }
 

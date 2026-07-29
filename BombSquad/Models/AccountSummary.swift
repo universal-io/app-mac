@@ -53,6 +53,33 @@ enum BombSquadAccountState: String {
     }
 }
 
+/// Timestamps as the gateway sends them, and as this app shows them.
+///
+/// Shared because more than one screen prints the same kind of date and they must
+/// agree. The parse tries fractional seconds first: the gateway emits JavaScript
+/// `toISOString()`, which the plain ISO 8601 formatter rejects.
+enum GatewayTimestamp {
+    static func date(from iso: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+    }
+
+    static func dayText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.dateFormat = "yyyy年M月d日"
+        return formatter.string(from: date)
+    }
+
+    /// Formats a gateway timestamp, falling back to the raw string so an
+    /// unparseable value is still shown rather than silently dropped.
+    static func dayText(fromISO iso: String) -> String {
+        guard let date = date(from: iso) else { return iso }
+        return dayText(date)
+    }
+}
+
 struct BombSquadAccountSummary: Equatable {
     let email: String
     let tenantID: UUID
@@ -63,4 +90,17 @@ struct BombSquadAccountSummary: Equatable {
     /// False for an account that has never had a Stripe customer, so the app can
     /// omit a payment-management button that could only report its own absence.
     let hasBillingAccount: Bool
+    /// When the plan is scheduled to end, or nil when it renews.
+    ///
+    /// Cancelling takes effect at the end of the paid period, so a cancelled
+    /// subscriber legitimately keeps `plan: standard` / `state: active` for weeks.
+    /// This is the only field that distinguishes that from an ordinary renewal —
+    /// without showing it, someone who just cancelled sees "有効" and no sign that
+    /// it worked.
+    let cancelAt: Date?
+
+    /// The scheduled end of the plan, formatted, or nil when it renews.
+    var cancelAtText: String? {
+        cancelAt.map(GatewayTimestamp.dayText)
+    }
 }

@@ -326,16 +326,25 @@ Checkoutを開始する。ログイン済みならそのままCheckoutへ進む�
   NULLの時だけ。既存のcustomerを別のものへ移し替えない）。Checkout経由なら購入前に保存済みだが、
   Dashboard・CLI・importで作られたsubscriptionでは空のままになり、**顧客ポータルはcustomer idだけで
   引くため、有料プランなのに解約できないアカウントが生まれる**。
+- **解約は期間終了時に効く**（顧客ポータルの設定）。支払った月は使えるという扱いで、即時解約はしない。
+  この間Stripeの`status`は`active`のままなので、entitlementも有料プランを維持する。終了日は
+  `cancel_at`へ書く（Stripeの`cancel_at`、古いAPI versionでは`cancel_at_period_end`から期間終了を採る）。
+  **毎回再計算して更新する** — ポータルは解約の取り消しもできるため、古い日付を残すと
+  「まだ終了する」と言い続ける。`cancel_at`は表示専用で、利用可否の判定には使わない
+  （判定は`plan`と`status`。アクセスが終わるのはStripeが実際に解約して`deleted`が届いた時）。
 
 ## アカウント・管理
 
 - `GET /account` — `{"account":{email, tenant_id, plan, status, monthly_review_limit,
-  has_billing_account, features}, "quota":{…}}`。`plan`は`bs_plans`のid（`free`／`standard`等）を
+  has_billing_account, cancel_at, features}, "quota":{…}}`。`plan`は`bs_plans`のid（`free`／`standard`等）を
   そのまま返し、クライアントは**受け取ったidを表示するだけでプランの一覧を持たない**。表示名を
   知らないidは生のまま表示する（既定値へ丸めると、`bs_plans`に行を足した瞬間に有料契約者へ
   「フリー」と表示する事故が起きる。実際に`standard`で起きた）。`has_billing_account`は
   `stripe_customer_id`の有無で、クライアントは真のときだけ「お支払い管理」を出す。
-  usageは記録しない。
+  `cancel_at`はnullなら継続、値があれば「その日に終了予定、それまでは利用可」を意味する。
+  `plan`と`status`だけでは解約済みと通常更新が区別できないため、**解約が効いたことを
+  ユーザーに示せる唯一の情報**である。この2つは`bs_entitlements`から1回のreadで取り、
+  `authenticate`には足さない（全AI routeが通る経路に課金の詳細を載せない）。usageは記録しない。
 - `DELETE /account` — body `{"confirmation":"DELETE"}`。直近10分以内の認証を要求し、
   有効なsubscriptionがある場合は`ACTIVE_SUBSCRIPTION`で拒否する。
 - `GET /admin/overview` — `config.billing`に実効モード（鍵の接頭辞由来）、webhook署名シークレットの

@@ -155,6 +155,37 @@ export async function storedStripeCustomerId(
   return data?.stripe_customer_id ?? null;
 }
 
+export type BillingSummary = {
+  /** Whether /billing/portal has a customer to open a session for. */
+  hasBillingAccount: boolean;
+  /** ISO date the plan is scheduled to end, or null when it renews. */
+  cancelAt: string | null;
+};
+
+/**
+ * The commercial facts a client needs to render an account page, in one read.
+ *
+ * Deliberately not folded into `authenticate`: every AI route goes through that,
+ * and none of them needs to know whether a subscription is winding down.
+ */
+export async function billingSummary(
+  tenantId: string,
+): Promise<BillingSummary> {
+  const admin = getSupabaseAdminClient();
+  const { data, error } = await admin
+    .from("bs_entitlements")
+    .select("stripe_customer_id, cancel_at")
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Entitlement read failed: ${error.message}`);
+  }
+  return {
+    hasBillingAccount: data?.stripe_customer_id != null,
+    cancelAt: data?.cancel_at ?? null,
+  };
+}
+
 // --- Subscription state -> entitlement -------------------------------------
 
 type EntitlementState = {
@@ -213,6 +244,32 @@ function subscriptionPeriod(
   const end = new Date(item.current_period_end * 1000);
   if (!(end > start)) return null;
   return { start, end };
+}
+
+/**
+ * When the subscription is scheduled to stop, or null when it will renew.
+ *
+ * Cancelling takes effect at the end of the paid period: a customer who paid for
+ * the month keeps the month, so the portal is configured to cancel at period end
+ * rather than immediately. Stripe reports that as `cancel_at` and, in older API
+ * versions, only as the `cancel_at_period_end` flag — both are read so the date
+ * is right either way.
+ *
+ * Recomputed on every sync rather than only set, because the portal lets a
+ * customer undo a cancellation: a stale date would keep telling someone their
+ * plan ends when it no longer does.
+ */
+function scheduledCancellationAt(
+  subscription: Stripe.Subscription,
+  period: { start: Date; end: Date },
+): Date | null {
+  if (subscription.cancel_at) {
+    return new Date(subscription.cancel_at * 1000);
+  }
+  if (subscription.cancel_at_period_end) {
+    return period.end;
+  }
+  return null;
 }
 
 /** Calendar month, matching what bs_provision_user writes for a new free
@@ -292,6 +349,8 @@ export type SyncOutcome = {
   plan: string;
   status: string;
   subscriptionId: string;
+  /** ISO date the plan is scheduled to end, or null when it renews. */
+  cancelAt: string | null;
 };
 
 /**
@@ -336,6 +395,11 @@ export async function syncSubscriptionToEntitlement(
   const period = state.keepSubscription
     ? (subscriptionPeriod(subscription) ?? fallbackPeriod())
     : fallbackPeriod();
+  // Only meaningful while the subscription is still held; a terminal state has
+  // already ended, so it clears rather than keeping the date it ended on.
+  const cancelAt = state.keepSubscription
+    ? scheduledCancellationAt(subscription, period)
+    : null;
 
   // Before the state write, so a tenant that reaches a paid plan always has the
   // customer id the portal needs — including on the cancellation event, where the
@@ -350,6 +414,7 @@ export async function syncSubscriptionToEntitlement(
       status: state.status,
       current_period_start: period.start.toISOString(),
       current_period_end: period.end.toISOString(),
+      cancel_at: cancelAt?.toISOString() ?? null,
       // Clearing the id on a terminal state matters beyond tidiness: account
       // deletion refuses to run while a subscription id is present, so a
       // cancelled user could otherwise never withdraw.
@@ -368,6 +433,7 @@ export async function syncSubscriptionToEntitlement(
     plan: state.plan,
     status: state.status,
     subscriptionId: subscription.id,
+    cancelAt: cancelAt?.toISOString() ?? null,
   };
 }
 

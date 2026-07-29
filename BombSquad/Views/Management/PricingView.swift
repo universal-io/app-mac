@@ -38,6 +38,16 @@ struct PricingView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Said here as well as on the account page, because this is the screen
+            // the user was on when they cancelled and the one they will come back
+            // to if they doubt it worked.
+            if let cancelAtText = viewModel.accountSummary?.cancelAtText {
+                Text("\(cancelAtText)に終了予定です。それまでは今のプランのままご利用いただけます。")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Text(canManagePayment
                  ? "解約、支払い方法の変更、請求書の確認は Stripe の画面で行います。"
                  : "プランの詳細とお申し込みは Web で確認できます。")
