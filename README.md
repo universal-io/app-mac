@@ -77,6 +77,24 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
 設計根拠は[v3-tool-fit-plan.md](docs/v3-tool-fit-plan.md)、進捗と受け入れ条件は
 [マスタープラン R8](docs/universal-io-master-plan.md)を正本とする。
 
+### Focused Vision（Transform統合とclipboard非依存化）
+
+現行Transformは独立した製品surfaceとして残さず、選択テキスト・選択要素・位置を開始時点から
+持つVisionへ統合する。通常Visionが画面全体から質問で対象を絞るのに対し、Focused Visionは
+画面全体に加えて「この部分」を最初から指定した同じVision sessionで、初期解説、追加質問、
+Copilotへの移行を行う。
+
+この統合と同じプロジェクトで、起動判定の合成⌘C、Compose送信の合成⌘V、標準クリップボードの
+退避・復元を廃止する。選択取得とCompose入力はAccessibility APIを第一経路とし、選択取得失敗時は
+通常Vision／Composeへ安全に退化する。ComposeのAX入力が使えない場合だけclipboardを使わない
+Unicode入力を試し、それも失敗した時はユーザーが選べる明示コピーを提示する。バックグラウンドでは
+標準クリップボードを読み書きしない。
+
+意図、目標構造、移行順、受け入れ条件は
+[focused-vision-plan.md](docs/focused-vision-plan.md)、進捗は
+[マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。実装完了までは現行Transformと
+`/api/ai/transform`が本番経路であり、目標仕様と混同しない。
+
 ### ゲストプレビュー（ログイン前に試せる体験）
 
 初回起動でいきなり「ログインが必要」とせず、**ログインなしで約20回まで試せる**プレビューを提供する。

@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-25 ／ ステータス: `v0.2.0` 正式公開済み
+最終更新: 2026-07-29 ／ ステータス: `v0.2.0` 正式公開済み、R9設計確定
 
 ## 製品
 
@@ -209,6 +209,23 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
+### R9 — Focused Visionとclipboard非依存化（設計確定・実装前）
+
+現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
+開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
+Skill、継続質問、Copilot経路を使い、Transform専用の状態・パネル・routeを削除する。
+
+同じプロジェクトで、右Shift起動時の合成⌘C、Compose送信時の合成⌘V、標準クリップボードの
+退避・復元を廃止する。ユーザーが明示的にコピーを選んだ時以外、標準クリップボードを
+読み書きしないことを不変条件とする。選択取得はAXだけを使い、失敗時は通常VisionまたはComposeへ
+安全に退化する。ComposeはAX直接入力を第一経路、Unicode keyboard eventを限定fallbackとし、
+両方失敗した時だけユーザーが選べる明示コピーを提示する。
+
+完了時の製品surfaceはCompose / Vision / Copilotの3つ。`TransformSession`、
+`/api/ai/transform`、`SelectionGrabber`、`PasteDeployer`、`ClipboardBackup`、合成⌘C／⌘Vが
+本番ツリーに存在しないことを受け入れ条件とする。設計、移行順、検証項目の正本は
+[focused-vision-plan.md](focused-vision-plan.md)。
+
 ## リリース判定
 
 以下をすべて満たした時だけ公開する。
@@ -232,13 +249,6 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
   運営へ送れる導線を検討する。
 - 収集項目、送信前の説明、本文・画像・画面情報を含めるかどうか、保存期間を実装前に定め、
   ユーザーの意図しない情報を送信しない。
-
-### Transformのパネル内スペース配分
-
-- 画面内テキストを選択してTransformを開いた時、選択元テキストの入力欄が縦に広すぎて
-  解説・変換結果の表示領域を圧縮している。
-- 選択元テキストは確認に必要な高さへ抑え、解説・変換結果へ優先的に縦方向のスペースを割く。
-- 長文時のスクロール、最小・最大高、ウインドウサイズ変更時の配分を含めてUIを調整する。
 
 ### provider ZDRのリリース運用
 
