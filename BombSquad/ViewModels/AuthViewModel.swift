@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Supabase
 
@@ -24,6 +25,11 @@ final class AuthViewModel: ObservableObject {
     /// A neutral, non-alarming note (e.g. after the user cancels Google
     /// sign-in). Shown in secondary style, never red.
     @Published var infoMessage: String?
+    /// Billing-portal state, kept separate from the auth messages above so the
+    /// pricing section reports its own outcome and an old sign-in error never
+    /// surfaces next to a payment button.
+    @Published var isOpeningBillingPortal = false
+    @Published var billingErrorMessage: String?
 
     private lazy var authClient = BombSquadAuthClient.shared
     private var authStateTask: Task<Void, Never>?
@@ -133,6 +139,41 @@ final class AuthViewModel: ObservableObject {
                 await present(error)
                 await MainActor.run {
                     self.isBusy = false
+                }
+            }
+        }
+    }
+
+    /// Opens the Stripe customer portal in the browser.
+    ///
+    /// This is the only route out of a paid plan: cancellation, payment-method
+    /// changes and invoices all live on Stripe's screens, and the app has no
+    /// business rebuilding them. Without this the app could sell a subscription
+    /// it gave the user no way to stop.
+    func openBillingPortal() {
+        guard !isOpeningBillingPortal else { return }
+        guard let client = GatewayBillingClient.make() else {
+            billingErrorMessage =
+                "お支払い管理を開けませんでした。ログイン状態を確認してください。"
+            return
+        }
+        isOpeningBillingPortal = true
+        billingErrorMessage = nil
+
+        Task {
+            do {
+                let url = try await client.portalURL()
+                await MainActor.run {
+                    NSWorkspace.shared.open(url)
+                    self.isOpeningBillingPortal = false
+                }
+            } catch {
+                await MainActor.run {
+                    // Shown in place rather than through `present`: the gateway's
+                    // own message (e.g. "お支払い情報がまだありません。") is the
+                    // useful text here.
+                    self.billingErrorMessage = UserFacingError.message(for: error)
+                    self.isOpeningBillingPortal = false
                 }
             }
         }

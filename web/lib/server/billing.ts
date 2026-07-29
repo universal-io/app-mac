@@ -226,6 +226,15 @@ function fallbackPeriod(): { start: Date; end: Date } {
   };
 }
 
+/** The subscription's customer id, whichever shape the field arrived in. */
+function subscriptionCustomerId(
+  subscription: Stripe.Subscription,
+): string | null {
+  return typeof subscription.customer === "string"
+    ? subscription.customer
+    : subscription.customer?.id ?? null;
+}
+
 async function tenantForSubscription(
   subscription: Stripe.Subscription,
 ): Promise<string | null> {
@@ -235,10 +244,7 @@ async function tenantForSubscription(
   }
   // Older or externally created subscriptions may carry no metadata; the
   // customer link on the entitlement row still identifies the tenant.
-  const customerId =
-    typeof subscription.customer === "string"
-      ? subscription.customer
-      : subscription.customer?.id;
+  const customerId = subscriptionCustomerId(subscription);
   if (!customerId) return null;
   const admin = getSupabaseAdminClient();
   const { data } = await admin
@@ -247,6 +253,38 @@ async function tenantForSubscription(
     .eq("stripe_customer_id", customerId)
     .maybeSingle();
   return data?.tenant_id ?? null;
+}
+
+/**
+ * Adopts the subscription's customer for a tenant that has none stored.
+ *
+ * Checkout stores the customer before the subscription exists, but a
+ * subscription created any other way (the Stripe Dashboard, a CLI script, an
+ * import) leaves the tenant with a plan and no customer id — and the customer
+ * portal is looked up by customer id alone, so those accounts could reach a paid
+ * plan with no way to cancel it.
+ *
+ * Conditional on the column still being null, for the same reason
+ * `ensureStripeCustomer` is: whoever linked first wins, and a Stripe event is
+ * never a reason to move a tenant onto a different customer.
+ */
+async function adoptSubscriptionCustomer(
+  tenantId: string,
+  subscription: Stripe.Subscription,
+): Promise<void> {
+  const customerId = subscriptionCustomerId(subscription);
+  if (!customerId) return;
+  const admin = getSupabaseAdminClient();
+  const { error } = await admin
+    .from("bs_entitlements")
+    .update({ stripe_customer_id: customerId })
+    .eq("tenant_id", tenantId)
+    .is("stripe_customer_id", null);
+  if (error) {
+    // Not fatal: the plan still applies. Log it rather than making Stripe retry
+    // an event whose entitlement write succeeded.
+    console.error("[billing] customer adoption failed:", error.message);
+  }
 }
 
 export type SyncOutcome = {
@@ -298,6 +336,11 @@ export async function syncSubscriptionToEntitlement(
   const period = state.keepSubscription
     ? (subscriptionPeriod(subscription) ?? fallbackPeriod())
     : fallbackPeriod();
+
+  // Before the state write, so a tenant that reaches a paid plan always has the
+  // customer id the portal needs — including on the cancellation event, where the
+  // portal is exactly what the user will want next.
+  await adoptSubscriptionCustomer(tenantId, subscription);
 
   const admin = getSupabaseAdminClient();
   const { error } = await admin

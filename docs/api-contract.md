@@ -287,14 +287,19 @@ publishable keyもprice idもクライアントは持たない。
   プラン変更・解約はportalへ送る。販売対象が無ければ`PLAN_NOT_PURCHASABLE`（404）。
 - `POST /billing/portal` — 成功時 `{"url"}`。解約・支払い方法変更はStripeの顧客ポータルで行い、
   アプリ側に再実装しない。customer未作成なら`NO_BILLING_ACCOUNT`（404）。
+  呼び出し元はmacOSの「料金プラン」（`GatewayBillingClient`）と`/billing/start`の契約済み表示で、
+  どちらも返ったURLをブラウザで開くだけ。**購入経路を持つ以上、解約経路も必ず露出させる。**
 - どちらも失効・past_dueのアカウントから呼べる（買う人・カードを直す人こそ呼ぶため、
   entitlement statusでゲートしない）。鍵が無い場合は`BILLING_UNAVAILABLE`（503）。
 
 購入導線の入口は`/billing/start?plan=standard`（ページ、APIではない）。製品サイトの料金ページから
 リンクする。未ログインなら`/auth?next=/billing/start?plan=…`へ送り、ログイン後に同じ場所へ戻して
 Checkoutを開始する。ログイン済みならそのままCheckoutへ進む。契約済みの場合は`SUBSCRIPTION_EXISTS`を
-受けて「お支払い管理から」と案内する。Checkoutセッション作成は1回だけ実行する
+受けて、その場から`/billing/portal`を開くボタンを出す。Checkoutセッション作成は1回だけ実行する
 （認証リスナーの再レンダリングで二重にPOSTしない）。
+
+このページから`/admin`へ送らない。`/admin`は`bs_profiles.role`でゲートされており、一般の購入者には
+鍵のかかった扉になる。案内先はStripeのポータルと製品サイト（`lib/site.ts`）だけにする。
 
 `POST /stripe/webhook` はStripe専用で、Bearer認証を持たない（**署名が資格情報**）。
 `STRIPE_WEBHOOK_SECRET`未設定なら503、署名不正なら400（再送させない）。処理するのは
@@ -317,10 +322,20 @@ Checkoutを開始する。ログイン済みならそのままCheckoutへ進む�
   Stripeが最終的に解約した時点で、リトライの初回失敗ではない。
 - `account_class`と`monthly_review_limit`はwebhookで触らない。誰が支払うかと個別override は
   Stripeイベントが変える理由にならない。
+- `stripe_customer_id`が空のtenantには、subscriptionのcustomerをこの時点で紐付ける（列がまだ
+  NULLの時だけ。既存のcustomerを別のものへ移し替えない）。Checkout経由なら購入前に保存済みだが、
+  Dashboard・CLI・importで作られたsubscriptionでは空のままになり、**顧客ポータルはcustomer idだけで
+  引くため、有料プランなのに解約できないアカウントが生まれる**。
 
 ## アカウント・管理
 
-- `GET /account`
+- `GET /account` — `{"account":{email, tenant_id, plan, status, monthly_review_limit,
+  has_billing_account, features}, "quota":{…}}`。`plan`は`bs_plans`のid（`free`／`standard`等）を
+  そのまま返し、クライアントは**受け取ったidを表示するだけでプランの一覧を持たない**。表示名を
+  知らないidは生のまま表示する（既定値へ丸めると、`bs_plans`に行を足した瞬間に有料契約者へ
+  「フリー」と表示する事故が起きる。実際に`standard`で起きた）。`has_billing_account`は
+  `stripe_customer_id`の有無で、クライアントは真のときだけ「お支払い管理」を出す。
+  usageは記録しない。
 - `DELETE /account` — body `{"confirmation":"DELETE"}`。直近10分以内の認証を要求し、
   有効なsubscriptionがある場合は`ACTIVE_SUBSCRIPTION`で拒否する。
 - `GET /admin/overview` — `config.billing`に実効モード（鍵の接頭辞由来）、webhook署名シークレットの

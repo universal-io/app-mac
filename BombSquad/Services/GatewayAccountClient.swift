@@ -34,9 +34,10 @@ struct GatewayAccountClient {
         return BombSquadAccountSummary(
             email: envelope.account.email ?? "",
             tenantID: envelope.account.tenantID,
-            tier: .fromEntitlementPlan(envelope.account.plan),
+            plan: BombSquadPlan(id: envelope.account.plan),
             state: .fromRawValue(envelope.account.status),
-            monthlyReviewLimit: envelope.account.monthlyReviewLimit
+            monthlyReviewLimit: envelope.account.monthlyReviewLimit,
+            hasBillingAccount: envelope.account.hasBillingAccount ?? false
         )
     }
 
@@ -57,11 +58,15 @@ private struct AccountResponse: Decodable {
         let plan: String
         let status: String
         let monthlyReviewLimit: Int
+        // Optional so a build running against a gateway that predates this field
+        // still decodes; absence means "no portal", which is the safe reading.
+        let hasBillingAccount: Bool?
 
         private enum CodingKeys: String, CodingKey {
             case email, plan, status
             case tenantID = "tenant_id"
             case monthlyReviewLimit = "monthly_review_limit"
+            case hasBillingAccount = "has_billing_account"
         }
     }
 

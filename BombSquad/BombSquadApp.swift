@@ -20,8 +20,8 @@ struct BombSquadApp: App {
             // At-a-glance running/account state.
             if auth.hasSession {
                 Text(auth.signedInEmail ?? "ログイン済み")
-                if let tier = auth.accountSummary?.tier.label {
-                    Text("プラン: \(tier)")
+                if let plan = auth.accountSummary?.plan.label {
+                    Text("プラン: \(plan)")
                 }
             } else {
                 Text("未ログイン")

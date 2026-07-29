@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { PRODUCT_SITE_URL } from "@/lib/site";
 import { useBrowserSession } from "@/lib/supabase/use-browser-session";
 
 /** Plans this page may start. The server re-checks against bs_plan_prices; this
@@ -18,6 +18,8 @@ export function CheckoutStarter({ plan }: { plan?: string }) {
   const router = useRouter();
   const { isConfigured, isLoading, session } = useBrowserSession();
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [portalError, setPortalError] = useState<string | null>(null);
+  const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   // Checkout session creation must fire once. The auth listener can re-render
   // this component, and a second POST would create a second Stripe session.
   const started = useRef(false);
@@ -85,6 +87,33 @@ export function CheckoutStarter({ plan }: { plan?: string }) {
     };
   }, [isConfigured, isLoading, session, resolvedPlan, router]);
 
+  /** Hands an existing subscriber to Stripe, where cancelling actually happens. */
+  async function openPortal() {
+    if (!session || isOpeningPortal) return;
+    setIsOpeningPortal(true);
+    setPortalError(null);
+    try {
+      const res = await fetch("/api/billing/portal", {
+        method: "POST",
+        headers: { authorization: `Bearer ${session.access_token}` },
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { url?: string; error?: { message?: string } }
+        | null;
+      if (res.ok && body?.url) {
+        window.location.href = body.url;
+        return;
+      }
+      setPortalError(
+        body?.error?.message
+          ?? "お支払い管理を開けませんでした。時間をおいて再試行してください。",
+      );
+    } catch {
+      setPortalError("通信に失敗しました。接続を確認して再試行してください。");
+    }
+    setIsOpeningPortal(false);
+  }
+
   // Derived during render rather than set from the effect: a missing Supabase
   // configuration is knowable without doing anything.
   const view: Outcome | null = !isConfigured
@@ -110,13 +139,33 @@ export function CheckoutStarter({ plan }: { plan?: string }) {
             ? "プランの変更と解約は、お支払い管理から行えます。"
             : view.message}
       </p>
-      {view !== null ? (
-        <Link
+      {/* Never /admin from here: that page is gated on bs_profiles.role, so for
+          an ordinary buyer it is a locked door. The one thing this screen owes a
+          subscriber is the way to Stripe. */}
+      {view?.kind === "subscribed" ? (
+        <div className="mt-6 flex flex-col items-start gap-3">
+          <button
+            type="button"
+            className="inline-flex rounded-xl bg-ink px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-iris disabled:opacity-60"
+            onClick={() => void openPortal()}
+            disabled={isOpeningPortal}
+          >
+            {isOpeningPortal ? "開いています…" : "お支払い管理を開く"}
+          </button>
+          {portalError ? (
+            <p className="text-sm leading-6 text-red-600">{portalError}</p>
+          ) : null}
+          <a className="text-sm text-body underline hover:text-iris" href={PRODUCT_SITE_URL}>
+            Universal I/O のサイトへ戻る
+          </a>
+        </div>
+      ) : view !== null ? (
+        <a
           className="mt-6 inline-flex rounded-xl bg-ink px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-iris"
-          href="/admin"
+          href={PRODUCT_SITE_URL}
         >
-          アカウントへ戻る
-        </Link>
+          Universal I/O のサイトへ戻る
+        </a>
       ) : null}
     </section>
   );

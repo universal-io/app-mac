@@ -47,7 +47,7 @@ struct AccountView: View {
             GroupBox {
                 VStack(spacing: 0) {
                     if let summary = viewModel.accountSummary {
-                        infoRow("プラン", summary.tier.label)
+                        infoRow("プラン", summary.plan.label)
                         Divider()
                         infoRow("契約状態", summary.state.label)
                         Divider()

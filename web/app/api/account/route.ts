@@ -10,6 +10,7 @@ import {
   gatewayErrorResponse,
   GatewayError,
 } from "@/lib/server/gateway";
+import { storedStripeCustomerId } from "@/lib/server/billing";
 import { featuresForPlan } from "@/lib/server/entitlements";
 import { getSupabaseAdminClient } from "@/lib/server/supabase-admin";
 
@@ -23,6 +24,11 @@ export async function GET(request: Request): Promise<Response> {
 
     // Raw current-month count (no in-flight offset: nothing is consumed here).
     const quota = await buildQuota(tenantId, entitlement);
+    // Whether /billing/portal has anything to open. Sent so a client can offer
+    // payment management only when it exists, instead of showing a button that
+    // can only answer NO_BILLING_ACCOUNT. Read here rather than in
+    // `authenticate` so the AI routes' hot path gains no extra column.
+    const hasBillingAccount = (await storedStripeCustomerId(tenantId)) !== null;
 
     return Response.json({
       account: {
@@ -31,6 +37,7 @@ export async function GET(request: Request): Promise<Response> {
         plan: entitlement.plan,
         status: entitlement.status,
         monthly_review_limit: quota.limit,
+        has_billing_account: hasBillingAccount,
         // Additive feature flags (foundation-redesign-plan §5-c). Display
         // gating only on the client; server-side enforcement lands later.
         features: await featuresForPlan(entitlement.plan),

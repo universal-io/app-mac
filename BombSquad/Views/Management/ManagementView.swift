@@ -90,7 +90,7 @@ struct ManagementView: View {
         case .history:
             HistoryPlaceholderView()
         case .pricing:
-            PricingView()
+            PricingView(viewModel: authViewModel)
         }
     }
 
@@ -106,7 +106,7 @@ struct ManagementView: View {
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(authViewModel.accountSummary?.tier.label ?? (authViewModel.hasSession ? "—" : "ログインしてください"))
+                Text(authViewModel.accountSummary?.plan.label ?? (authViewModel.hasSession ? "—" : "ログインしてください"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
