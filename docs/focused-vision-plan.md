@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: A7自動検証完了・署名付き実機検証待ち
+最終更新: 2026-07-30 ／ ステータス: `0.2.1` build `5`候補・署名付き実機検証待ち
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -561,6 +561,9 @@ panel分岐、ウォームアップを削除した。Gatewayの`/api/ai/transfor
 残作業: §14と[manual-golden-paths.md](manual-golden-paths.md)の署名付き実機検証。権限、Keychain、
 実アプリのAX tree、paste処理、clipboard競合は署名なしCLI buildでは証明しない。これらが完了するまで
 プロジェクトA完了およびmain統合可能とは判定しない。
+
+リリース候補（2026-07-30）: 次の候補版を`0.2.1` build `5`とする。公開中の`0.2.0` build `4`を
+上書きせず、Developer ID署名候補、本番GatewayでのGolden Paths、公開DMGの検証を順に行う。
 
 ### B0 — AX入力probe（Aと独立）
 

@@ -109,6 +109,7 @@ Compose送信は本文をclipboardへ書いて合成⌘Vを1回送るが、過�
 利用できない場合は本文を残し、手動⌘Vまたは設定を開く選択肢を明示する。
 macOSのunit test／署名なしDebug buildとWebのlint／型検査／production build、開始tagからの
 差分監査は通過済み。署名付きアプリによる実機Golden Pathsはmain統合前の残作業である。
+次の配布候補は`0.2.1` build `5`とし、公開中の`0.2.0` build `4`とは別の不変成果物として扱う。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -368,6 +369,9 @@ pushします。過去に「クライアントは正しいのに文案が出な�
 Vision / Copilot、画面文脈に基づく自動返信、共通AIウォームアップ、統一したCompose UIを
 製品機能として正式採用しました。
 
+Focused Visionとclipboard安全化を含む次の候補版は`0.2.1` build `5`である。Developer ID署名、
+notarization、本番GatewayでのGolden Pathsを完了するまでは公開URLへpromoteしない。
+
 現行公開版の `v0.1.1`（build `3`、ソース `7171d35`）は
 `https://dl.universal-io.com/releases/0.1.1/build-3/Universal-IO.dmg`、SHA-256
 `9b46618325f296bd78a7e48b75e383454f58ccb457d8617037dfacd887c2afca`として不変保存されています。
@@ -384,7 +388,7 @@ bash tools/release.sh
 bash tools/release.sh --publish
 
 # 検証後、公開URL（Universal-IO.dmg）を選んだビルドへ向ける＝公開確定
-bash tools/release.sh --promote 0.2.0 4
+bash tools/release.sh --promote 0.2.1 5
 ```
 
 **ビルドの公開と「公開ダウンロードにする」を分離する。** `--publish` は
