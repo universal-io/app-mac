@@ -108,8 +108,12 @@ Focused Visionへ切り替わり、独立Transformと`/api/ai/transform`は撤�
 Compose送信は本文をclipboardへ書いて合成⌘Vを1回送るが、過去内容は復元しない。Accessibilityを
 利用できない場合は本文を残し、手動⌘Vまたは設定を開く選択肢を明示する。
 macOSのunit test／署名なしDebug buildとWebのlint／型検査／production build、開始tagからの
-差分監査は通過済み。署名付きアプリによる実機Golden Pathsはmain統合前の残作業である。
+差分監査は通過済み。署名付きアプリによる実機Golden PathsはDMG公開前の残作業である。
 次の配布候補は`0.2.1` build `5`とし、公開中の`0.2.0` build `4`とは別の不変成果物として扱う。
+R9はmainの`6bc471a`へ統合し、本番Gatewayへdeploy済み。現行4 AI routeの応答と
+旧`/api/ai/transform`の404を確認した。候補DMGはDeveloper ID署名、notarization、staple、
+Gatekeeper評価済みで、SHA-256は
+`637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`。公開はまだ行っていない。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -370,7 +374,8 @@ Vision / Copilot、画面文脈に基づく自動返信、共通AIウォーム�
 製品機能として正式採用しました。
 
 Focused Visionとclipboard安全化を含む次の候補版は`0.2.1` build `5`である。Developer ID署名、
-notarization、本番GatewayでのGolden Pathsを完了するまでは公開URLへpromoteしない。
+notarizationと本番Gatewayへのdeployは完了した。Golden Pathsを完了するまではDMGをpublishせず、
+公開URLへpromoteしない。
 
 現行公開版の `v0.1.1`（build `3`、ソース `7171d35`）は
 `https://dl.universal-io.com/releases/0.1.1/build-3/Universal-IO.dmg`、SHA-256

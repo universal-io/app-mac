@@ -1,10 +1,13 @@
 # リリース前 手動Golden Paths
 
-最終更新: 2026-07-30 ／ ステータス: `0.2.1` build `5`候補の署名付き実機検証待ち
+最終更新: 2026-07-30 ／ ステータス: 本番Gateway準備済み・`0.2.1` build `5`検証待ち
 
 署名付きアプリでのみ実施する。CLIの通常ビルドでは権限やKeychainを刺激しない。
 R9 A7の自動検証は完了しているが、本書の未チェック項目を自動検証で代替しない。
 今回の対象成果物は`0.2.1` build `5`である。
+main `6bc471a`の本番Gateway deployとroute疎通は完了済み。候補DMGはDeveloper ID署名、
+notarization、staple、Gatekeeper評価済みで、まだpublish／promoteしていない。
+XcodeのApple Development署名版による機能確認は問題なし。以下の個別項目は本番Gatewayで再確認する。
 
 ## 事前条件
 

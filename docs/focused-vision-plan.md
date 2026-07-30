@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: `0.2.1` build `5`候補・署名付き実機検証待ち
+最終更新: 2026-07-30 ／ ステータス: main／本番Gateway反映済み・Golden Paths待ち
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -560,10 +560,18 @@ panel分岐、ウォームアップを削除した。Gatewayの`/api/ai/transfor
 
 残作業: §14と[manual-golden-paths.md](manual-golden-paths.md)の署名付き実機検証。権限、Keychain、
 実アプリのAX tree、paste処理、clipboard競合は署名なしCLI buildでは証明しない。これらが完了するまで
-プロジェクトA完了およびmain統合可能とは判定しない。
+プロジェクトA完了および公開可能とは判定しない。本番Gatewayを使うGolden Pathsのためのmain統合は
+先に行うが、DMGのpublish／promoteとは分離する。
 
 リリース候補（2026-07-30）: 次の候補版を`0.2.1` build `5`とする。公開中の`0.2.0` build `4`を
 上書きせず、Developer ID署名候補、本番GatewayでのGolden Paths、公開DMGの検証を順に行う。
+
+本番反映（2026-07-30）: Developer ID署名したUniversal binaryのappとDMGがApple notarizationで
+Acceptedとなり、staple、Gatekeeper評価に成功した。候補DMGのSHA-256は
+`637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`。R9をmain
+`6bc471a`へ統合してVercel productionへdeployし、現行4 AI routeのJSON応答と旧`transform`の
+404を確認した。XcodeのApple Development署名版による機能確認も問題なしと報告済み。
+DMGのpublish／promoteは行っていない。次の判定工程は本番Gatewayでの§14実機検証。
 
 ### B0 — AX入力probe（Aと独立）
 

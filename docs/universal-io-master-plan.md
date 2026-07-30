@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-30 ／ ステータス: `v0.2.0`公開中、R9 `0.2.1` build `5`候補
+最終更新: 2026-07-30 ／ ステータス: R9 main／本番Gateway反映済み、Golden Paths待ち
 
 ## 製品
 
@@ -207,7 +207,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard安全化（`0.2.1` build `5`候補）
+### R9 — Focused Visionとclipboard安全化（main／本番Gateway反映済み）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
@@ -258,9 +258,12 @@ clipboard restoreが本番ツリーに存在しないこと。実装前の復帰
   Web lint／TypeScript／production buildが成功した。旧Transform、起動時のclipboard／合成⌘C、
   遅延restoreが本番ツリーに無いことと、開始tagから恒久的な実験物が増えていないことを確認した。
   署名付きアプリでのFocused Vision対象アプリ群、権限拒否、clipboard競合のGolden Pathsは未実施で、
-  完了およびmain統合の判定条件として残る。
+  完了およびDMG公開の判定条件として残る。
 - **リリース候補** `0.2.1` build `5`。公開中の`0.2.0` build `4`は変更せず、署名候補の確認、
   本番GatewayでのGolden Paths、DMG publish、公開URL promote、Git tagを順に行う。
+- **本番準備（完了）** Developer ID署名、notarization、staple、Gatekeeper評価済み候補を作成し、
+  R9をmain `6bc471a`へ統合して本番Gatewayへdeployした。現行4 AI routeと旧`transform`の404を
+  確認済み。候補DMGはまだpublish／promoteせず、本番GatewayでのGolden Pathsを次の判定工程とする。
 
 ## リリース判定
 
