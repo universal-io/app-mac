@@ -8,6 +8,8 @@ R9 A7の自動検証は完了しているが、本書の未チェック項目を
 main `6bc471a`の本番Gateway deployとroute疎通は完了済み。候補DMGはDeveloper ID署名、
 notarization、staple、Gatekeeper評価済みで、まだpublish／promoteしていない。
 XcodeのApple Development署名版による機能確認は問題なし。以下の個別項目は本番Gatewayで再確認する。
+確認対象は`dist/Universal-IO-0.2.1-build5.dmg`だけとする。`build/export`や`build/dmg-staging`を
+候補として残さず、publish時もこのDMGを再ビルドしない。
 
 ## 事前条件
 
