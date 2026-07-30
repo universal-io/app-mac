@@ -71,7 +71,7 @@ final class OperationalNoticeCenter: ObservableObject {
 /// The single gateway transport. Owns availability gating, the request
 /// envelope, JSON/multipart sends,
 /// transport/status/error-contract mapping, and SSE framing. Feature clients
-/// (review/transform/vision/transcribe/suggest/account) are thin wrappers that
+/// (review/vision/transcribe/suggest/account) are thin wrappers that
 /// keep only their domain payloads and response decoding.
 struct GatewayClient {
     let api: GatewayAPI
@@ -113,7 +113,7 @@ struct GatewayClient {
         return body
     }
 
-    /// `input.context` payload shared by review/transform/suggest. The gateway
+    /// `input.context` payload shared by review/suggest. The gateway
     /// builds the prompt from it and stores nothing (see the API contract).
     static func contextPayload(_ context: SituationalContext) -> [String: Any] {
         var payload: [String: Any] = ["app_name": context.appName]

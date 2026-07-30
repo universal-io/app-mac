@@ -1,18 +1,17 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-29 ／ ステータス: `v0.2.0` 正式公開済み、R9設計確定
+最終更新: 2026-07-30 ／ ステータス: `v0.2.0`公開中、R9 `0.2.1` build `5`候補
 
 ## 製品
 
 Universal I/O は、人が情報を送る・受け取る・画面上で行動する間に入り、意図と表現を
 整える中間レイヤーである。自律操作ではなく、最終判断と操作はユーザーが行う。
 
-製品surfaceは4つだけとする。
+製品surfaceは3つだけとする。
 
 1. Compose: 自分の文章を作り、必要ならレビューして送信する。
-2. Transform: 受信文章を理解し、返信や次の行動を準備する。
-3. Vision: 現在の画面を読み、質問へ答える。
-4. Copilot: 画面上の次の一手を示し、ユーザー操作後に再評価する。
+2. Vision: 現在の画面または選択対象を読み、質問へ答える。
+3. Copilot: 画面上の次の一手を示し、ユーザー操作後に再評価する。
 
 ## 現行アーキテクチャ
 
@@ -20,7 +19,6 @@ Universal I/O は、人が情報を送る・受け取る・画面上で行動す
 macOS UI
   └─ SessionCoordinator
        ├─ ComposeSession  ── /api/ai/review
-       ├─ TransformSession ─ /api/ai/transform
        ├─ VisionSession ──── /api/ai/vision
        └─ GatewayTranscriber /api/ai/transcribe
                               │
@@ -72,7 +70,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 ## データ境界
 
 - 認証、entitlement、usageはSupabaseを正とする。
-- 下書きとCompose送信履歴はMacローカル。履歴上限は100件。Transformは一切履歴化しない。
+- 下書きとCompose送信履歴はMacローカル。履歴上限は100件。Visionの対象・画像・会話は履歴化しない。
 - スクリーンショット、音声、周辺コンテクストは処理用で、Gatewayへ恒久保存しない。一時画像は
   セッション終了時、異常終了で残った画像は次回起動時に削除する。
 - ローカル履歴・下書きはSupabase user ID単位で物理分離し、ログアウト時にDBを閉じる。
@@ -91,7 +89,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 
 - 現行Visionを正式な `VisionSession` と `/api/ai/vision` に昇格。
 - 旧Vision、Navigator v3/v4、Run、shadow、harness、fixture、local Gateway、BYOKを削除。
-- Compose、Transform、Transcribe、Memoryを本番Gateway専用に統一。
+- Compose、Transcribe、Memoryを本番Gateway専用に統一。
 - 実験資料とアーカイブをGit履歴へ戻し、作業ツリーから削除。
 
 ### R2 — 機械検証（完了、2026-07-22）
@@ -104,7 +102,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 
 ### R3 — 本番E2E（進行中）
 
-- ログイン、レビュー、音声入力、受信変換、Vision、Copilot、履歴を実機確認。
+- ログイン、レビュー、音声入力、Focused Vision、通常Vision、Copilot、履歴を実機確認。
 - 本番Gatewayで全routeがJSON/SSE契約を返し、404 HTMLを返さない。
 - 全AI機能で実モデルと `fallback_used` をクライアントとusageで確認する。
 - 一次失敗時は二次で成功して共通noticeが表示され、両方失敗時は共通エラーになる。
@@ -209,29 +207,67 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard非依存化（設計確定・実装前）
+### R9 — Focused Visionとclipboard安全化（`0.2.1` build `5`候補）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
 Skill、継続質問、Copilot経路を使い、Transform専用の状態・パネル・routeを削除する。
 
-同じプロジェクトで、右Shift起動時の合成⌘C、Compose送信時の合成⌘V、標準クリップボードの
-退避・復元を廃止する。ユーザーが明示的にコピーを選んだ時以外、標準クリップボードを
-読み書きしないことを不変条件とする。選択取得はAXだけを使い、失敗時は通常VisionまたはComposeへ
-安全に退化する。ComposeはAX直接入力を第一経路、Unicode keyboard eventを限定fallbackとし、
-両方失敗した時だけユーザーが選べる明示コピーを提示する。
+プロジェクトAでは、右Shift起動時の合成⌘Cと標準クリップボードの退避・復元を廃止する。
+選択取得はAXだけを使い、失敗時は通常VisionまたはComposeへ安全に退化する。Compose送信は当面
+clipboard＋合成⌘Vを維持するが、過去内容を復元せず、送信本文が残る予測可能な動作へ変える。
 
-完了時の製品surfaceはCompose / Vision / Copilotの3つ。`TransformSession`、
-`/api/ai/transform`、`SelectionGrabber`、`PasteDeployer`、`ClipboardBackup`、合成⌘C／⌘Vが
-本番ツリーに存在しないことを受け入れ条件とする。設計、移行順、検証項目の正本は
+プロジェクトBではAX直接入力のread-back、Undo、IME、改行を実機probeし、実証できた対象だけ
+clipboard非依存化するか、clipboard＋⌘Vを維持するかを別途決める。未証明のAXValue汎用挿入と
+Unicode keyboard eventを製品fallbackにしない。
+
+完了時の製品surfaceはCompose / Vision / Copilotの3つ。プロジェクトAの受け入れ条件は
+`TransformSession`、`/api/ai/transform`、`SelectionGrabber`、`ClipboardBackup`、合成⌘C、
+clipboard restoreが本番ツリーに存在しないこと。実装前の復帰点はtag
+`pre-focused-vision-r9-20260730`（`1aea597`）。設計、マイルストーン、commit境界、検証の正本は
 [focused-vision-plan.md](focused-vision-plan.md)。
+
+- **A0（完了）** 復帰点、改訂設計、プロジェクトA/Bの境界を確定した。
+- **A1（完了）** focused elementと祖先選択を1つの値snapshotへ固定するAX取得層を追加した。
+  Chromium/Electronの両AX属性、captureと並行可能なbounded retry、secure field除外、
+  timeout・失効要素の安全な退化、純粋な起動判定をunit testで固定した。現行の右Shift起動、
+  Transform、SelectionGrabber、本番Gateway経路にはまだ接続していない。
+- **A2（完了）** 任意のVision focus targetをSession、macOS request、Gateway validation、
+  Vision promptへ後方互換で追加した。選択テキスト、AX要素、領域とcapture内ピクセルframeを扱い、
+  AX対象未確定時は画像上の選択をbest-effortで探す。対象情報はusage／運用ログへ保存せず、
+  通常Visionの未指定requestと現行本番入口は変えていない。
+- **A3（完了）** 既存Visionパネルへ対象カードとcapture内ハイライトを追加した。選択テキスト、
+  role由来の中立名、AX label、取得元、位置不明状態を表示し、長文は折りたたみと全文スクロールを
+  両立する。同じ会話、Skill、fallback notice、Copilot経路を維持し、VoiceOver順序、
+  Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionへ対応した。
+  右ShiftとTransformの本番入口はまだ切り替えていない。
+- **A4（完了）** 右Shift起動を単一の`AXFocusSnapshot`判定へ切り替え、選択対象ありは
+  Focused Vision、選択なし＋編集可能はCompose、それ以外は通常Visionへ分岐する。AXのbounded retry、
+  画面capture、製品identity取得はパネル前面化前に並行し、Composeへ進む場合は同じcaptureを
+  先読みに転用する。`SelectionGrabber`、合成⌘C、起動時のclipboard読取・復元、0.12秒固定待機を
+  削除した。旧TransformコードとrouteはA5まで残るが、本番入口からは到達しない。
+- **A5（完了）** `.transform`状態、Session、View、model、client、prompt、Gateway route、
+  model routing、entitlement feature、ウォームアップを削除した。`review`はComposeだけを受理し、
+  選択対象の理解は`VisionSession`と`/api/ai/vision`へ一本化した。ロールバック用・念のための
+  旧実装は保持せず、必要な復帰はGit tag／履歴から行う。
+- **A6（完了）** `ClipboardBackup`と遅延restoreを削除した。Compose送信は本文だけをclipboardへ
+  書いて合成⌘Vを1回送り、本文を残す。Accessibility拒否またはevent生成失敗時は手動⌘Vを明示し、
+  拒否時は設定を開く選択肢も出す。未実証のTransientTypeは付けず、送信後のユーザー⌘Cを時間差で
+  上書きする経路を構造上なくした。
+- **A7（自動検証完了・実機検証待ち）** XcodeGen、macOS署名なしDebug build、28 unit test、
+  Web lint／TypeScript／production buildが成功した。旧Transform、起動時のclipboard／合成⌘C、
+  遅延restoreが本番ツリーに無いことと、開始tagから恒久的な実験物が増えていないことを確認した。
+  署名付きアプリでのFocused Vision対象アプリ群、権限拒否、clipboard競合のGolden Pathsは未実施で、
+  完了およびmain統合の判定条件として残る。
+- **リリース候補** `0.2.1` build `5`。公開中の`0.2.0` build `4`は変更せず、署名候補の確認、
+  本番GatewayでのGolden Paths、DMG publish、公開URL promote、Git tagを順に行う。
 
 ## リリース判定
 
 以下をすべて満たした時だけ公開する。
 
 - R2〜R4が完了している。
-- 主要5 AI endpointに旧・代替endpointが存在せず、各routeのモデル指定が共通SSOTだけにある。
+- 主要4 AI endpointに旧・代替endpointが存在せず、各routeのモデル指定が共通SSOTだけにある。
 - 重大度Highの既知不具合が0件。
 - Composeのレビュー後フォーカス、自動返信、音声入力、Vision初回応答が実機で再現可能。
 - rollback先と本番Gatewayの互換性が確認されている。

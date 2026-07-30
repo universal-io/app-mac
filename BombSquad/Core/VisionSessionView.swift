@@ -39,6 +39,7 @@ struct VisionSessionView: View {
     @ObservedObject var session: VisionSession
     @State private var annotations: [ScreenshotAnnotation] = []
     @State private var previewTool: ScreenshotPreviewTool = .pan
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var focusedField: Binding<FocusField?> {
         Binding(get: { session.focusedField }, set: { session.focusedField = $0 })
@@ -59,6 +60,18 @@ struct VisionSessionView: View {
         let app = diagnostics.targetAppName ?? "対象アプリなし"
         let window = diagnostics.targetWindowTitle ?? "focused windowなし"
         return "収集対象: \(app) / \(window)\nAX root: \(diagnostics.collectionRoot)\nCapture: \(diagnostics.captureScope)\nPasses: \(diagnostics.collectionPasses) / WebArea: \(diagnostics.webAreaPresent ? "あり" : "なし")"
+    }
+
+    private var focusTargetHighlight: CGRect? {
+        session.focusTarget?.normalizedFrame(in: session.attachment)
+    }
+
+    private var previewHighlight: CGRect? {
+        session.screenshotHighlight ?? focusTargetHighlight
+    }
+
+    private var isShowingFocusTargetHighlight: Bool {
+        session.screenshotHighlight == nil && focusTargetHighlight != nil
     }
 
     var body: some View {
@@ -136,7 +149,9 @@ struct VisionSessionView: View {
                     tool: previewTool,
                     annotationTint: .red,
                     annotations: $annotations,
-                    highlight: session.screenshotHighlight
+                    highlight: previewHighlight,
+                    highlightTint: isShowingFocusTargetHighlight ? .accentColor : .red,
+                    highlightLabel: isShowingFocusTargetHighlight ? "選択対象" : "次の操作"
                 )
                 .padding(4)
             }
@@ -160,6 +175,14 @@ struct VisionSessionView: View {
 
     private var conversationColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let focusTarget = session.focusTarget {
+                VisionFocusTargetCard(
+                    target: focusTarget,
+                    locationAvailable: focusTargetHighlight != nil
+                )
+                .accessibilitySortPriority(4)
+            }
+
             Label("読み取り結果", systemImage: "doc.text.magnifyingglass")
                 .font(.headline)
 
@@ -169,6 +192,7 @@ struct VisionSessionView: View {
                         ForEach(session.turns) { turn in
                             turnView(turn)
                                 .id(turn.id)
+                                .accessibilitySortPriority(3)
                         }
                         if session.isLoading {
                             HStack(spacing: 8) {
@@ -184,7 +208,9 @@ struct VisionSessionView: View {
                 .background(EditorFocusBackground(isFocused: false))
                 .onChange(of: session.turns.count) {
                     guard let last = session.turns.last else { return }
-                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
                 }
             }
 
@@ -206,6 +232,7 @@ struct VisionSessionView: View {
                     action: session.sendQuestion
                 )
             }
+            .accessibilitySortPriority(2)
             if session.canStartCopilot {
                 Button {
                     session.startCopilot()
@@ -214,6 +241,9 @@ struct VisionSessionView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityLabel("選択対象について案内を開始")
+                .accessibilityHint("同じ会話の内容を引き継いで操作案内を開始します")
+                .accessibilitySortPriority(1)
             }
         }
         .padding()
@@ -244,6 +274,93 @@ struct VisionSessionView: View {
 #endif
             }
         }
+    }
+}
+
+private struct VisionFocusTargetCard: View {
+    let target: VisionFocusTarget
+    let locationAvailable: Bool
+
+    @State private var isExpanded = false
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    private var isLongText: Bool {
+        guard let text = target.text else { return false }
+        return text.count > 280 || text.filter(\.isNewline).count > 4
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(target.displayTitle, systemImage: "scope")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            if let label = target.label, !label.isEmpty {
+                Text(label)
+                    .font(.subheadline.weight(.medium))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let text = target.text, !text.isEmpty {
+                Group {
+                    if isExpanded {
+                        ScrollView {
+                            targetText(text)
+                        }
+                        .frame(maxHeight: 160)
+                    } else {
+                        targetText(text)
+                            .lineLimit(4)
+                    }
+                }
+
+                if isLongText {
+                    Button(isExpanded ? "折りたたむ" : "全文を表示") {
+                        isExpanded.toggle()
+                    }
+                    .buttonStyle(.link)
+                    .accessibilityHint(
+                        isExpanded
+                            ? "選択テキストを短く表示します"
+                            : "選択テキスト全文をスクロール可能な領域に表示します"
+                    )
+                }
+            }
+
+            Divider()
+
+            Label("取得元: \(target.sourceDescription)", systemImage: "arrow.down.to.line")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Label(
+                locationAvailable
+                    ? "スクリーンショット上の位置を表示中"
+                    : "スクリーンショット上の位置は取得できませんでした",
+                systemImage: locationAvailable ? "viewfinder" : "info.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    Color.accentColor,
+                    lineWidth: colorSchemeContrast == .increased ? 2 : 1
+                )
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("現在の選択対象")
+    }
+
+    private func targetText(_ text: String) -> some View {
+        Text(text)
+            .font(.body)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -31,6 +31,7 @@ final class VisionSession: ObservableObject {
     @Published private(set) var candidates: [VisionObservation.Candidate] = []
     @Published private(set) var candidatesReady = false
     @Published private(set) var candidateDiagnostics: VisionObservationCaptureService.Diagnostics?
+    @Published private(set) var focusTarget: VisionFocusTarget?
     /// Display name of the skill the gateway applied to the latest turn. Always
     /// shown: knowledge the user cannot see is knowledge they cannot correct.
     @Published private(set) var activeSkillName: String?
@@ -55,6 +56,7 @@ final class VisionSession: ObservableObject {
     private let client: GatewayVisionClient?
     private let outputLanguage: OutputLanguage
     private let preferredTargetPID: pid_t?
+    private let visualSelectionHint: Bool
     private let candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>
     /// Resolved separately from the candidate capture so the very first turn
     /// already carries the product identity; the candidate collection can take
@@ -75,12 +77,16 @@ final class VisionSession: ObservableObject {
         preferredTargetPID: pid_t? = nil,
         candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>? = nil,
         identityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>? = nil,
+        focusTarget: VisionFocusTarget? = nil,
+        visualSelectionHint: Bool = false,
         client: GatewayVisionClient? = GatewayVisionClient.make(),
         onRequestModeTransition: @escaping (AppMode, String) -> Bool = { _, _ in true },
         onRequestPanelClose: @escaping () -> Void = {}
     ) {
         self.attachment = attachment
         self.preferredTargetPID = preferredTargetPID
+        self.focusTarget = focusTarget
+        self.visualSelectionHint = visualSelectionHint && focusTarget == nil
         self.candidateCaptureTask = candidateCaptureTask ?? Task {
             VisionObservationCaptureService.Snapshot(
                 environment: nil,
@@ -318,6 +324,8 @@ final class VisionSession: ObservableObject {
                     candidates: fixedCandidates,
                     candidateDiagnostics: fixedDiagnostics,
                     identity: identity,
+                    focusTarget: self.focusTarget,
+                    visualSelectionHint: self.visualSelectionHint,
                     language: self.outputLanguage
                 )
                 VisionTrace.log(

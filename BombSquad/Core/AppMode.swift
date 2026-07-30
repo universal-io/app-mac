@@ -9,8 +9,6 @@ enum AppMode: Equatable, CustomStringConvertible {
     case idle
     /// Sending side: draft → review → deploy.
     case compose
-    /// Receiving side: selected text → readable version. Exit is copy-only.
-    case transform
     /// See → understand → respond: screenshot interpretation with actions.
     case vision
     /// Multi-turn screen navigation chat on top of a vision session.
@@ -25,7 +23,6 @@ enum AppMode: Equatable, CustomStringConvertible {
         switch self {
         case .idle: return "idle"
         case .compose: return "compose"
-        case .transform: return "transform"
         case .vision: return "vision"
         case .navigator: return "navigator"
         case .copilot: return "copilot"
@@ -47,15 +44,15 @@ enum AppMode: Equatable, CustomStringConvertible {
     func canTransition(to next: AppMode) -> Bool {
         if self == next { return false }
         switch (self, next) {
-        // Summon: selection present → transform, otherwise compose.
-        case (.idle, .compose), (.idle, .transform):
+        // Explicit compose summons (menu bar / hold-to-talk).
+        case (.idle, .compose):
             return true
-        // No selection and no field focused: summon goes straight to Vision,
-        // capturing the current screen first.
+        // Right-Shift summon resolves AX focus while capturing the screen.
         case (.idle, .capturing):
             return true
-        // Empty draft double-tap enters capture; capture yields vision.
-        case (.compose, .capturing), (.capturing, .vision):
+        // Capture resolves to Compose when the same AX snapshot found an
+        // editable field, or to Vision otherwise.
+        case (.compose, .capturing), (.capturing, .compose), (.capturing, .vision):
             return true
         // Cancelled capture returns to where it came from (or all the way out).
         case (.capturing(let returnTo), let target) where target == returnTo:

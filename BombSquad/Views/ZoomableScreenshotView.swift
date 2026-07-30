@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Interactive screenshot preview: pinch/scroll-pinch to zoom, hand-tool drag
-/// to pan, pen-tool drag to draw annotation rectangles, and an AI-provided
-/// highlight box that auto-zooms into view (the "here it is" moment).
+/// to pan, pen-tool drag to draw annotation rectangles, and a provided
+/// highlight box that auto-zooms into view.
 ///
 /// All geometry is anchored on normalized image coordinates (0-1, top-left
 /// origin); the view only converts to screen points at draw time, so
@@ -18,8 +18,14 @@ struct ZoomableScreenshotView: View {
     /// Normalized box the AI pointed at; setting it triggers an animated
     /// zoom-and-center so the user is taken to the spot.
     let highlight: CGRect?
+    let highlightTint: Color
+    let highlightLabel: String?
 
     private static let maxZoom: CGFloat = 8
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     @State private var image: NSImage?
     /// Committed zoom relative to aspect-fit (1 = whole image visible).
@@ -58,11 +64,15 @@ struct ZoomableScreenshotView: View {
             .gesture(dragGesture(in: container))
             .simultaneousGesture(magnifyGesture(in: container))
             .onTapGesture(count: 2) {
-                withAnimation(.spring(duration: 0.3)) { resetViewport() }
+                withAnimation(reduceMotion ? nil : .spring(duration: 0.3)) {
+                    resetViewport()
+                }
             }
             .onChange(of: highlight) { _, box in
                 guard let box else { return }
-                withAnimation(.spring(duration: 0.55)) { zoomTo(box, in: container) }
+                withAnimation(reduceMotion ? nil : .spring(duration: 0.55)) {
+                    zoomTo(box, in: container)
+                }
             }
             .onAppear { loadImage() }
             .onChange(of: url) { _, _ in
@@ -71,6 +81,11 @@ struct ZoomableScreenshotView: View {
             }
         }
         .accessibilityLabel("スクリーンショットプレビュー")
+        .accessibilityValue(
+            highlight == nil
+                ? "ハイライトなし"
+                : "\(highlightLabel ?? "案内位置")を枠で表示"
+        )
     }
 
     private func loadImage() {
@@ -189,7 +204,7 @@ struct ZoomableScreenshotView: View {
         // is smaller than the container on an axis it stays centered.
         let maxX = max(0, (layout.displaySize.width - container.width) / 2)
         let maxY = max(0, (layout.displaySize.height - container.height) / 2)
-        withAnimation(.spring(duration: 0.25)) {
+        withAnimation(reduceMotion ? nil : .spring(duration: 0.25)) {
             offset.width = min(max(offset.width, -maxX), maxX)
             offset.height = min(max(offset.height, -maxY), maxY)
         }
@@ -261,12 +276,55 @@ struct ZoomableScreenshotView: View {
                 .intersection(safeImageBounds)
             if !rect.isNull, rect.width > 0, rect.height > 0 {
                 RoundedRectangle(cornerRadius: min(8, rect.height / 4))
-                    .strokeBorder(Color.red, lineWidth: 3)
-                    .shadow(color: .red.opacity(0.55), radius: 4)
+                    .strokeBorder(
+                        highlightTint,
+                        lineWidth: colorSchemeContrast == .increased ? 5 : 3
+                    )
+                    .shadow(
+                        color: colorSchemeContrast == .increased
+                            ? .clear
+                            : highlightTint.opacity(0.55),
+                        radius: 4
+                    )
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
                     .allowsHitTesting(false)
-                    .transition(.opacity.combined(with: .scale(scale: 1.15)))
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .scale(scale: 1.15))
+                    )
+                if let highlightLabel {
+                    let labelX = min(
+                        max(rect.midX, safeImageBounds.minX + 40),
+                        safeImageBounds.maxX - 40
+                    )
+                    let preferredY = rect.minY - 12
+                    let labelY = preferredY >= safeImageBounds.minY + 10
+                        ? preferredY
+                        : min(rect.maxY + 12, safeImageBounds.maxY - 10)
+                    Text(highlightLabel)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .fixedSize()
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            reduceTransparency
+                                ? Color(nsColor: .windowBackgroundColor)
+                                : Color(nsColor: .controlBackgroundColor),
+                            in: Capsule()
+                        )
+                        .overlay {
+                            Capsule()
+                                .strokeBorder(
+                                    highlightTint,
+                                    lineWidth: colorSchemeContrast == .increased ? 2 : 1
+                                )
+                        }
+                        .position(x: labelX, y: labelY)
+                        .allowsHitTesting(false)
+                }
             }
         }
     }

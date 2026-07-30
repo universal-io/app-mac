@@ -49,7 +49,7 @@ struct GeneralSettingsView: View {
 
             Section("履歴") {
                 Toggle("Composeの送信履歴をこのMacに保存", isOn: $isHistoryEnabled)
-                Text("実際に送信した内容だけを最新 \(AppSettings.localHistoryLimit) 件保存します。Transformは保存しません。")
+                Text("実際に送信したComposeの内容だけを最新 \(AppSettings.localHistoryLimit) 件保存します。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

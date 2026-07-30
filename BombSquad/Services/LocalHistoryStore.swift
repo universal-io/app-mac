@@ -140,8 +140,8 @@ actor LocalHistoryStore: HistoryStore {
             ON history_entries(created_at DESC);
             """
         )
-        // Transform is intentionally ephemeral. Remove rows created by older
-        // versions and keep the local history contract Compose-only.
+        // Remove non-send rows created by older versions and keep the local
+        // history contract Compose-only.
         try execute("DELETE FROM history_entries WHERE mode <> 'compose' OR action <> 'sent';")
     }
 

@@ -27,7 +27,6 @@ import {
 } from "@/lib/server/ai-routing";
 import type {
   OutputLanguageCode,
-  ReviewMode,
   SituationalContextPayload,
 } from "@/lib/server/prompts";
 
@@ -75,8 +74,8 @@ export async function POST(request: Request): Promise<Response> {
     if (body.operation !== "review") {
       return errorResponse(400, "BAD_REQUEST", "operation must be 'review'.", requestId);
     }
-    if (mode !== "compose" && mode !== "transform") {
-      return errorResponse(400, "BAD_REQUEST", "mode must be 'compose' or 'transform'.", requestId);
+    if (mode !== "compose") {
+      return errorResponse(400, "BAD_REQUEST", "mode must be 'compose'.", requestId);
     }
     if (!draft) {
       return errorResponse(400, "BAD_REQUEST", "input.draft must not be empty.", requestId);
@@ -102,7 +101,6 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const engineInput = {
-      mode: mode as ReviewMode,
       draft,
       language: language as OutputLanguageCode,
       context: body.input?.context,

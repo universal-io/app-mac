@@ -15,7 +15,6 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 | 機能 | 一次モデル | 二次モデル |
 |---|---|---|
 | Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
-| Transform（選択テキストの解説） | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 先回り文案 | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
@@ -46,8 +45,8 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
 - Compose上部はブラウザ名やウインドウタイトルではなく、適用ツールと実際の参照元
   （画面画像／AX周辺テキスト）を表示する。詳細から取得テキストと保存範囲を確認でき、
   AX周辺テキストだけをそのセッションから除外できる。
-- 受信変換: 選択中の文章を読み取り、要点と返信案を表示
-- Vision: スクリーンショットを読み、質問への回答や次の操作位置を提示
+- Vision: スクリーンショットを読み、質問への回答や次の操作位置を提示。選択テキストまたは
+  選択要素がある時は、同じVisionパネルで対象を優先して説明
 - Copilot: ユーザーの操作後に画面を再取得し、目的に到達するまで次の一手を案内
 - 履歴: 実際に送信した内容のローカル履歴
 
@@ -81,23 +80,36 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
 設計根拠は[v3-tool-fit-plan.md](docs/v3-tool-fit-plan.md)、進捗と受け入れ条件は
 [マスタープラン R8](docs/universal-io-master-plan.md)を正本とする。
 
-### Focused Vision（Transform統合とclipboard非依存化）
+### Focused Vision（Transform統合とclipboard安全化）
 
 現行Transformは独立した製品surfaceとして残さず、選択テキスト・選択要素・位置を開始時点から
 持つVisionへ統合する。通常Visionが画面全体から質問で対象を絞るのに対し、Focused Visionは
 画面全体に加えて「この部分」を最初から指定した同じVision sessionで、初期解説、追加質問、
 Copilotへの移行を行う。
 
-この統合と同じプロジェクトで、起動判定の合成⌘C、Compose送信の合成⌘V、標準クリップボードの
-退避・復元を廃止する。選択取得とCompose入力はAccessibility APIを第一経路とし、選択取得失敗時は
-通常Vision／Composeへ安全に退化する。ComposeのAX入力が使えない場合だけclipboardを使わない
-Unicode入力を試し、それも失敗した時はユーザーが選べる明示コピーを提示する。バックグラウンドでは
-標準クリップボードを読み書きしない。
+この統合と同じプロジェクトAで、起動判定の合成⌘Cと標準クリップボードの退避・復元を廃止する。
+選択取得はAccessibility APIだけを使い、取得失敗時は通常Vision／Composeへ安全に退化する。
+Compose送信は主要アプリとの互換性を維持するため当面clipboard＋合成⌘Vを使うが、送信後に古い内容を
+復元しない。送信本文がclipboardへ残る、明示操作に限った予測可能な副作用とする。
+
+Composeのclipboard非依存化はプロジェクトBとして分離する。AX直接入力は戻り値だけでは成功を
+判定できず、汎用`AXValue`挿入やUnicode keyboard eventは安全なfallbackにならないため、
+リポジトリ外の短命probeでread-back、Undo、IME、改行を実測してから採否を決める。
 
 意図、目標構造、移行順、受け入れ条件は
 [focused-vision-plan.md](docs/focused-vision-plan.md)、進捗は
-[マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。実装完了までは現行Transformと
-`/api/ai/transform`が本番経路であり、目標仕様と混同しない。
+[マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。右Shiftの本番起動は
+Focused Visionへ切り替わり、独立Transformと`/api/ai/transform`は撤去済み。
+
+現在はA7の自動検証まで完了し、右Shift起動は同じAX focus snapshotから、選択対象ありならFocused Vision、
+選択なし＋編集可能ならCompose、それ以外なら通常Visionへ分岐する。snapshotと画面captureは
+パネル前面化前に並行し、起動時の合成⌘C、clipboard読取・復元、0.12秒固定待機は廃止済み。
+製品surfaceはCompose / Vision / Copilotの3つで、選択対象の理解もVisionの同一sessionとrouteを使う。
+Compose送信は本文をclipboardへ書いて合成⌘Vを1回送るが、過去内容は復元しない。Accessibilityを
+利用できない場合は本文を残し、手動⌘Vまたは設定を開く選択肢を明示する。
+macOSのunit test／署名なしDebug buildとWebのlint／型検査／production build、開始tagからの
+差分監査は通過済み。署名付きアプリによる実機Golden Pathsはmain統合前の残作業である。
+次の配布候補は`0.2.1` build `5`とし、公開中の`0.2.0` build `4`とは別の不変成果物として扱う。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -123,7 +135,7 @@ Unicode入力を試し、それも失敗した時はユーザーが選べる明�
 
 - 入力履歴はComposeで実際に送信した原文と最終文だけを、ログイン中のユーザー専用領域へ
   最新100件保存する。
-  Transformの選択文、解説、返信案、コピー結果は履歴へ保存しない。
+  Focused Visionの選択内容、画面画像、解説、会話は履歴へ保存しない。
 - 未送信のCompose下書きもユーザー単位でこのMacへ保存する。送信した下書きは消去する。
 - 履歴・下書きはSupabase user IDごとに分離する。ログアウト時はローカルDBを閉じ、
   別アカウントへ内容を表示・注入・同期しない。旧版の未分離データは、起動時に復元できた既存
@@ -165,7 +177,6 @@ macOS アプリは AI プロバイダーを直接呼びません。認証済み�
 |---|---|---|
 | 入力レビュー | `ComposeSession` / `GatewayReviewClient` | `POST /api/ai/review` |
 | 音声入力 | `GatewayTranscriber` | `POST /api/ai/transcribe` |
-| 受信変換 | `TransformSession` / `GatewayTransformClient` | `POST /api/ai/transform` |
 | Vision / Copilot | `VisionSession` / `GatewayVisionClient` | `POST /api/ai/vision` |
 | 先回り文案 | `ComposeSession` / `GatewaySuggestClient` | `POST /api/ai/suggest` |
 
@@ -225,9 +236,10 @@ macOSはStripeも直接呼びません。Gatewayがホスト型Checkoutまたは
 ## 操作
 
 - 右 Shift 1回: 入力パネル内のフォーカス切替（自分の下書き ⇄ 文案／レビュー結果）
-- 右 Shift 2回: 起動 / Vision開始 / 閉じる。起動時は、選択テキストがあれば受信変換、編集可能な
-  入力欄にフォーカスがあればコンポーズ、どちらも無ければ最初からVision（書き込む先が無いため）。
-  コンポーズからさらに右 Shift 2回でVisionへ。フォーカス判定は前面化する前に同期で行う
+- 右 Shift 2回: 起動 / Vision開始 / 閉じる。起動時は、AXで選択テキストまたは意味のある選択要素を
+  取得できればFocused Vision、選択なしで編集可能な入力欄ならCompose、それ以外は通常Vision。
+  AX snapshotと画面captureはパネル前面化前に並行し、clipboardへ触れない。Composeからさらに
+  右 Shift 2回で先読みcaptureを使ってVisionへ進む
 - 右 Shift 長押し: 音声入力
 - Esc: パネルを閉じる
 - 入力パネルの「レビュー」ボタン: 自分の下書きをレビュー
@@ -357,6 +369,9 @@ pushします。過去に「クライアントは正しいのに文案が出な�
 Vision / Copilot、画面文脈に基づく自動返信、共通AIウォームアップ、統一したCompose UIを
 製品機能として正式採用しました。
 
+Focused Visionとclipboard安全化を含む次の候補版は`0.2.1` build `5`である。Developer ID署名、
+notarization、本番GatewayでのGolden Pathsを完了するまでは公開URLへpromoteしない。
+
 現行公開版の `v0.1.1`（build `3`、ソース `7171d35`）は
 `https://dl.universal-io.com/releases/0.1.1/build-3/Universal-IO.dmg`、SHA-256
 `9b46618325f296bd78a7e48b75e383454f58ccb457d8617037dfacd887c2afca`として不変保存されています。
@@ -373,7 +388,7 @@ bash tools/release.sh
 bash tools/release.sh --publish
 
 # 検証後、公開URL（Universal-IO.dmg）を選んだビルドへ向ける＝公開確定
-bash tools/release.sh --promote 0.2.0 4
+bash tools/release.sh --promote 0.2.1 5
 ```
 
 **ビルドの公開と「公開ダウンロードにする」を分離する。** `--publish` は
