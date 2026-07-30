@@ -19,7 +19,7 @@
 | [supabase-setup.md](supabase-setup.md) | 認証・データ基盤の設定 |
 | [admin-dashboard-plan.md](admin-dashboard-plan.md) | 本番Admin Console |
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
-| [focused-vision-plan.md](focused-vision-plan.md) | TransformのVision統合、clipboard安全化、AX入力研究の仕様 |
+| [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9と、将来のAX直接入力研究（プロジェクトB）の記録 |
 
 ## 参照資料
 

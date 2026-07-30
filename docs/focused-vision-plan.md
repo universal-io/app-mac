@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: main／本番Gateway反映済み・Golden Paths待ち
+最終更新: 2026-07-30 ／ ステータス: プロジェクトA完了・`v0.2.1`正式公開済み
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -519,8 +519,8 @@ Vision identity取得を呼び出し元アプリが前面の間に開始し、AX
 panel分岐、ウォームアップを削除した。Gatewayの`/api/ai/transform`、transform engine、
 専用prompt、model routing、entitlement featureも削除し、`/api/ai/review`はComposeだけを
 受理する。製品surfaceとAPI正本をCompose / Vision / Copilotへ更新した。旧実装はrollback用にも
-残さず、必要な復帰は開始tagまたはGit履歴から行う。Focused Visionの実機確認項目は
-[manual-golden-paths.md](manual-golden-paths.md)に維持し、A7の統合検証で実施する。
+残さず、必要な復帰は開始tagまたはGit履歴から行う。Focused Visionの実機確認結果は
+[manual-golden-paths.md](manual-golden-paths.md)に記録した。
 
 ### A6 — clipboard復元撤去
 
@@ -538,8 +538,8 @@ panel分岐、ウォームアップを削除した。Gatewayの`/api/ai/transfor
 上書きする処理は存在しない。Accessibility拒否または⌘V event生成失敗時は、本文がclipboardへ
 コピー済みであることと対象欄で手動⌘Vすることをmodal alertで明示する。拒否時はAccessibility設定を
 開く選択肢も出す。未標準の`org.nspasteboard.TransientType`は実機証明が無いため付与していない。
-リッチテキスト、画像、ファイル、複数item、送信直後のユーザー⌘Cとの競合は
-[manual-golden-paths.md](manual-golden-paths.md)へ固定し、A7の署名付き実機検証で実施する。
+リッチテキスト、画像、ファイル、複数item、送信直後のユーザー⌘Cとの競合を含む継続的な回帰項目は
+[manual-golden-paths.md](manual-golden-paths.md)へ固定した。
 
 ### A7 — 統合検証と完了記録
 
@@ -558,20 +558,17 @@ panel分岐、ウォームアップを削除した。Gatewayの`/api/ai/transfor
 開始tag `pre-focused-vision-r9-20260730`からの追加ファイルはFocused Visionのmodel／AX取得層と
 対応unit testの4件だけで、恒久的な実験物や無関係な追加物は無い。
 
-残作業: §14と[manual-golden-paths.md](manual-golden-paths.md)の署名付き実機検証。権限、Keychain、
-実アプリのAX tree、paste処理、clipboard競合は署名なしCLI buildでは証明しない。これらが完了するまで
-プロジェクトA完了および公開可能とは判定しない。本番Gatewayを使うGolden Pathsのためのmain統合は
-先に行うが、DMGのpublish／promoteとは分離する。
-
-リリース候補（2026-07-30）: 次の候補版を`0.2.1` build `5`とする。公開中の`0.2.0` build `4`を
-上書きせず、Developer ID署名候補、本番GatewayでのGolden Paths、公開DMGの検証を順に行う。
-
-本番反映（2026-07-30）: Developer ID署名したUniversal binaryのappとDMGがApple notarizationで
-Acceptedとなり、staple、Gatekeeper評価に成功した。候補DMGのSHA-256は
+完了記録（2026-07-30）: Developer ID署名したUniversal binaryのappとDMGがApple notarizationで
+Acceptedとなり、staple、Gatekeeper評価に成功した。署名付きアプリの機能確認も問題なしと
+ユーザーから報告された。DMGのSHA-256は
 `637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`。R9をmain
 `6bc471a`へ統合してVercel productionへdeployし、現行4 AI routeのJSON応答と旧`transform`の
-404を確認した。XcodeのApple Development署名版による機能確認も問題なしと報告済み。
-DMGのpublish／promoteは行っていない。次の判定工程は本番Gatewayでの§14実機検証。
+404を確認した。検証した同一DMGを不変URLとversion aliasへpublishし、公開URLへpromoteした。
+公開URLから再取得したDMGでも署名、staple、Gatekeeper、`0.2.1` build `5`、Universal binary、
+SHA-256一致を再確認した。これにより§15の受け入れ条件を満たし、プロジェクトAを完了とする。
+
+残タスクはR9プロジェクトAにはない。B0/B1はComposeのclipboard非依存化を検討する独立した
+将来プロジェクトであり、`v0.2.1`の完了条件でもrollback理由でもない。
 
 ### B0 — AX入力probe（Aと独立）
 
@@ -667,4 +664,4 @@ B0の結果から§7.3の3案のどれかを選ぶ。採用方式、対象範囲
 - AX直接入力はプロジェクトBのprobe結果が出るまで未採用とする。
 - Unicode keyboard eventは製品fallbackにしない。
 - Focused Visionの画像利用によるコストと送信範囲の増加を意識的に受け入れ、実測後に最適化する。
-- 実装完了まで現行API契約を正とし、目標契約は本書で管理する。
+- 完成した本番API契約は[api-contract.md](api-contract.md)を正とし、本書はR9の決定記録とする。

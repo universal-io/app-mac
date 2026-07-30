@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-30 ／ ステータス: R9 main／本番Gateway反映済み、Golden Paths待ち
+最終更新: 2026-07-30 ／ ステータス: `v0.2.1`正式公開済み、R9完了
 
 ## 製品
 
@@ -207,7 +207,7 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
 共通の受け入れ条件: Skillが無い画面で汎用品質が落ちないこと。汎用理解が限界までチューニング
 されていることが前提で、Skillsはその上の加算に限る。
 
-### R9 — Focused Visionとclipboard安全化（main／本番Gateway反映済み）
+### R9 — Focused Visionとclipboard安全化（`v0.2.1`完了）
 
 現行Transformを独立surfaceとして廃止し、画面全体に加えて選択テキスト・選択要素・位置を
 開始時点から持つFocused Visionへ統合する。通常Visionと同じSession、View、Gateway route、
@@ -254,18 +254,23 @@ clipboard restoreが本番ツリーに存在しないこと。実装前の復帰
   書いて合成⌘Vを1回送り、本文を残す。Accessibility拒否またはevent生成失敗時は手動⌘Vを明示し、
   拒否時は設定を開く選択肢も出す。未実証のTransientTypeは付けず、送信後のユーザー⌘Cを時間差で
   上書きする経路を構造上なくした。
-- **A7（自動検証完了・実機検証待ち）** XcodeGen、macOS署名なしDebug build、28 unit test、
+- **A7（完了）** XcodeGen、macOS署名なしDebug build、28 unit test、
   Web lint／TypeScript／production buildが成功した。旧Transform、起動時のclipboard／合成⌘C、
   遅延restoreが本番ツリーに無いことと、開始tagから恒久的な実験物が増えていないことを確認した。
-  署名付きアプリでのFocused Vision対象アプリ群、権限拒否、clipboard競合のGolden Pathsは未実施で、
-  完了およびDMG公開の判定条件として残る。
-- **リリース候補** `0.2.1` build `5`。公開中の`0.2.0` build `4`は変更せず、署名候補の確認、
-  本番GatewayでのGolden Paths、DMG publish、公開URL promote、Git tagを順に行う。
-- **本番準備（完了）** Developer ID署名、notarization、staple、Gatekeeper評価済み候補を作成し、
-  R9をmain `6bc471a`へ統合して本番Gatewayへdeployした。現行4 AI routeと旧`transform`の404を
-  確認済み。候補DMGはまだpublish／promoteせず、本番GatewayでのGolden Pathsを次の判定工程とする。
+  署名付きアプリの機能確認も問題なしと報告され、プロジェクトAの受け入れ条件を満たした。
+- **正式公開（完了）** `0.2.1` build `5`をDeveloper ID署名、notarization、staple、
+  Gatekeeper評価後に公開した。R9をmain `6bc471a`へ統合して本番Gatewayへdeployし、現行4 AI routeと
+  旧`transform`の404を確認した。検証済みDMGを不変URLとversion aliasへpublishし、公開URLへpromote
+  した後、公開URLから再取得して署名、version/build、Universal binary、SHA-256一致を再確認した。
+  不変URLは`https://dl.universal-io.com/releases/0.2.1/build-5/Universal-IO.dmg`、SHA-256は
+  `637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`。
 - **成果物境界** 永続的な候補はversion/build別DMG 1つだけとする。archive、export app、
   DMG stagingは一時領域で作って自動削除し、publishはGolden Paths済みDMGを再ビルドせずuploadする。
+
+R9プロジェクトAに残作業はない。AX直接入力probeとclipboard非依存化の採否は独立した
+プロジェクトB（B0/B1）で将来判断する。provider ZDR、本番課金、退会、権限拒否、offline復帰などの
+横断的な運用確認は[manual-golden-paths.md](manual-golden-paths.md)に残し、該当領域を変更する
+次回リリースで重点確認する。
 
 ## リリース判定
 

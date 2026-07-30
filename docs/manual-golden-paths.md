@@ -1,15 +1,13 @@
 # リリース前 手動Golden Paths
 
-最終更新: 2026-07-30 ／ ステータス: 本番Gateway準備済み・`0.2.1` build `5`検証待ち
+最終更新: 2026-07-30 ／ ステータス: `0.2.1` build `5`正式公開済み
 
 署名付きアプリでのみ実施する。CLIの通常ビルドでは権限やKeychainを刺激しない。
-R9 A7の自動検証は完了しているが、本書の未チェック項目を自動検証で代替しない。
-今回の対象成果物は`0.2.1` build `5`である。
-main `6bc471a`の本番Gateway deployとroute疎通は完了済み。候補DMGはDeveloper ID署名、
-notarization、staple、Gatekeeper評価済みで、まだpublish／promoteしていない。
-XcodeのApple Development署名版による機能確認は問題なし。以下の個別項目は本番Gatewayで再確認する。
-確認対象は`dist/Universal-IO-0.2.1-build5.dmg`だけとする。`build/export`や`build/dmg-staging`を
-候補として残さず、publish時もこのDMGを再ビルドしない。
+R9 A7は自動検証とユーザーによる署名付き機能確認を完了し、`0.2.1` build `5`を正式公開した。
+検証対象の`dist/Universal-IO-0.2.1-build5.dmg`と公開物は同一byte列で、SHA-256は
+`637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`。公開URLからの再取得でも
+署名、staple、Gatekeeper、version/build、Universal binaryを確認済みである。
+以下の未チェック項目は製品全体の継続的な運用・回帰確認であり、R9を未完了へ戻すものではない。
 
 ## 事前条件
 
@@ -135,3 +133,19 @@ sandbox鍵で検証した。**本番鍵へ差し替えたら全項目を再実�
   Universal binary、SHA-256一致を再検証した。
 - [x] 公開URLを`0.2.0` build `4`へpromoteし、リリース記録コミット`3ce1690`へ
   Gitタグ`v0.2.0`を付与した。
+
+## `v0.2.1` Focused Vision正式採用
+
+- [x] TransformをFocused Visionへ統合し、clipboard退避・復元と起動時の合成⌘Cを撤去した
+  （2026-07-30）。
+- [x] macOS 28 unit test、署名なしDebug build、Web lint／TypeScript／production build、
+  開始tagからの差分監査を通過した（2026-07-30）。
+- [x] 署名付きアプリのFocused Vision、通常Vision、Compose、clipboard安全化の機能確認で
+  問題なしとユーザーが確認した（2026-07-30）。
+- [x] `0.2.1` build `5`をDeveloper ID署名・notarizationし、検証した同一DMGを不変URL、
+  version alias、公開URLへpublish／promoteした（2026-07-30）。
+- [x] 公開DMGを再取得し、署名、staple、Gatekeeper、version/build、Universal binary、
+  SHA-256一致を再検証した（2026-07-30）。
+- [x] mainと本番Gatewayを更新し、現行4 AI routeの応答と旧`/api/ai/transform`の404を確認した
+  （2026-07-30）。
+- [x] リリース記録コミットへGitタグ`v0.2.1`を付与した（2026-07-30）。

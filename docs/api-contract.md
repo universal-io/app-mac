@@ -1,11 +1,11 @@
 # Universal I/O Gateway API契約
 
-最終更新: 2026-07-30 ／ ステータス: 現行（R9本番Gateway反映済み）
+最終更新: 2026-07-30 ／ ステータス: 現行（`v0.2.1`正式公開済み）
 
 R9 A7でproduction buildのroute一覧とmacOSクライアントを再照合し、AI endpointが
 `review`、`suggest`、`transcribe`、`vision`の4つだけであることを確認した。
-旧`transform` routeと互換endpointは存在しない。署名付き実機での応答確認は
-[manual-golden-paths.md](manual-golden-paths.md)の未完了項目として残す。
+旧`transform` routeと互換endpointは存在しない。署名付きアプリによる本番機能確認も完了し、
+Focused Visionは`0.2.1` build `5`で正式採用した。
 
 2026-07-30にmain `6bc471a`を本番へdeployし、認証なしprobeで現行4 routeが共通JSON
 `UNAUTHENTICATED`を返し、旧`/api/ai/transform`が404であることを確認した。

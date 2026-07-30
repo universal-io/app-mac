@@ -101,19 +101,18 @@ Composeのclipboard非依存化はプロジェクトBとして分離する。AX�
 [マスタープラン R9](docs/universal-io-master-plan.md)を正本とする。右Shiftの本番起動は
 Focused Visionへ切り替わり、独立Transformと`/api/ai/transform`は撤去済み。
 
-現在はA7の自動検証まで完了し、右Shift起動は同じAX focus snapshotから、選択対象ありならFocused Vision、
+R9プロジェクトAは完了し、右Shift起動は同じAX focus snapshotから、選択対象ありならFocused Vision、
 選択なし＋編集可能ならCompose、それ以外なら通常Visionへ分岐する。snapshotと画面captureは
 パネル前面化前に並行し、起動時の合成⌘C、clipboard読取・復元、0.12秒固定待機は廃止済み。
 製品surfaceはCompose / Vision / Copilotの3つで、選択対象の理解もVisionの同一sessionとrouteを使う。
 Compose送信は本文をclipboardへ書いて合成⌘Vを1回送るが、過去内容は復元しない。Accessibilityを
 利用できない場合は本文を残し、手動⌘Vまたは設定を開く選択肢を明示する。
 macOSのunit test／署名なしDebug buildとWebのlint／型検査／production build、開始tagからの
-差分監査は通過済み。署名付きアプリによる実機Golden PathsはDMG公開前の残作業である。
-次の配布候補は`0.2.1` build `5`とし、公開中の`0.2.0` build `4`とは別の不変成果物として扱う。
-R9はmainの`6bc471a`へ統合し、本番Gatewayへdeploy済み。現行4 AI routeの応答と
-旧`/api/ai/transform`の404を確認した。候補DMGはDeveloper ID署名、notarization、staple、
-Gatekeeper評価済みで、SHA-256は
-`637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`。公開はまだ行っていない。
+差分監査に加え、署名付きアプリの機能確認を通過した。R9はmainの`6bc471a`へ統合し、本番Gatewayへ
+deploy済み。現行4 AI routeの応答と旧`/api/ai/transform`の404を確認した。`0.2.1` build `5`の
+Developer ID署名、notarization、staple、Gatekeeper評価を完了し、検証した同一byte列を正式公開した。
+公開URLからの再取得でも署名、version/build、Universal binary、SHA-256
+`637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`の一致を確認済みである。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -367,17 +366,17 @@ pushします。過去に「クライアントは正しいのに文案が出な�
 
 ## リリース運用
 
-現行の正式版は `v0.2.0`（build `4`、バイナリソース `ce74d12`）です。配布DMGは
-`https://dl.universal-io.com/releases/0.2.0/build-4/Universal-IO.dmg`、SHA-256は
-`98f14799181b45933d5e77df0a55aebbf7f65d9be3a0d87748e0b97551e093c7`です。
-Vision / Copilot、画面文脈に基づく自動返信、共通AIウォームアップ、統一したCompose UIを
-製品機能として正式採用しました。
+現行の正式版は `v0.2.1`（build `5`、バイナリソース `893c92a`）です。Focused Visionと
+clipboard安全化を正式採用し、配布DMGは
+`https://dl.universal-io.com/releases/0.2.1/build-5/Universal-IO.dmg`、公開ダウンロードは
+`https://dl.universal-io.com/Universal-IO.dmg`、SHA-256は
+`637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`です。
 
-Focused Visionとclipboard安全化を含む次の候補版は`0.2.1` build `5`である。Developer ID署名、
-notarizationと本番Gatewayへのdeployは完了した。Golden Pathsを完了するまではDMGをpublishせず、
-公開URLへpromoteしない。
+前版の `v0.2.0`（build `4`、バイナリソース `ce74d12`）は
+`https://dl.universal-io.com/releases/0.2.0/build-4/Universal-IO.dmg`、SHA-256
+`98f14799181b45933d5e77df0a55aebbf7f65d9be3a0d87748e0b97551e093c7`として不変保存されています。
 
-現行公開版の `v0.1.1`（build `3`、ソース `7171d35`）は
+さらに前の `v0.1.1`（build `3`、ソース `7171d35`）は
 `https://dl.universal-io.com/releases/0.1.1/build-3/Universal-IO.dmg`、SHA-256
 `9b46618325f296bd78a7e48b75e383454f58ccb457d8617037dfacd887c2afca`として不変保存されています。
 
@@ -410,6 +409,18 @@ Developer ID export後の`.app`、DMG stagingはOSの一時ディレクトリで
 スクリプト終了時に削除する。同じversion/buildの候補DMGがすでにある場合は上書きせず停止する。
 `--publish`はこの既存DMGの署名、staple、Gatekeeper評価を再確認して同じbyte列をuploadするため、
 Golden Pathsで確認したものと公開物が取り違わされない。
+
+### 残タスク（`v0.2.1`公開後）
+
+R9プロジェクトAに残作業はない。Composeをclipboard非依存にできるかを調べるAX直接入力probeと
+製品判断は、R9から分離した
+[プロジェクトB](docs/focused-vision-plan.md)（B0/B1）として将来実施する。現行の
+clipboard＋合成⌘Vは、probeでread-back、Undo、IME、改行まで安全性を証明するまでは正式仕様として
+維持する。
+
+リリース全体の運用確認には、providerのZDR確認、本番課金、退会、権限拒否、offline復帰など
+[manual-golden-paths.md](docs/manual-golden-paths.md)に未チェック項目がある。これらはR9を
+未完了へ戻すものではないが、該当機能や運用を変更する次回リリースで重点確認する。
 
 ここでいう「旧DMGを上書きしない」は配布サーバー上の履歴管理を指す。ユーザーが新しいDMGから
 Applicationsへコピーし、既存の `Universal IO.app` を置き換えるのは通常のアップデートである。
