@@ -386,10 +386,11 @@ notarizationと本番Gatewayへのdeployは完了した。Golden Pathsを完了�
 作成します。versionは公開単位で更新し、build番号は署名・配布ビルドごとに増加させます。
 
 ```bash
-# Developer ID署名、notarization、staple、Gatekeeper検証、DMG作成まで
+# Developer ID署名、notarization、staple、Gatekeeper検証、候補DMG作成まで
 bash tools/release.sh
 
-# 上記に加え、不変URLとversion aliasへアップロード（公開URLは変えない）
+# Golden Pathsで確認した同じ候補DMGを不変URLとversion aliasへアップロード
+# 再ビルドは行わず、公開URLも変えない
 bash tools/release.sh --publish
 
 # 検証後、公開URL（Universal-IO.dmg）を選んだビルドへ向ける＝公開確定
@@ -403,6 +404,12 @@ bash tools/release.sh --promote 0.2.1 5
 `https://dl.universal-io.com/Universal-IO.dmg` に固定でき、二度と編集不要**（公開の切替は promote で
 行う）。問題時は旧ビルドへ `--promote` し直せば公開を戻せる。公開成功後、そのソースコミットへ
 `v<version>` タグを付ける。
+
+永続的な候補成果物は`dist/Universal-IO-<version>-build<build>.dmg`の1つだけとする。archive、
+Developer ID export後の`.app`、DMG stagingはOSの一時ディレクトリで作り、成功・失敗にかかわらず
+スクリプト終了時に削除する。同じversion/buildの候補DMGがすでにある場合は上書きせず停止する。
+`--publish`はこの既存DMGの署名、staple、Gatekeeper評価を再確認して同じbyte列をuploadするため、
+Golden Pathsで確認したものと公開物が取り違わされない。
 
 ここでいう「旧DMGを上書きしない」は配布サーバー上の履歴管理を指す。ユーザーが新しいDMGから
 Applicationsへコピーし、既存の `Universal IO.app` を置き換えるのは通常のアップデートである。

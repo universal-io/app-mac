@@ -264,6 +264,8 @@ clipboard restoreが本番ツリーに存在しないこと。実装前の復帰
 - **本番準備（完了）** Developer ID署名、notarization、staple、Gatekeeper評価済み候補を作成し、
   R9をmain `6bc471a`へ統合して本番Gatewayへdeployした。現行4 AI routeと旧`transform`の404を
   確認済み。候補DMGはまだpublish／promoteせず、本番GatewayでのGolden Pathsを次の判定工程とする。
+- **成果物境界** 永続的な候補はversion/build別DMG 1つだけとする。archive、export app、
+  DMG stagingは一時領域で作って自動削除し、publishはGolden Paths済みDMGを再ビルドせずuploadする。
 
 ## リリース判定
 
