@@ -7,7 +7,11 @@ final class AXFocusSnapshotTests: XCTestCase {
 
         XCTAssertEqual(
             AXFocusLaunchDecision.destination(for: snapshot),
-            .focusedVision
+            .vision
+        )
+        XCTAssertEqual(
+            AXFocusLaunchDecision.selectionExtension(for: snapshot)?.text,
+            "選択部分"
         )
     }
 
@@ -23,7 +27,7 @@ final class AXFocusSnapshotTests: XCTestCase {
         XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .vision)
     }
 
-    func testMeaningfulSelectedElementUsesFocusedVisionWithoutText() {
+    func testMeaningfulSelectedElementExtendsVisionWithoutText() {
         let snapshot = makeSnapshot(
             selectedText: nil,
             role: "AXButton",
@@ -32,7 +36,15 @@ final class AXFocusSnapshotTests: XCTestCase {
 
         XCTAssertEqual(
             AXFocusLaunchDecision.destination(for: snapshot),
-            .focusedVision
+            .vision
+        )
+        XCTAssertEqual(
+            AXFocusLaunchDecision.selectionExtension(for: snapshot)?.kind,
+            .accessibilityElement
+        )
+        XCTAssertEqual(
+            AXFocusLaunchDecision.selectionExtension(for: snapshot)?.structures.first?.role,
+            "AXButton"
         )
     }
 
@@ -207,6 +219,27 @@ final class AXFocusSnapshotTests: XCTestCase {
         )
 
         XCTAssertNil(snapshot.selection)
+    }
+
+    func testSecureDescendantPreventsDocumentSelectionRead() {
+        XCTAssertFalse(
+            AXFocusSnapshotService.shouldReadDocumentSelection(
+                sawSecureDescendant: true,
+                completedTraversal: true
+            )
+        )
+        XCTAssertTrue(
+            AXFocusSnapshotService.shouldReadDocumentSelection(
+                sawSecureDescendant: false,
+                completedTraversal: true
+            )
+        )
+        XCTAssertFalse(
+            AXFocusSnapshotService.shouldReadDocumentSelection(
+                sawSecureDescendant: false,
+                completedTraversal: false
+            )
+        )
     }
 
     private func makeSnapshot(

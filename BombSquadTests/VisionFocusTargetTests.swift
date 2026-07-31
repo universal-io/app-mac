@@ -227,6 +227,66 @@ final class VisionSelectionContextTests: XCTestCase {
         XCTAssertEqual(frames.count, 2)
     }
 
+    func testVisionRequestDiffersOnlyBySelectionExtension() throws {
+        let attachment = attachment()
+        let turns = [VisionTurn(role: .assistant, text: "直前の説明")]
+        let candidates = [VisionObservation.Candidate(
+            id: "candidate-1",
+            source: "ax",
+            role: "AXButton",
+            label: "返信",
+            rect: CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.1),
+            parentLabel: "メール",
+            states: ["enabled"]
+        )]
+        let diagnostics = VisionObservationCaptureService.Diagnostics(
+            elapsedMs: 12,
+            visitedNodes: 34,
+            candidateCount: 1,
+            truncatedReason: nil
+        )
+        let identity = VisionObservationCaptureService.TargetIdentity(
+            appName: "Chrome",
+            bundleID: "com.google.Chrome",
+            windowTitle: "Gmail",
+            host: "mail.google.com"
+        )
+        let selection = VisionSelectionContext(
+            kind: .text,
+            text: "件名と本文の選択全文",
+            structures: [],
+            frames: [],
+            acquisitionCompleteness: .complete,
+            acquisition: .axDocumentSelection,
+            captureVisibility: .unknown
+        )
+        let ordinary = GatewayVisionClient.requestInput(
+            attachment: attachment,
+            imageBase64: "same-image",
+            mediaType: "image/png",
+            question: nil,
+            turns: turns,
+            candidates: candidates,
+            candidateDiagnostics: diagnostics,
+            identity: identity
+        )
+        var focusedWithoutExtension = GatewayVisionClient.requestInput(
+            attachment: attachment,
+            imageBase64: "same-image",
+            mediaType: "image/png",
+            question: nil,
+            turns: turns,
+            candidates: candidates,
+            candidateDiagnostics: diagnostics,
+            identity: identity,
+            selection: selection
+        )
+        let selectionPayload = focusedWithoutExtension.removeValue(forKey: "selection")
+
+        XCTAssertNotNil(selectionPayload)
+        XCTAssertTrue(NSDictionary(dictionary: ordinary).isEqual(to: focusedWithoutExtension))
+    }
+
     func testVisualOnlyWirePayloadHasNoSyntheticText() throws {
         let payload = try XCTUnwrap(
             VisionSelectionContext.visualOnly().wirePayload(for: attachment())

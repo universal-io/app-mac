@@ -1,6 +1,6 @@
 # リリース前 手動Golden Paths
 
-最終更新: 2026-07-30 ／ ステータス: `0.2.1` build `5`正式公開済み
+最終更新: 2026-08-01 ／ ステータス: `0.2.1` build `5`正式公開済み／R10 C6検証中
 
 署名付きアプリでのみ実施する。CLIの通常ビルドでは権限やKeychainを刺激しない。
 R9 A7は自動検証とユーザーによる署名付き機能確認を完了し、`0.2.1` build `5`を正式公開した。
@@ -149,3 +149,31 @@ sandbox鍵で検証した。**本番鍵へ差し替えたら全項目を再実�
 - [x] mainと本番Gatewayを更新し、現行4 AI routeの応答と旧`/api/ai/transform`の404を確認した
   （2026-07-30）。
 - [x] リリース記録コミットへGitタグ`v0.2.1`を付与した（2026-07-30）。
+
+## R10 Selection Extension C6候補検証
+
+`feat/vision-selection-extension`の候補検証である。`origin/main`／本番Gatewayはまだ`v0.2.1`なので、
+以下の実機項目は後方互換Gatewayを先行配備してから署名付き候補版で行う。配備前の本番回答を
+R10の合否に使わない。
+
+- [x] macOS 41 unit test、Gateway 14 test、Web lint／TypeScript／production build、署名なしDebug
+  buildを通過した（2026-08-01）。
+- [x] 通常VisionとSelection Extension付きrequestを比較し、`selection`以外の画像、turns、
+  candidates、diagnostics、identityが同一であることを固定した（2026-08-01）。
+- [x] 開始tag差分に別endpoint、別model route、長期flag、短命probe、起動時clipboard／合成⌘Cの
+  再混入が無いことを確認した（2026-08-01）。
+- [x] document textを読む前にsecure descendantを検査し、存在時はdocument selectionを読まない
+  順序をtestで固定した（2026-08-01）。
+- [ ] Chrome Gmailで件名＋複数node本文を選び、カードと回答が全文を扱い、件名と選択状態の報告だけで
+  終わらない。
+- [ ] Safari Gmailで公開AX本文が取れない時、同じVisionが`visualOnly`へ安全に退化する。
+- [ ] TextEdit、Apple Mail、Chrome Slack、Electron SlackまたはVS Codeで、単一／複数node、
+  編集欄、順方向／逆方向、viewport内／画面外の選択取得または安全な退化を確認する。
+- [ ] VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionで
+  選択全文カード、展開Button、複数枠、読み上げ順を確認する。
+- [ ] Accessibility拒否／画面収録拒否、secure field混在、prompt模倣本文、複数display、capture外だけの
+  selectionで安全な退化と事実に沿う表示を確認する。
+- [ ] リッチテキスト、画像、ファイル、複数itemをclipboardへ置き、通常Vision、Selection Extension、
+  Copilotの前後でchangeCountと全flavorが変わらないことを確認する。
+- [ ] 同一端末・同一対象の`v0.2.1`と候補版で右ShiftからGateway dispatchまでを計測し、warm時
+  p50 +50ms以内、p95 +150ms以内を確認する。cold Chromiumは既存2秒deadlineを超えない。

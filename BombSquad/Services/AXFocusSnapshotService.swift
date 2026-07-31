@@ -46,7 +46,6 @@ struct AXFocusSnapshot: Equatable {
 /// exhaustively tested and the production summon path observes one focus state.
 enum AXFocusLaunchDecision {
     enum Destination: Equatable {
-        case focusedVision
         case compose
         case vision
     }
@@ -54,16 +53,37 @@ enum AXFocusLaunchDecision {
     static func destination(for snapshot: AXFocusSnapshot) -> Destination {
         guard !snapshot.isSecureField else { return .vision }
         if snapshot.selection != nil || isMeaningfulSelectedElement(snapshot) {
-            return .focusedVision
+            return .vision
         }
         return snapshot.isEditable ? .compose : .vision
+    }
+
+    /// Adds selection detail to the same Vision destination. Text returned by
+    /// AX remains authoritative; a selected UI element contributes its own
+    /// structure, and unresolved non-secure captures may use visual fallback.
+    static func selectionExtension(for snapshot: AXFocusSnapshot) -> VisionSelectionContext? {
+        guard !snapshot.isSecureField else { return nil }
+        if let selection = snapshot.selection { return selection }
+        if isMeaningfulSelectedElement(snapshot) {
+            return VisionSelectionContext.accessibilityElement(
+                role: snapshot.role,
+                label: snapshot.label,
+                frame: snapshot.frame
+            )
+        }
+        return shouldLookForVisualSelection(in: snapshot)
+            ? .visualOnly(captureVisibility: .visible)
+            : nil
     }
 
     /// When a non-secure AX read produced no target, Vision may inspect the
     /// capture for a visible selection highlight. The prompt remains
     /// best-effort and falls back to ordinary full-screen reading.
     static func shouldLookForVisualSelection(in snapshot: AXFocusSnapshot) -> Bool {
-        guard destination(for: snapshot) == .vision, !snapshot.isSecureField else {
+        guard destination(for: snapshot) == .vision,
+              !snapshot.isSecureField,
+              snapshot.selection == nil,
+              !isMeaningfulSelectedElement(snapshot) else {
             return false
         }
         switch snapshot.status {
@@ -118,6 +138,13 @@ enum AXFocusSnapshotService {
         static let axMessagingTimeout: Float = 0.1
         static let maxAncestorLevels = 16
         static let perPassDeadline: TimeInterval = 1.0
+    }
+
+    static func shouldReadDocumentSelection(
+        sawSecureDescendant: Bool,
+        completedTraversal: Bool
+    ) -> Bool {
+        completedTraversal && !sawSecureDescendant
     }
 
     private struct Attempt {
@@ -311,29 +338,33 @@ enum AXFocusSnapshotService {
             let role = copyString(element, kAXRoleAttribute).value
             sawWebArea = sawWebArea || role == "AXWebArea"
 
-            let selectedTextRead = copyString(element, kAXSelectedTextAttribute)
-            if selectedTextRead.error == .cannotComplete {
-                status = .timedOut
-                break
-            }
-            if selectedTextRead.error == .invalidUIElement {
-                status = .invalidatedElement
-                break
-            }
-            if let text = normalizedSelectedText(selectedTextRead.value) {
-                let evidence = selectedTextEvidence(element, directText: text)
-                selectionCandidates.append(VisionSelectionCandidate(
-                    directText: text,
-                    role: role,
-                    label: label(for: element),
-                    containerFrame: copyFrame(element).value,
-                    selectionFrames: evidence.frame.map { [$0] } ?? [],
-                    scope: role == "AXWebArea" ? .document : (visited == 1 ? .focusedElement : .ancestor),
-                    depth: visited - 1,
-                    pass: pass,
-                    rangeEvidence: evidence.rangeEvidence,
-                    isSecure: false
-                ))
+            // Document text is read only after its descendants have been
+            // checked for secure fields in collectDocumentSelectionCandidates.
+            if role != "AXWebArea" {
+                let selectedTextRead = copyString(element, kAXSelectedTextAttribute)
+                if selectedTextRead.error == .cannotComplete {
+                    status = .timedOut
+                    break
+                }
+                if selectedTextRead.error == .invalidUIElement {
+                    status = .invalidatedElement
+                    break
+                }
+                if let text = normalizedSelectedText(selectedTextRead.value) {
+                    let evidence = selectedTextEvidence(element, directText: text)
+                    selectionCandidates.append(VisionSelectionCandidate(
+                        directText: text,
+                        role: role,
+                        label: label(for: element),
+                        containerFrame: copyFrame(element).value,
+                        selectionFrames: evidence.frame.map { [$0] } ?? [],
+                        scope: visited == 1 ? .focusedElement : .ancestor,
+                        depth: visited - 1,
+                        pass: pass,
+                        rangeEvidence: evidence.rangeEvidence,
+                        isSecure: false
+                    ))
+                }
             }
 
             let parentRead = copyElement(element, kAXParentAttribute)
@@ -465,36 +496,50 @@ enum AXFocusSnapshotService {
         guard let window = copyElement(appElement, kAXFocusedWindowAttribute).value else {
             return DocumentSelectionResult(candidates: [], visitedNodes: 0, sawWebArea: false)
         }
-        var candidates: [VisionSelectionCandidate] = []
+        var documentElements: [(element: AXUIElement, depth: Int)] = []
         var stack: [AXUIElement] = [window]
         var visited = 0
         var sawWebArea = false
+        var sawSecureDescendant = false
         while let element = stack.popLast(), visited < 256, Date() < deadline {
             visited += 1
             let subrole = copyString(element, kAXSubroleAttribute).value
-            if subrole == "AXSecureTextField" { continue }
+            if subrole == "AXSecureTextField" {
+                sawSecureDescendant = true
+                continue
+            }
             let role = copyString(element, kAXRoleAttribute).value
             if role == "AXWebArea" {
                 sawWebArea = true
-                let selectedTextRead = copyString(element, kAXSelectedTextAttribute)
+                documentElements.append((element, startingDepth + visited))
+            }
+            if let children = copyChildren(element) {
+                stack.append(contentsOf: children.reversed())
+            }
+        }
+        var candidates: [VisionSelectionCandidate] = []
+        let completedTraversal = stack.isEmpty && Date() < deadline
+        if shouldReadDocumentSelection(
+            sawSecureDescendant: sawSecureDescendant,
+            completedTraversal: completedTraversal
+        ) {
+            for document in documentElements where Date() < deadline {
+                let selectedTextRead = copyString(document.element, kAXSelectedTextAttribute)
                 if let text = normalizedSelectedText(selectedTextRead.value) {
-                    let evidence = selectedTextEvidence(element, directText: text)
+                    let evidence = selectedTextEvidence(document.element, directText: text)
                     candidates.append(VisionSelectionCandidate(
                         directText: text,
-                        role: role,
-                        label: label(for: element),
-                        containerFrame: copyFrame(element).value,
+                        role: "AXWebArea",
+                        label: label(for: document.element),
+                        containerFrame: copyFrame(document.element).value,
                         selectionFrames: evidence.frame.map { [$0] } ?? [],
                         scope: .document,
-                        depth: startingDepth + visited,
+                        depth: document.depth,
                         pass: pass,
                         rangeEvidence: evidence.rangeEvidence,
                         isSecure: false
                     ))
                 }
-            }
-            if let children = copyChildren(element) {
-                stack.append(contentsOf: children.reversed())
             }
         }
         return DocumentSelectionResult(

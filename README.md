@@ -169,7 +169,12 @@ Skill、会話、model routeへ任意`selection`だけを加える。旧fieldの
 adapterだけに残る。C5では同じVisionパネルへ選択全文カードを追加し、captureと交差する全frameを別々に
 表示する。短いAX labelをテキスト選択の見出しへ使わず、`visualOnly`だけを表面の取得状態として示す。
 acquisition、frame数、capture visibility、wire truncationは内容を含めず既存の処理情報へ置く。
-残るC6は実機golden path、性能、privacy、通常Vision回帰、開始tagからの差分を検証する最終工程である。
+C6のローカル自動検証では、通常Visionとの差分が`selection`だけであるrequest比較、単一intent、
+全文scope、prompt injection、legacy adapter、secure descendant、capture外、旧経路・privacy監査を固定し、
+macOS 41件、Gateway 14件、Web lint／TypeScript／production build、署名なしDebug buildが成功した。
+起動先enumもVisionへ一本化し、文字を伴わない選択要素をSelection Extensionへ保持する。
+ただし`origin/main`と本番Gatewayはまだ`v0.2.1`であり、新契約を解釈しない。C6完了にはGatewayの
+先行配備後、署名付き候補版で実機golden pathと同一端末の性能比較を行う必要がある。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 

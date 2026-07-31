@@ -349,9 +349,13 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   wire truncationは内容なしで既存の処理情報へ追加した。ネイティブButton、VoiceOver順序、Increase
   Contrast、Reduce Transparency、Reduce Motionへ対応し、presentationを含むmacOS unit test 39件が
   成功した。
-- **C6（未着手）** 自動／実機golden path、API移行、privacy、通常Vision回帰、開始tagからの差分を
-  検証する。warm時のGateway dispatch追加時間はp50 +50ms以内、p95 +150ms以内、cold時は
-  既存2秒deadlineを延長しない。正本を実装済み状態へ更新する。
+- **C6（進行中）** ローカル自動検証と差分監査を実施した。通常／Selection Extension requestの
+  selection以外の同一性、単一intent、全文scope、prompt injection、legacy adapter、secure descendant、
+  capture外を回帰testへ追加し、起動先を同じVisionへ一本化した。macOS 41件、Gateway 14件、Web lint、
+  TypeScript、production build、署名なしDebug buildが成功し、別endpoint、別model route、長期flag、
+  probe残骸、起動時clipboard／合成⌘Cの再混入が無いことを確認した。`origin/main`／本番Gatewayはまだ
+  `v0.2.1`なので、後方互換Gatewayの先行配備、署名付き候補版の実機golden path、同一端末でのwarm
+  p50／p95比較を残す。coldの2秒deadlineはコード・unit test上で維持している。
 
 受け入れ条件と詳細なcommit境界は[focused-vision-plan.md](focused-vision-plan.md)の
 プロジェクトCを正とする。R10はR9のclipboard安全化やTransform撤去を巻き戻さず、選択理解の

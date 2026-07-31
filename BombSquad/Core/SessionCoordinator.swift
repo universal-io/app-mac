@@ -269,12 +269,6 @@ final class SessionCoordinator {
         capture: CaptureCompletion
     ) {
         switch AXFocusLaunchDecision.destination(for: snapshot) {
-        case .focusedVision:
-            handleVisionCaptureCompletion(
-                capture,
-                composeSession: nil,
-                selection: snapshot.selection
-            )
         case .compose:
             visionIdentityTask?.cancel()
             visionIdentityTask = nil
@@ -292,9 +286,7 @@ final class SessionCoordinator {
             handleVisionCaptureCompletion(
                 capture,
                 composeSession: nil,
-                selection: AXFocusLaunchDecision.shouldLookForVisualSelection(in: snapshot)
-                    ? .visualOnly(captureVisibility: .visible)
-                    : nil
+                selection: AXFocusLaunchDecision.selectionExtension(for: snapshot)
             )
         }
     }

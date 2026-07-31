@@ -1000,6 +1000,17 @@ presentationをunit testで固定し、macOS全39件が成功した。各支援�
 
 コミット境界: Cの完了記録。main統合判断が可能な状態。
 
+進行記録（2026-08-01）: ローカル自動検証と開始tag差分監査を実施した。通常Vision requestと
+Selection Extension付きrequestの全fieldを比較し、`selection`を除けば画像、turns、candidates、
+diagnostics、identityを含めて同一であることをmacOS testへ固定した。Gatewayでは単一intent、
+全文scope、structure labelの非置換、structureなし全文、prompt injection、capture外、legacy adapterを
+14件で固定した。監査で残っていた`.focusedVision`起動先を削除し、同じ`.vision`へ任意selectionを
+加える構造へ一本化した。同時に文字を伴わない選択要素のextension欠落と、secure descendant確認前に
+document textを読み得る順序を修正した。macOS 41件、Web lint／TypeScript／production build、
+署名なしDebug buildが成功し、別endpoint、別model route、長期flag、短命probe、起動時clipboard／
+合成⌘Cの再混入は無い。`origin/main`と本番Gatewayはまだ`v0.2.1`のため、Gateway先行配備後の
+署名付き実機golden pathと、同一端末・同一対象でのwarm p50／p95比較は未実施であり、C6は未完了である。
+
 ## 14. 検証
 
 ### 自動検証
