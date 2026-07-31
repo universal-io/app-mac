@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-30 ／ ステータス: `v0.2.1`正式公開済み、R9完了
+最終更新: 2026-07-31 ／ ステータス: `v0.2.1`正式公開済み、R10設計確定・実装前
 
 ## 製品
 
@@ -42,6 +42,10 @@ macOS UI
 - 全AI routeのusage記録は共通処理で応答後に実行する。SSEも最終結果をクライアントへ返してから
   記録し、運用上のDB書き込みをユーザーの待ち時間から外す。
 - Visionは画像、同一captureの候補、会話を1回のVLM呼び出しへ渡す。
+- Focused Visionは別taskではなく`Vision Core + Selection Extension`とする。selectionは
+  ユーザーが明示した回答scopeで、画像、通常AX候補、identity、Skill、会話、Copilotを減らさず、
+  選択全文、関連する複数AX segment、複数frame、取得完全性を加える。selectionを除いた入力と
+  実行経路は通常Visionと同一でなければならない。
 - Composeの先回り文案は共通判断、ユーザーが確認したファクト、任意のアプリ文脈を独立した添付として
   渡す。ファクトはglobalと画面に効いているツールのscopeだけを注入し、固定Personaは持たない。
   最新メッセージの話者・宛先・行為主体を確定してから、現在のユーザー視点で文案を作る。
@@ -277,6 +281,50 @@ R9プロジェクトAに残作業はない。AX直接入力probeとclipboard非�
 プロジェクトB（B0/B1）で将来判断する。provider ZDR、本番課金、退会、権限拒否、offline復帰などの
 横断的な運用確認は[manual-golden-paths.md](manual-golden-paths.md)に残し、該当領域を変更する
 次回リリースで重点確認する。
+
+### R10 — Vision Selection Extension（設計確定・実装前）
+
+`v0.2.1`はFocused Visionを同じSession、View、Gateway route、モデルへ統合したが、選択取得は
+focused elementの最も近い単一AX祖先で終了し、Gatewayはselectionがあると通常Visionの初期taskを
+selection専用taskへ置換する。初回turnの通常AX候補も空になるため、複数nodeにまたがる選択全文、
+スクリーンショット、画面構造、Skillを共同で使うという製品要件を満たさない。
+
+R10では次を不変条件とする。
+
+```text
+Focused Vision = Vision Core + Selection Extension
+Focused Vision - Selection Extension = 通常Vision
+```
+
+selection全文はユーザーが明示した回答scopeとして保持する。screenshot、AX／画面構造、identity、
+Skillは引き続き第一級の観測であり、selectionの意味、関係、操作可能性、見た目、配置を共同で理解する。
+複数segmentを先頭断片や単一role／frameへ潰さない。取得を証明できなければ`partial`、
+画像上でだけ観測できれば`visualOnly`として不完全性を明示する。
+
+復帰点はtag `pre-vision-selection-extension-20260731`、commit `dcac535`。作業branchは
+`feat/vision-selection-extension`。同じ`VisionSession`、`/api/ai/vision`、model route、
+fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、長期feature flagは作らない。
+現行`v0.2.1`とのAPI互換adapterは移行用であり、意味経路を二重化しない。
+
+- **C0（完了）** 要件、目標契約、復帰点、C1〜C6のcommit境界と受け入れ条件を正本へ固定した。
+- **C1（未着手）** リポジトリ外のread-only AX probeでChrome / Safari上のGmail、
+  Electron版Slack、TextEdit、Apple Mailの公開range能力を計測する。複数node、逆方向drag、
+  画面外、編集可能／read-onlyを含め、結果だけを正本へ記録する。
+- **C2（未着手）** document root／text containerから全文、ordered segments、複数frame、
+  completenessを解決する`VisionSelectionContext`とunit testを追加する。本番入口はまだ切り替えない。
+- **C3（未着手）** Gatewayへ後方互換な`selection`契約と共通内部型を追加する。Vision Core promptを
+  先に構築してselectionを追記し、selection有無でimage、candidates、identity、Skill、turnsが
+  変わらないことをsnapshot testで固定する。
+- **C4（未着手）** 右Shift起動を`VisionSession(selection:)`へ切り替え、単一focus targetと
+  selection専用taskを同じ変更で削除する。AX取得不能時も`visualOnly` extensionとして同じ経路を使う。
+- **C5（未着手）** 同じVisionパネルへ全文、全frame、複数segment、取得完全性を表示し、
+  VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionを確認する。
+- **C6（未着手）** 自動／実機golden path、API移行、privacy、通常Vision回帰、開始tagからの差分を
+  検証し、正本を実装済み状態へ更新する。
+
+受け入れ条件と詳細なcommit境界は[focused-vision-plan.md](focused-vision-plan.md)の
+プロジェクトCを正とする。R10はR9のclipboard安全化やTransform撤去を巻き戻さず、選択理解の
+データモデルとprompt合成だけを正す。
 
 ## リリース判定
 

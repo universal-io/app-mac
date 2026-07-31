@@ -25,8 +25,9 @@ Rules:
 - If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `main`（`feature/copilot-accuracy` は 2026-07-14 に main へ統合済み。以後の
-  修正は短命の fix/feat ブランチ → main マージで進行）
+- `feat/vision-selection-extension`（復帰点は
+  `pre-vision-selection-extension-20260731` / `dcac535`。Focused Visionを
+  通常Visionへの純粋なselection extensionへ改修する短命ブランチ）
 
 Current operational note:
 - 2026-07-18: Vision/Copilotを単一の本番経路へ統合。旧Navigator、実験名、

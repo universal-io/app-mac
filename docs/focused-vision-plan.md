@@ -1,11 +1,25 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-30 ／ ステータス: プロジェクトA完了・`v0.2.1`正式公開済み
+最終更新: 2026-07-31 ／ ステータス: プロジェクトA完了・プロジェクトC設計確定／実装前
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
 進捗は[マスタープラン R9](universal-io-master-plan.md)、現行実装のAPI契約は
 [api-contract.md](api-contract.md)を正とする。独立Transform契約はA5で撤去済み。
+
+2026-07-31に、`v0.2.1`の選択取得と初期理解が「最も近い単一AX要素」を事実上の対象とし、
+通常Visionの初期入力へ情報を加えるのではなく別taskへ置き換えていたことを確認した。
+プロジェクトCではFocused Visionを次の式どおりの**純粋な加算**へ改修する。
+
+```text
+Focused Vision = Vision Core + Selection Extension
+Focused Vision - Selection Extension = 通常Vision
+```
+
+選択はユーザーが明示した対象範囲であり、スクリーンショット、AX／画面構造、Skillはその範囲を
+共同で理解する第一級の観測である。選択だけで画面理解を置換せず、逆にAX要素や視覚的な目立ち方で
+選択全文を先頭断片へ縮約しない。プロジェクトAの完了記録は当時の実装履歴として残すが、
+§3〜§6の目標仕様と§18以降のプロジェクトCが今後の実装判断に優先する。
 
 ## 0. 復帰点と変更管理
 
@@ -33,6 +47,18 @@ git switch -c recover/pre-focused-vision pre-focused-vision-r9-20260730
 
 長期feature flag、二重の本番route、失敗したprobeやfixtureを完成後のツリーへ残さない。
 プロジェクトBの実験物はリポジトリ外に置き、結果だけを本書へ記録する。
+
+プロジェクトCの復帰点は次で固定する。
+
+```text
+tag:    pre-vision-selection-extension-20260731
+commit: dcac535
+branch: feat/vision-selection-extension
+```
+
+このcommitは`v0.2.1`公開後のpanel直接操作・情報表示改善を含み、selection extensionの設計・実装を
+含まない。Cの変更は短命ブランチでマイルストーンごとにコミットし、失敗したprobe、二重prompt、
+長期flagを本番ツリーへ残さない。
 
 ## 1. なぜやるか
 
@@ -109,17 +135,32 @@ A4改修前の右Shift 2回は、Compose、Transform、Visionのどれを開く�
 2. **Vision** — 現在の画面または選択対象を理解し、質問へ答える。
 3. **Copilot** — Visionの理解を引き継ぎ、ユーザー操作後に画面を再評価して次の一手を示す。
 
-Focused Visionは4つ目のsurfaceではない。Vision sessionを開始する際の任意の
-`focus target`である。Transform、受信変換、選択変換という製品名は廃止する。
+Focused Visionは4つ目のsurfaceでも別taskでもない。通常Visionが必ず使うcapture、画面全体の
+視覚理解、AX候補、identity、Skill、会話、Copilotを一切減らさず、ユーザーが明示した選択情報を
+任意の`Selection Extension`として追加した同じVision sessionである。
+Transform、受信変換、選択変換という製品名は廃止する。
 
 ```text
 VisionSession
-  capture: 必須
-  focusTarget: 任意
-    ├─ selectedText
-    ├─ accessibilityElement
-    └─ region
+  Vision Core（常に同じ）
+    ├─ capture
+    ├─ visual understanding
+    ├─ AX screen structure / action candidates
+    ├─ product identity
+    ├─ Skill
+    ├─ turns
+    └─ Copilot
+  Selection Extension（任意）
+    ├─ selected text
+    ├─ ordered segments
+    ├─ selection-related AX structure
+    ├─ multiple frames
+    └─ completeness / acquisition
 ```
+
+通常VisionとFocused Visionをtaskの三項分岐で作り分けない。共通のVision taskを先に構築し、
+selectionがある場合だけ同じuser inputへ追加指示と構造化データを追記する。VLM呼び出しは1回のままで、
+通常Visionを別呼び出ししてからFocused Visionを実行する二段構成にはしない。
 
 ## 4. 起動と状態遷移
 
@@ -130,34 +171,39 @@ VisionSession
 
 ```text
 右Shift 2回
-  ├─ 意味のある選択対象をAXで取得できた
-  │    → Focused Vision
+  ├─ 選択を取得または視覚的に観測できた
+  │    → Vision(selection: Selection Extension)
   │
   ├─ focused elementが編集可能
   │    → Compose
   │
   └─ それ以外
-       → 通常のVision
+       → Vision(selection: nil)
 ```
 
-選択検出と編集可能判定は同じ`AXFocusSnapshot`から導く。別々のAX walkで時点や対象をずらさない。
-選択対象がある場合は、編集可能な入力欄内の選択であってもFocused Visionを優先する。現行Transformの
-意味を維持し、ユーザーが選択によって「この部分を見てほしい」と明示したものとして扱う。
+起動結果のsurfaceはComposeまたはVisionだけとし、Visionへ任意のselectionを渡す。選択検出と
+編集可能判定は同じsummon時点の値snapshotから導き、別々のAX walkで時点をずらさない。
+編集可能な入力欄内でも非collapsed選択があればVisionへ進む。ユーザーが選択によって
+「この範囲を見てほしい」と明示したためであり、単一のfocused AX要素を選んだという意味ではない。
 
 Chromium / ElectronはAX treeを遅延構築する。アプリ要素へ`AXEnhancedUserInterface`と
-`AXManualAccessibility`の両方を設定し、focused elementから祖先（通常`AXWebArea`）まで調べる。
-treeが成長している間だけ、画面captureと並行してbounded retryする。既存の
-`VisionObservationCaptureService`と異なる待機・有効化方式を新設しない。
+`AXManualAccessibility`の両方を設定し、focused elementの祖先だけでなくfocused window内の
+document rootと選択を公開するtext containerを調べる。treeまたはselection coverageが成長している
+間だけ、画面captureと並行してbounded retryする。最初の非空断片を成功条件にしない。
+既存の`VisionObservationCaptureService`と同じdeadline／cancel規律を使い、選択用に無制限walkを作らない。
 
 ### 4.2 AXで選択を取得できない場合
 
-合成⌘Cへfallbackしない。編集可能なfocused elementならCompose、それ以外なら通常Visionへ
-安全に退化する。クリップボードを触ってまで自動判定の網羅率を上げない。
+合成⌘Cへfallbackしない。選択文字列を取れなくてもcapture上に選択ハイライトが観測可能なら、
+`completeness: visualOnly`のSelection Extensionとして同じVision Coreへ加える。画像上でも
+選択を根拠づけられず、編集可能なfocused elementならCompose、それ以外ならselectionなしのVisionへ進む。
 
 Safari、Apple Mail、AX treeが冷えたChromium等では、公開・文書化されたAX属性から本文選択を
 取得できない場合がある。この場合はcaptureに選択ハイライトが見えている可能性をVision promptへ
-伝え、画像から対象を特定するbest-effort経路を使う。特定できなければ通常Visionとして答える。
-未文書のtext marker属性、AppleScript、ページ内JavaScriptは初期実装のfallbackにしない。
+伝え、画像から**全ての連続した選択ハイライト**を1つの論理selectionとして読むbest-effort経路を使う。
+最も目立つ件名や先頭断片だけを対象にしない。公開AX rangeで複数DOM相当の選択全文を取得できない製品は、
+リポジトリ外probeで公開属性、実際に列挙されるattribute、OS／アプリversionを記録して採用可否を決める。
+未検証の属性、AppleScript、ページ内JavaScriptを黙った汎用fallbackにはしない。
 
 ### 4.3 他の起動操作
 
@@ -166,48 +212,60 @@ Safari、Apple Mail、AX treeが冷えたChromium等では、公開・文書化�
 - Composeから右Shift 2回: 先読みcaptureを再利用して通常Visionへ進む。
 - Vision / Focused Visionから右Shift 2回またはEsc: 閉じる。
 
-## 5. Focus target
+## 5. Selection Extension
 
-focus targetは、取得できた情報だけを持つセッション内データで、永続化しない。
+Selection Extensionは、取得できた情報だけを持つセッション内データで、永続化しない。
 
 ```swift
-struct VisionFocusTarget {
-    let kind: Kind
+struct VisionSelectionContext {
+    let text: String?
+    let segments: [SelectionSegment]
+    let frames: [CGRect]
+    let completeness: Completeness
+    let acquisition: Acquisition
+}
+
+struct SelectionSegment {
     let text: String?
     let role: String?
     let label: String?
     let frame: CGRect?
-    let source: Source
 }
 ```
 
-- `kind`: `selectedText` / `accessibilityElement` / `region`
-- `text`: AXから取得した選択文字列。空白だけならnil
-- `role`: AX role。診断・モデル解釈用
-- `label`: title / description / label等から得た短い識別子
-- `frame`: グローバル座標。capture座標へ変換してハイライトに使う
-- `source`: `axSelectedText` / `axElement` / `userRegion`
+- `text`: ユーザーが選択した論理的な全文。先頭segmentの別名にしない
+- `segments`: 複数AX／画面構造へ分かれた選択断片。文書順を保持する
+- `frames`: 選択範囲を表す0個以上のグローバル矩形。単一unionへ潰さない
+- `completeness`: `complete` / `partial` / `visualOnly`
+- `acquisition`: 公開AX range、複数AX fragment、画像上の選択等の取得方法
+- `role` / `label`: selection全体ではなくsegmentに属する構造情報
 
 制約:
 
 - テキストはGatewayの入力上限内へ切り詰める。途中省略をメタデータで明示する。
 - password等のsecure fieldは対象にもCompose入力先にも含めない。
 - AX値、アプリ名、ウインドウタイトル、矩形はusageへ保存しない。
-- focus targetと画像はVision session終了時に破棄する。
+- selectionと画像はVision session終了時に破棄する。
 - AX要素参照そのものをGatewayへ送らない。送るのは必要な値だけ。
 
 ### 5.1 取得優先順位
 
-1. focused elementから祖先へwalkし、`AXSelectedText`が非空な最も近い意味のある要素を探す。
-2. 文字列と選択rangeが取れれば、公開parameterized attributeから矩形を取得する。
-3. 文字列だけ取得できたら、位置なしのselectedTextとして使う。
-4. 選択文字列は無いが、明示的に選択・フォーカスされた意味のあるUI要素を取得できたら、
-   role、label、frameを使う。
-5. AX対象が無くcaptureに視覚的な選択があり得る場合は、対象未確定のヒントだけをVisionへ渡す。
-6. いずれも無ければfocus targetなしの通常Visionとする。
+1. focused window内のdocument rootとtext containerを特定する。focused elementの祖先だけに限定しない。
+2. 公開されている`AXSelectedTextRanges`、`AXSelectedTextRange`、`AXSelectedText`と
+   `AXStringForRange`／`AXBoundsForRange`を、対象が実際に対応する範囲で読む。
+3. 1つのdocument rangeから全文が取れれば、それを`complete`なselection textとする。
+4. document rangeが無く複数要素が選択断片を公開する場合は、文書順でsegmentを集約し、
+   重複を除いて全文を構成する。近い要素、先頭要素、長い要素だけを採用しない。
+5. retry品質は「選択が1文字あるか」ではなく、document root確認、range/text対応、segment coverage、
+   pass間の安定で決める。最初の非空断片では終了しない。
+6. textは取れたがcoverageを証明できなければ`partial`とし、完全な全文だとモデルにもUIにも断定しない。
+7. AX textを取れず画像上に選択が見える場合は`visualOnly`とし、Visionが全ハイライトを読む。
+8. テキスト選択は無いが意味のあるUI要素が明示選択されている場合は、従来どおりelement selectionを
+   別種のSelection Extensionとして扱う。
+9. いずれも無ければselectionなしの通常Visionとする。
 
 画面上の任意領域をマウスで囲う既存のcapture操作は`region`として同じ型へ合流できるが、
-このプロジェクトの最初の完成条件はAX選択と通常Visionの統合までとする。
+テキスト選択、UI要素選択、user regionは同じoptional extensionのvariantとし、Vision Coreを分岐させない。
 
 ## 6. 画面体験
 
@@ -218,13 +276,16 @@ Enter送信、Esc終了、Skill表示、fallback notice、Copilot開始を共有
 
 ### 6.2 対象の表示
 
-対象がある時だけ、左側のcapture上にハイライトを表示し、対象カードを添える。
+selectionがある時だけ、左側のcapture上に取得できた全frameをハイライトし、selectionカードを添える。
+`visualOnly`でもカード自体を消さず、「選択範囲を画像から確認中」と取得状態を明示する。
 
 対象カードに表示するもの:
 
-- 「選択中のテキスト」またはroleに基づく中立な名称
-- 選択文字列（長文は折りたたみ、全文はスクロール可能）
-- 取得元（選択テキスト／画面上の要素）
+- 「選択した内容」またはUI要素／regionに基づく中立な名称
+- 選択全文（長文は折りたたみ、全文はスクロール可能）
+- `complete` / `partial` / `visualOnly`をユーザー向けに表した取得状態
+- 取得元（公開AX range／複数AX断片／画像上の選択／画面上の要素）
+- 複数segmentと複数位置を持つ場合も、単一roleや単一矩形へ偽装しない表示
 - 位置が取得できなかった場合は、その事実
 
 ブラウザ名やウインドウタイトルを対象名として代用しない。適用中のSkillは既存Visionと同じ場所に
@@ -233,19 +294,31 @@ Increase Contrast、Reduce Transparencyに対応する。色だけで対象を�
 
 ### 6.3 初期応答
 
-通常Visionは画面全体の重要点から説明を始める。Focused Visionは選択対象への回答を先に返し、
-必要な範囲で画面全体との関係を補足する。
+通常VisionとFocused Visionは同じVision Core task、同じcapture、同じAX候補取得方針、同じidentity、
+同じSkillを使う。Focused VisionはそこへSelection Extensionを追記し、画面全体を理解した上で
+ユーザーが選択した範囲へ回答を集中する。内部理解の入力を選択だけへ狭めることと、回答の焦点を
+選択へ合わせることを混同しない。
 
-初期質問はクライアントが固定文字列として付け足すのではなく、Gatewayへfocus targetを構造化して渡し、
-Vision promptが「対象を最優先で説明する」と解釈する。画面に根拠が無い情報を対象文字列だけから
-断定しない。
+Gatewayは三項演算子等で通常Vision taskをselection専用taskへ置換しない。先に共通taskを組み立て、
+selectionがある時だけ次を追記する。
+
+- selection全文が明示された質問対象であり、先頭segmentや最も目立つ箇所だけへ縮約しない
+- screenshotから見た目、配置、選択ハイライト、現在状態を読む
+- AX／画面構造から各segmentの意味、関係、操作可能性を読む
+- Skillから製品固有の意味を読む
+- `partial` / `visualOnly`では取得できていない部分を完全な全文だと断定しない
+- 情報が矛盾する時は一方を黙って捨てず、ユーザーに意味のある不確実性だけを示す
+
+初回turnでも通常Visionの構成要素をselectionが置き換えてはならない。AX候補をVision Coreに含める
+方針なら通常／Focusedの両方へ同じbounded policyで供給し、Focusedにはselection関連segmentを加算する。
+画面に根拠が無い情報を対象文字列だけから断定しない。
 
 ### 6.4 継続
 
-- 同じcapture、focus target、turnsを保ったまま追加質問できる。
+- 同じcapture、Selection Extension、turnsを保ったまま追加質問できる。
 - 質問が対象外へ広がっても、Visionは画面全体を参照できる。
 - 操作意図があれば既存の「案内を開始」からCopilotへ進む。
-- Copilot開始後は目的を引き継ぐ。古いfocus targetの枠を新captureへ機械的に再利用しない。
+- Copilot開始後は目的を引き継ぐ。古いselectionの枠を新captureへ機械的に再利用しない。
 - 「コピー」は標準の明示操作として結果テキストのcontext menuまたはボタンから実行できる。
 
 ## 7. クリップボード境界
@@ -319,11 +392,9 @@ probeの結果により、プロジェクトBは次のいずれかを選ぶ。
 
 ## 8. Gateway目標契約
 
-実装完了後、独立した`POST /api/ai/transform`を削除し、`POST /api/ai/vision`へ統合する。
-移行中に二重の本番経路を常設しない。Gatewayを旧クライアント互換にする必要がある期間は、
-削除順と公開版の最低バージョンを実装開始時に決める。
-
-Vision requestへ任意のfocus targetを追加する。
+`POST /api/ai/vision`、model route、response、fallback、Skill、Copilotは現行の1系統を維持する。
+プロジェクトCでは、現行`focus_target` / `visual_selection_hint`を内部的なSelection Extensionへ
+正規化し、クライアントの複数segment対応に合わせて任意の`selection`へ移行する。
 
 ```json
 {
@@ -334,13 +405,24 @@ Vision requestへ任意のfocus targetを追加する。
     "question": null,
     "turns": [],
     "candidates": [],
-    "focus_target": {
-      "kind": "selected_text",
-      "text": "選択された文字列",
-      "role": "AXStaticText",
-      "label": null,
-      "frame": { "x": 120, "y": 240, "width": 360, "height": 42 },
-      "source": "ax_selected_text",
+    "selection": {
+      "kind": "text",
+      "text": "複数の画面構造にまたがる選択全文",
+      "completeness": "complete",
+      "acquisition": "ax_document_range",
+      "segments": [
+        {
+          "text": "選択断片",
+          "role": "AXHeading",
+          "label": "件名",
+          "frames": [
+            { "x": 120, "y": 240, "width": 360, "height": 42 }
+          ]
+        }
+      ],
+      "frames": [
+        { "x": 120, "y": 240, "width": 360, "height": 42 }
+      ],
       "truncated": false
     },
     "context": {}
@@ -350,14 +432,23 @@ Vision requestへ任意のfocus targetを追加する。
 
 契約規則:
 
-- `focus_target`は任意。無ければ現行Visionと同一。
-- `frame`はcapture画像座標へ正規化して送る。AXのグローバル座標をそのまま送らない。
-- `text`、`role`、`label`は長さと制御文字を検証する。
-- focus targetはモデル入力にだけ使い、usageや運用ログへ保存しない。
+- `selection`は任意。無ければ通常Visionと同一で、requestからselectionを除いた結果も通常Visionと
+  同じ入力構成になる。
+- `text`はユーザーが選択した論理的な全文で、`segments[0].text`から代用しない。
+- `segments`と`frames`は0件以上を許し、文書順を保持する。単一role、label、frameへ潰さない。
+- 全`frame`はcapture画像座標へ正規化して送る。AXのグローバル座標をそのまま送らない。
+- text総量、segment数、frame数、各role／label長、制御文字、座標範囲をGatewayで検証する。
+- selectionはモデル入力とセッション内UIだけに使い、usageや運用ログへ内容を保存しない。
 - 応答形式、model routing、fallback notice、Skill、candidate ID、Copilot guidanceは現行Visionと共通。
 - Focused Vision専用モデル、endpoint、fallback、feature flagを作らない。
-- Transformのusage dimensionは移行後`vision`へ統合し、必要なら内容を保存しない
-  `focus_target_present: boolean`だけを運用指標として持つ。
+- screenshotは常にVision Coreの原画像を`original` detailで渡す。selection cropを追加する場合も
+  原画像を置換せず、追加画像として効果と原価を測る。
+- 必要なら内容を保存しない`selection_present: boolean`とcompletenessだけを運用指標として持つ。
+
+移行は次の順で行う。まずGatewayが現行`focus_target` / `visual_selection_hint`と新`selection`を
+同じ内部型へ正規化し、現行`v0.2.1`を壊さない状態でdeployする。次にmacOSを新契約へ切り替える。
+旧fieldを除去できる最低クライアント版が確定するまでは互換adapterだけを残してよいが、旧prompt、
+別endpoint、別model routeとして並走させない。削除時は別の検証済みcommitで行う。
 
 ## 9. macOS目標構造
 
@@ -374,10 +465,10 @@ Vision requestへ任意のfocus targetを追加する。
 
 追加・拡張:
 
-- `AXFocusSnapshot` — focused element、祖先選択、編集可能性、選択対象を同時取得
-- `VisionFocusTarget` — Visionへ渡すセッション内対象
-- `VisionSession` / `GatewayVisionClient` — 任意focus target
-- `VisionSessionView` — 対象カードとハイライト
+- `AXFocusSnapshot` — focused element、編集可能性、document root、選択rangeを同じ時点で取得
+- `VisionSelectionContext` — 全文、ordered segments、複数frame、完全性を持つセッション内拡張
+- `VisionSession` / `GatewayVisionClient` — 任意のSelection Extension
+- `VisionSessionView` — 複数位置、全文、取得完全性を示す対象カードとハイライト
 - `PasteDeployer` — プロジェクトAでは退避・復元をせず、明示送信時だけclipboard＋⌘V
 
 `Deployer` protocolはテスト境界として維持できるが、「deploy＝clipboardへコピー」という
@@ -403,8 +494,8 @@ Vision requestへ任意のfocus targetを追加する。
 - Focused Visionは画面画像を本番Gatewayへ送る。対象テキストだけのTransformより送信範囲が広がるため、
   UIで「画面画像」と「選択対象」を参照元として明示する。
 - text-onlyだったTransformより画像token、レイテンシ、原価が増える。これは「選択対象を画面全体との
-  関係で説明する」ための意識的な交換である。初期実装では画像を省かず、実測後にcrop、低detail、
-  オンデバイスOCR＋縮小画像を検討する。
+  関係で説明する」ための意識的な交換である。原画像を省略・低detail画像で置換しない。
+  実測後にselection cropを原画像へ追加する最適化は検討できるが、Vision Coreを失わせない。
 - 既存Visionと同じく画像と会話を永続化しない。一時画像は正常終了時、残骸は次回起動時に削除する。
 - 選択テキスト、role、label、frame、画像、質問、回答をusageへ保存しない。
 - 認証情報、銀行口座、本人確認書類等が写る画面では使わないという既存注意を維持する。
@@ -424,7 +515,9 @@ Vision requestへ任意のfocus targetを追加する。
 ## 13. 実装順序
 
 本番ツリーに新旧方式を常設しない。プロジェクトAは安全化とFocused Visionを完成させ、
-プロジェクトBはAと分離したprobe・製品判断として扱う。
+プロジェクトBはAと分離したCompose入力のprobe・製品判断として扱う。A0〜A7は`v0.2.1`を
+作った時点の履歴であり、単一祖先／単一focus targetに関する記述はプロジェクトCで置換する。
+選択理解の現行計画はC0〜C6を正とする。
 
 ### A0 — 設計と復帰点（本コミット）
 
@@ -583,16 +676,87 @@ SHA-256一致を再確認した。これにより§15の受け入れ条件を満
 B0の結果から§7.3の3案のどれかを選ぶ。採用方式、対象範囲、成功判定、失敗UX、履歴境界を
 仕様化してから、別の短命branchで実装する。Bの失敗や不採用はAをrollbackする理由にしない。
 
+### C0 — Selection Extension設計と復帰点（本コミット）
+
+- `Focused Vision = Vision Core + Selection Extension`を不変条件として正本へ固定する。
+- 現行の単一祖先探索、単一focus target、selection専用prompt置換を既知の修正対象として記録する。
+- 復帰tag、開始commit、作業branch、C1〜C6のcommit境界を確定する。
+- 現行APIと次期契約を混同せず、旧クライアントとの移行順を決める。
+
+コミット境界: ドキュメントと作業branch情報だけ。製品挙動は変えない。
+
+### C1 — 公開AX能力probe
+
+- リポジトリ外のread-only短命probeで、実際に公開されるattributeとrangeの対応を計測する。
+- Chrome / Safari上のGmail、Electron版Slack、TextEdit、Apple Mailを対象にする。
+- 単一node、複数node、逆方向drag、画面外を含む選択、編集可能／read-onlyを試す。
+- `AXSelectedTextRanges`、`AXSelectedTextRange`、`AXSelectedText`、
+  `AXStringForRange`、`AXBoundsForRange`とdocument rootの関係を記録する。
+- private API、合成⌘C、ページ内JavaScriptは使わない。probe本体は完了後に削除する。
+
+コミット境界: OS／アプリversion、再現手順、結果表だけを本書へ追記し、製品コードは変えない。
+
+### C2 — Selection Resolverとデータモデル
+
+- `VisionSelectionContext`、ordered `SelectionSegment`、複数frame、completenessを追加する。
+- focused ancestorだけでなくdocument root／text containerから範囲を解決する。
+- 重複除去、文書順、全文組み立て、coverage、安定判定、bounded retryを純粋関数とunit testで固定する。
+- 最初の非空断片では成功終了せず、secure fieldと取得不能は内容を漏らさず値状態へ閉じ込める。
+- この段階では右Shiftの本番入口とGateway requestを切り替えない。
+
+コミット境界: resolver、値model、unit testだけ。現行`VisionFocusTarget`経路はまだ稼働する。
+
+### C3 — Gateway契約とprompt加算
+
+- §8の`selection`を後方互換に追加し、現行fieldと同じ内部型へ正規化する。
+- Vision Core promptを先に一度だけ組み立て、selection指示と構造化データを追記する。
+- selectionの有無でimage、candidates、identity、Skill、turns、model routeが減らないことを
+  request snapshot／prompt testで固定する。
+- 初回turnにも通常Visionと同じbounded candidate policyを適用する。
+- 選択内容、segment、frameをusage／運用ログへ保存しない。
+
+コミット境界: 後方互換なGatewayとmacOS client encoding、validation、testだけ。本番入口は未切替。
+
+### C4 — 本番入口のSelection Extension化
+
+- `SessionCoordinator`からresolver結果を同じ`VisionSession(selection:)`へ渡す。
+- `.focusedVision`相当の意味分岐、selection専用task、単一fragmentへの変換を削除する。
+- AX textが無い時も`visualOnly` extensionとして同じVision Coreへ入り、別promptにしない。
+- 通常Vision、継続質問、Copilot、fallbackの既存経路を維持する。
+
+コミット境界: 新しい入口へ切り替えるのと同時に、置換された旧意味分岐を削除する。
+
+### C5 — 複数範囲UIと診断表示
+
+- capture上の全frameと、全文、複数segment、取得完全性を同じVisionパネルへ表示する。
+- `partial` / `visualOnly`をユーザーへ分かる文言で示し、単一role／位置を偽装しない。
+- 開発情報にはselection acquisition、segment数、frame数、completenessを内容なしで追加する。
+- VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionを確認する。
+
+コミット境界: Selection ExtensionのUI表示とアクセシビリティtestだけ。
+
+### C6 — 統合検証と完了記録
+
+- §14の自動／実機検証を通し、複数node Gmailの全文理解をgolden pathへ固定する。
+- 通常VisionとFocused Visionのrequest差分がselectionだけであることを検査する。
+- README、API契約、マスタープラン、golden pathsを実装済み状態へ同じcommitで更新する。
+- 復帰tagからの差分に別endpoint、別prompt、長期flag、probe残骸が無いことを確認する。
+
+コミット境界: Cの完了記録。main統合判断が可能な状態。
+
 ## 14. 検証
 
 ### 自動検証
 
 - 選択あり／空選択／編集可能／非編集／secure fieldの起動判定
-- focused element／祖先／AXWebAreaの選択探索
+- document root／text container／AXWebAreaの選択探索
 - coldなChromium treeのbounded retryと期限終了
-- AX selected textだけ、frameだけ、両方、どちらも無いfocus target
-- focus targetのrequest encoding、上限、制御文字、座標変換
-- 通常Vision requestがfocus target追加後も変わらないこと
+- 単一range、複数segment、重複segment、逆方向選択、画面外を含む選択の全文構成
+- textだけ、複数frameだけ、両方、どちらも無いSelection Extension
+- selectionのrequest encoding、総量上限、件数上限、制御文字、座標変換
+- Focused Vision requestからselectionを除くと通常Vision requestと一致すること
+- selectionがimage、candidates、identity、Skill、turnsを減らさないこと
+- selection有無で共通Vision Core promptが同一で、追加部分だけが変わること
 - 起動・選択取得からpasteboard APIと合成⌘Cへ到達しない構造検査
 - `ClipboardBackup`と遅延restoreが存在しない構造検査
 - Compose送信時だけclipboard writeと合成⌘Vへ到達すること
@@ -607,6 +771,7 @@ B0の結果から§7.3の3案のどれかを選ぶ。採用方式、対象範囲
 - Chromium: Chrome上のGmail、Slack
 - Electron: SlackまたはVS Code
 - 選択なし、単一要素選択、複数ノード選択、編集欄内選択
+- 順方向／逆方向drag、viewport内／画面外をまたぐ選択
 - AX selected textを返す画面／返さない画面
 - Accessibility拒否／画面収録拒否
 - cold／warmなChromium AX tree
@@ -620,6 +785,21 @@ B0の結果から§7.3の3案のどれかを選ぶ。採用方式、対象範囲
 4. Compose送信の直後に別アプリで⌘Cし、その新しい内容が上書きされないことを確認する。
 5. Universal I/O終了後も最新内容を貼り付けられることを確認する。
 6. HTML／UTF-8／UTF-16／空string flavorを含む元の再現手順でclipboardが壊れないことを確認する。
+
+### プロジェクトCの受け入れ条件
+
+- Focused VisionからSelection Extensionを除いた入力と実行経路が通常Visionと同一である。
+- selection全文は明示された質問対象として保持され、先頭AX／DOM相当fragmentへ縮約されない。
+- screenshot、通常のAX候補、identity、Skill、turnsはselection追加時にも全て使われる。
+- AXのrole、label、relation、actionは第一級の構造情報としてselection理解へ加算される。
+- screenshotは原画像を常に使用し、任意cropが原画像を置換しない。
+- 同じSession、View、endpoint、model route、fallback、Copilotを使い、専用taskや長期flagが無い。
+- 初回応答も通常Visionと同じVision Coreデータ方針を使う。
+- Chrome／Safari上のGmailで複数node選択の全文を扱い、取得不能時は`partial` / `visualOnly`を明示する。
+- Electron版Slack、TextEdit、Apple Mailでも選択の取得または安全な退化を確認する。
+- 起動と選択取得はclipboardを変更せず、secure fieldの内容を取得・送信・記録しない。
+- 選択内容、segment、frame、画像、質問、回答をusageと診断ログへ保存しない。
+- 現行`v0.2.1`からのAPI移行中も別endpoint、別prompt、別model routeを作らない。
 
 ## 15. プロジェクトAの受け入れ条件
 
@@ -645,7 +825,9 @@ B0の結果から§7.3の3案のどれかを選ぶ。採用方式、対象範囲
 - AX writeの成功をAPI戻り値だけで判定すること
 - `AXValue`を汎用カーソル挿入に使うこと
 - Unicode keyboard eventを製品fallbackにすること
-- 未文書のtext marker属性やブラウザJavaScriptを初期fallbackにすること
+- 公開AX能力をprobeせず推測で未文書属性へ依存すること
+- 汎用DOM取得が存在するように装うこと。実DOMが必要なら明示的なブラウザ統合として別途設計する
+- ページ内JavaScriptを無言の汎用fallbackにすること
 - Focused Vision専用モデルや長期feature flagを作ること
 - Transformの旧レイアウトをVision内へそのまま移植すること
 - 選択対象や会話を永続化すること
@@ -654,9 +836,13 @@ B0の結果から§7.3の3案のどれかを選ぶ。採用方式、対象範囲
 ## 17. 決定事項
 
 - Transformは廃止し、Focused Visionへ統合する。
-- Focused Visionは独立surfaceではなくVisionの任意focus targetである。
+- Focused Visionは独立surfaceではなく、Vision Coreへ任意のSelection Extensionを加えたものである。
+- selectionはユーザーが明示した回答scopeであり、AX／画面構造、screenshot、Skillはその意味を
+  共同で理解する第一級の観測である。どれか一つを残りの代替物として扱わない。
+- 通常Vision taskをselection専用taskへ置換せず、共通taskへselectionを追記する。
 - 選択取得はAccessibility APIだけを使い、合成⌘Cへfallbackしない。
-- Chromium／Electronでは両AX属性、祖先walk、captureと並行するbounded retryを使う。
+- Chromium／Electronでは両AX属性、document root／text container探索、captureと並行する
+  bounded retryを使う。
 - AXで対象を取れない場合、画像上の選択をbest-effortで読み、失敗時は通常Visionへ退化する。
 - Focused Visionは画面画像を使い、画面全体の文脈内で対象を説明する。
 - 編集可能欄内でも、非collapsed選択があればFocused Visionを優先する。
@@ -664,4 +850,5 @@ B0の結果から§7.3の3案のどれかを選ぶ。採用方式、対象範囲
 - AX直接入力はプロジェクトBのprobe結果が出るまで未採用とする。
 - Unicode keyboard eventは製品fallbackにしない。
 - Focused Visionの画像利用によるコストと送信範囲の増加を意識的に受け入れ、実測後に最適化する。
-- 完成した本番API契約は[api-contract.md](api-contract.md)を正とし、本書はR9の決定記録とする。
+- 現行本番API契約は[api-contract.md](api-contract.md)を正とし、本書はR9の履歴とR10の要件・
+  実装計画を記録する。

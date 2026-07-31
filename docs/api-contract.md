@@ -1,6 +1,6 @@
 # Universal I/O Gateway API契約
 
-最終更新: 2026-07-30 ／ ステータス: 現行（`v0.2.1`正式公開済み）
+最終更新: 2026-07-31 ／ ステータス: 現行（`v0.2.1`正式公開済み）＋R10次期契約
 
 R9 A7でproduction buildのroute一覧とmacOSクライアントを再照合し、AI endpointが
 `review`、`suggest`、`transcribe`、`vision`の4つだけであることを確認した。
@@ -110,7 +110,9 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 - `input.image_base64`: 必須、PNG/JPEG
 - `input.question`: 任意
 - `input.turns`: 最大20件
-- `input.candidates`: 同一captureから取得したAX/DOM候補、最大500件
+- `input.candidates`: 同一captureから取得した画面構造候補、最大500件。schemaは`ax` / `dom`を
+  表現できるが、現行macOSクライアントが実際に収集しているのはAX候補だけであり、ブラウザDOMを
+  取得する統合は存在しない
 - `input.guidance`: Copilot進捗時の目的と直前案内。`question`とは排他
 - `input.focus_target`: 任意。Focused Visionのセッション内対象。未指定なら従来の通常Visionと同一。
   `kind`は`selected_text` / `accessibility_element` / `region`、`source`はそれぞれ
@@ -129,6 +131,48 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 `focus_target`と`visual_selection_hint`はVision promptだけで使い、usage metadata、運用ログ、
 応答へ保存しない。通常Vision、Focused Vision、継続質問は同じmodel routeと応答契約を使う。
 Copilotの新captureへ古いfocus targetのframeを引き継がない。
+
+### 次期R10契約（未実装）
+
+現行`v0.2.1`の契約は上記の`focus_target` / `visual_selection_hint`であり、ここに記す次期fieldを
+現行クライアントが送る、または本番Gatewayが受理するとはみなさない。R10では同じ
+`POST /ai/vision`へ任意の`input.selection`を後方互換に追加し、現行fieldと新fieldを同じ内部
+Selection Extensionへ正規化する。
+
+```json
+{
+  "selection": {
+    "kind": "text",
+    "text": "複数の画面構造にまたがる選択全文",
+    "completeness": "complete",
+    "acquisition": "ax_document_range",
+    "segments": [
+      {
+        "text": "選択断片",
+        "role": "AXHeading",
+        "label": "件名",
+        "frames": [
+          { "x": 120, "y": 240, "width": 360, "height": 42 }
+        ]
+      }
+    ],
+    "frames": [
+      { "x": 120, "y": 240, "width": 360, "height": 42 }
+    ],
+    "truncated": false
+  }
+}
+```
+
+不変条件は`Focused Vision = Vision Core + Selection Extension`である。`selection`をrequestから
+除いた時、image、通常candidates、identity、Skill、turns、共通task、model route、responseは
+通常Visionと同一になる。`text`は選択全文であり先頭segmentから代用せず、segmentとframeは複数を
+文書順で保持する。スクリーンショット原画像は常に送り、任意cropで置換しない。
+
+移行中も別endpoint、別model route、別promptを作らない。まずGatewayの互換adapterをdeployし、
+次にmacOSを切り替える。旧fieldの除去は最低クライアント版と本番利用状況を確認した別commitで行う。
+内容、segment、frameはusage／運用ログへ保存しない。詳細なvalidation、実装順、受け入れ条件は
+[focused-vision-plan.md](focused-vision-plan.md) §8、§13 C0〜C6、§14を正とする。
 
 成功応答:
 

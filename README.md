@@ -86,14 +86,14 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
 数百・数千製品へ増やすカタログ基盤はR8の**M7（未着手）**として管理する。製品内を画面moduleへ
 分け、該当する1〜3 moduleだけを遅延ロードし、製品追加でmacOSクライアントを更新しない構成を目指す。
 
-### Focused Vision（Transform統合とclipboard安全化）
+### Focused Vision（現行`v0.2.1`）
 
-現行Transformは独立した製品surfaceとして残さず、選択テキスト・選択要素・位置を開始時点から
-持つVisionへ統合する。通常Visionが画面全体から質問で対象を絞るのに対し、Focused Visionは
+R9では当時のTransformを独立した製品surfaceとして残さず、選択テキスト・選択要素・位置を開始時点から
+持つVisionへ統合した。通常Visionが画面全体から質問で対象を絞るのに対し、Focused Visionは
 画面全体に加えて「この部分」を最初から指定した同じVision sessionで、初期解説、追加質問、
 Copilotへの移行を行う。
 
-この統合と同じプロジェクトAで、起動判定の合成⌘Cと標準クリップボードの退避・復元を廃止する。
+この統合と同じプロジェクトAで、起動判定の合成⌘Cと標準クリップボードの退避・復元を廃止した。
 選択取得はAccessibility APIだけを使い、取得失敗時は通常Vision／Composeへ安全に退化する。
 Compose送信は主要アプリとの互換性を維持するため当面clipboard＋合成⌘Vを使うが、送信後に古い内容を
 復元しない。送信本文がclipboardへ残る、明示操作に限った予測可能な副作用とする。
@@ -119,6 +119,31 @@ deploy済み。現行4 AI routeの応答と旧`/api/ai/transform`の404を確認
 Developer ID署名、notarization、staple、Gatekeeper評価を完了し、検証した同一byte列を正式公開した。
 公開URLからの再取得でも署名、version/build、Universal binary、SHA-256
 `637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`の一致を確認済みである。
+
+### 次期改修: Vision Selection Extension
+
+現行`v0.2.1`は同じVisionパネル、Gateway、モデル、スクリーンショットを使う一方、選択取得が
+focused elementの最も近い単一AX祖先で止まり、初期promptも通常Visionへ情報を加えるのではなく
+selection専用taskへ置き換える。このため、Gmail等で複数の画面構造にまたがって選択した全文が
+先頭断片へ縮約され、画像・AX・Skillを使えるのにタイトルだけを説明する結果になり得る。
+
+次期R10では次を不変条件として修正する。
+
+```text
+Focused Vision = Vision Core + Selection Extension
+Focused Vision - Selection Extension = 通常Vision
+```
+
+選択全文はユーザーが明示した回答対象として保持する。通常Visionのスクリーンショット、AX候補、
+画面identity、Skill、会話、Copilotを一切減らさず、選択に関係する複数segment、role／label、
+複数位置、取得完全性を追加する。AX／画面構造とVisionは引き続き第一級の情報源であり、選択テキストの
+代用品ではなく、意味・関係・操作可能性・見た目・配置を共同で理解するために使う。
+
+新しいsurface、endpoint、model route、別promptは作らない。現行APIとの後方互換を保ってから
+macOSを切り替え、最終的に同じ`VisionSession`のoptional extensionとして一本化する。要件、
+マイルストーン、受け入れ条件、復帰点は
+[focused-vision-plan.md](docs/focused-vision-plan.md)のプロジェクトCと
+[マスタープラン R10](docs/universal-io-master-plan.md)を正本とする。現時点では設計確定・実装前である。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
