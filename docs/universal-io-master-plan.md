@@ -299,9 +299,11 @@ Focused Vision - Selection Extension = 通常Vision
 
 selection全文はユーザーが明示した回答scopeとして保持する。screenshot、AX／画面構造、identity、
 Skillは引き続き第一級の観測であり、selectionの意味、関係、操作可能性、見た目、配置を共同で理解する。
-主対策はdocument rootまで調べて外側のdocument selectionを内側fragmentより優先することで、
-複数segment集約は実機probeで必要性を証明した製品だけのfallbackとする。画像上でだけ観測できる
-場合は`visualOnly`として表面へ明示し、その他の取得状態は開発情報へ置く。
+主対策はdocument rootまで全候補を調べ、候補自身のtext／range対応とselection coverageを検証して
+最も完全なdocument selectionを採用することである。rangeはAX要素ごとのローカル値であり、
+外側という理由だけでは採用しない。複数segment集約は実機probeで必要性を証明した製品だけの
+fallbackとする。画像上でだけ観測できる場合は`visualOnly`として表面へ明示し、その他の取得状態は
+開発情報へ置く。
 
 復帰点はtag `pre-vision-selection-extension-20260731`、commit `dcac535`。作業branchは
 `feat/vision-selection-extension`。同じ`VisionSession`、`/api/ai/vision`、model route、
@@ -310,11 +312,11 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
 二重化しない。mode命令は単一request intent resolverで決定し、通常taskとselection taskを連結しない。
 
 - **C0（完了）** 要件、目標契約、復帰点、C1〜C6のcommit境界と受け入れ条件を正本へ固定した。
-- **C1（未着手）** リポジトリ外のread-only AX probeでChrome / Safari上のGmail、
+- **C1（実測中）** リポジトリ外のread-only AX probeでChrome / Safari上のGmail、
   Electron版Slack、TextEdit、Apple Mailの公開range能力を計測する。複数node、逆方向drag、
   画面外、編集可能／read-only、内側／外側precedence、WebKitの列挙attributeを記録する。
   document selectionが全文を返すならsegmentsを作らず、必要性を実証した場合だけfallbackを採用する。
-- **C2（未着手）** document root／text containerから外側優先で全文、複数frame、acquisition状態、
+- **C2（未着手）** document root／text containerの全候補から検証済みの全文、複数frame、acquisition状態、
   capture visibilityを解決する`VisionSelectionContext`とunit testを追加する。segmentsはC1で
   必要性を証明した場合だけ追加し、全経路で値読取前にsecure判定を適用する。
 - **C3（未着手）** Gatewayへ後方互換な`selection`契約、恒久legacy adapter、共通内部型を追加する。

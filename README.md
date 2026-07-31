@@ -135,8 +135,10 @@ Focused Vision - Selection Extension = 通常Vision
 ```
 
 選択全文はユーザーが明示した回答対象として保持する。最初の非空祖先では止めずdocument rootまで
-調べ、外側のdocument selectionを優先する。複数segment集約は、実機probeでdocument selectionが
-成立しないと分かった製品だけのfallbackとする。
+全候補を調べる。ただしrangeはAX要素ごとのローカル値なので、外側という理由だけで採用せず、
+各候補自身の`AXSelectedText`、range、`AXStringForRange`の整合性とselection coverageを検証して
+最も完全なdocument selectionを採用する。複数segment集約は、実機probeで公開document selectionが
+成立せず、公開断片の集約で情報量が増えると分かった製品だけのfallbackとする。
 
 通常Visionのスクリーンショット、現行のAX候補方針、画面identity、Skill、会話、Copilotを減らさず、
 選択取得時にすでに得た構造だけを追加する。初回応答の全画面AX候補は通常／Focusedとも現行どおり空とし、
@@ -149,7 +151,8 @@ selection本文は常にuntrusted dataとして扱う。新しいsurface、endpo
 作らない。公開済み旧fieldは恒久入力adapterから同じ内部型へ正規化する。要件、
 マイルストーン、受け入れ条件、復帰点は
 [focused-vision-plan.md](docs/focused-vision-plan.md)のプロジェクトCと
-[マスタープラン R10](docs/universal-io-master-plan.md)を正本とする。現時点では設計確定・実装前である。
+[マスタープラン R10](docs/universal-io-master-plan.md)を正本とする。現時点ではC1の公開AX能力を
+実測中で、製品コードは未変更である。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
