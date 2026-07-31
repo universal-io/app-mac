@@ -178,15 +178,15 @@ Selection Extension取得済み情報のために追加walkしない。
 `wire_truncated`は送信削減なので直交し、`complete`と`wire_truncated: true`は両立する。
 `kind: text`かつ`acquisition_completeness != visualOnly`では非空`text`を必須とし、structures、frames、
 labelだけでtext selectionを代用しない。
-segmentsはC1の結果次第の任意fieldで、先に必須契約へしない。採用時はsegment textの総量・件数・
-公平配分をC1結果と同じcommitで契約へ追加する。frameは複数を保持し、
+segment fallbackはC1で必要性が確認されなかったため、R10契約へ追加しない。frameは複数を保持し、
 `capture_visibility`が`off_capture` / `unknown`なら画像上にselectionが見えると指示しない。
 
-`structures`はselection取得時にすでに得たAX／DOM相当構造を保持する任意fieldで、segmentsとは
-独立する。各項目は`source`、selectionとの`relationship`、任意のrole／label／parent label／
+`structures`はselection取得時にすでに得たAX／DOM相当構造を保持する任意fieldである。
+各項目は`source`、selectionとの`relationship`、任意のrole／label／parent label／
 states／actions／frameと、
-`whole` / `partial` / `context` / `unknown`の`coverage`を持つ。coverageが`whole`でないlabelを
-selection全文の名前、要約、代替textとして扱わない。初回turnでstructuresを増やすためだけの
+`whole` / `partial` / `context` / `unknown`の`coverage`を持つ。coverageはcontainerが選択範囲と
+どう重なるかを表すだけで、`whole`でもlabelがselection全文を命名するとはみなさない。
+どのlabelもselection全文の名前、要約、代替textとして扱わない。初回turnでstructuresを増やすためだけの
 全画面candidate walkは追加しない。件数・文字数・座標はGatewayでbounded validationする。
 スクリーンショット原画像は常に送り、任意cropで置換しない。
 

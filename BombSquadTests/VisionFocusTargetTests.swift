@@ -170,6 +170,191 @@ final class VisionFocusTargetTests: XCTestCase {
         XCTAssertNil(VisionFocusTarget.from(snapshot: snapshot))
     }
 
+    func testSelectionResolverChoosesDocumentTextOverShortInnerFragment() throws {
+        let candidates = [
+            selectionCandidate(
+                text: "件名",
+                role: "AXHeading",
+                label: "件名",
+                scope: .focusedElement,
+                depth: 0
+            ),
+            selectionCandidate(
+                text: "件名と、ユーザーが明示的に選択した本文全体",
+                role: "AXWebArea",
+                label: "Gmail",
+                scope: .document,
+                depth: 10,
+                rangeEvidence: .mismatching
+            ),
+        ]
+
+        let selection = try XCTUnwrap(VisionSelectionResolver.resolve(candidates: candidates))
+
+        XCTAssertEqual(selection.text, "件名と、ユーザーが明示的に選択した本文全体")
+        XCTAssertEqual(selection.acquisition, .axDocumentSelection)
+    }
+
+    func testSelectionResolverNeverLetsShortLabelReplaceSelectedText() throws {
+        let selectedText = "これはユーザーが選択した長い本文で、回答が必ず扱う対象です。"
+        let first = selectionCandidate(
+            text: selectedText,
+            role: "AXGroup",
+            label: "短い件名A",
+            scope: .ancestor,
+            depth: 2
+        )
+        let second = selectionCandidate(
+            text: selectedText,
+            role: "AXGroup",
+            label: "短い件名B",
+            scope: .ancestor,
+            depth: 2
+        )
+
+        let firstResult = try XCTUnwrap(VisionSelectionResolver.resolve(candidates: [first]))
+        let secondResult = try XCTUnwrap(VisionSelectionResolver.resolve(candidates: [second]))
+
+        XCTAssertEqual(firstResult.text, selectedText)
+        XCTAssertEqual(secondResult.text, selectedText)
+        XCTAssertNotEqual(firstResult.structures, secondResult.structures)
+    }
+
+    func testSelectionResolverTreatsRangeMismatchAsSupportingEvidenceOnly() throws {
+        let candidate = selectionCandidate(
+            text: "公開AXSelectedTextが返した選択全文",
+            role: "AXWebArea",
+            label: "周辺ページ",
+            scope: .document,
+            depth: 8,
+            rangeEvidence: .mismatching
+        )
+
+        let selection = try XCTUnwrap(VisionSelectionResolver.resolve(candidates: [candidate]))
+
+        XCTAssertEqual(selection.text, candidate.directText)
+        XCTAssertEqual(selection.kind, .text)
+    }
+
+    func testSelectionResolverUsesConsensusForNativeTextControl() throws {
+        let candidates = [
+            selectionCandidate(
+                text: "選択本文",
+                role: "AXTextArea",
+                scope: .focusedElement,
+                depth: 0,
+                pass: 1
+            ),
+            selectionCandidate(
+                text: "選択本文",
+                role: "AXTextArea",
+                scope: .focusedElement,
+                depth: 0,
+                pass: 2
+            ),
+            selectionCandidate(
+                text: "別の不安定な断片",
+                role: "AXGroup",
+                scope: .ancestor,
+                depth: 1,
+                pass: 1
+            ),
+        ]
+
+        let selection = try XCTUnwrap(VisionSelectionResolver.resolve(candidates: candidates))
+
+        XCTAssertEqual(selection.text, "選択本文")
+        XCTAssertEqual(selection.acquisition, .axSelectedText)
+    }
+
+    func testSelectionResolverDoesNotSubstituteStructureForMissingText() {
+        let candidate = selectionCandidate(
+            text: nil,
+            role: "AXHeading",
+            label: "件名",
+            scope: .ancestor,
+            depth: 2
+        )
+
+        XCTAssertNil(VisionSelectionResolver.resolve(candidates: [candidate]))
+    }
+
+    func testSelectionResolverFallsBackToVisualOnlyWithoutAXText() throws {
+        let selection = try XCTUnwrap(VisionSelectionResolver.resolve(
+            candidates: [],
+            visualSelectionHint: true
+        ))
+
+        XCTAssertEqual(selection.kind, .visualOnly)
+        XCTAssertNil(selection.text)
+        XCTAssertEqual(selection.acquisitionCompleteness, .visualOnly)
+    }
+
+    func testSelectionResolverRejectsEntirePathWhenSecureCandidateAppears() {
+        let ordinary = selectionCandidate(
+            text: "must not survive",
+            role: "AXTextArea",
+            scope: .focusedElement,
+            depth: 0
+        )
+        let secure = selectionCandidate(
+            text: nil,
+            role: "AXTextField",
+            scope: .ancestor,
+            depth: 1,
+            isSecure: true
+        )
+
+        XCTAssertNil(VisionSelectionResolver.resolve(candidates: [ordinary, secure]))
+    }
+
+    func testSelectionResolverKeepsDistinctValidSelectionFrames() throws {
+        let candidate = selectionCandidate(
+            text: "複数位置",
+            role: "AXWebArea",
+            scope: .document,
+            depth: 5,
+            selectionFrames: [
+                CGRect(x: 10, y: 20, width: 30, height: 40),
+                CGRect(x: 10, y: 20, width: 30, height: 40),
+                CGRect(x: 10, y: 80, width: 50, height: 20),
+                .zero,
+            ]
+        )
+
+        let selection = try XCTUnwrap(VisionSelectionResolver.resolve(candidates: [candidate]))
+
+        XCTAssertEqual(selection.frames, [
+            CGRect(x: 10, y: 20, width: 30, height: 40),
+            CGRect(x: 10, y: 80, width: 50, height: 20),
+        ])
+    }
+
+    private func selectionCandidate(
+        text: String?,
+        role: String?,
+        label: String? = nil,
+        scope: VisionSelectionCandidate.Scope,
+        depth: Int,
+        pass: Int = 1,
+        rangeEvidence: VisionSelectionCandidate.RangeEvidence = .unavailable,
+        selectionFrames: [CGRect] = [],
+        isSecure: Bool = false
+    ) -> VisionSelectionCandidate {
+        VisionSelectionCandidate(
+            directText: text,
+            role: role,
+            label: label,
+            containerFrame: nil,
+            selectionFrames: selectionFrames,
+            scope: scope,
+            depth: depth,
+            pass: pass,
+            rangeEvidence: rangeEvidence,
+            isSecure: isSecure
+        )
+    }
+
     private func attachment() -> ScreenshotAttachment {
         ScreenshotAttachment(
             url: URL(fileURLWithPath: "/tmp/focus-target.png"),

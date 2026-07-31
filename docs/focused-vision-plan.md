@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-31 ／ ステータス: プロジェクトA完了・プロジェクトC C1公開AX能力実測中
+最終更新: 2026-07-31 ／ ステータス: プロジェクトA完了・プロジェクトC C2完了／C3着手前
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -155,7 +155,6 @@ VisionSession
     ├─ selected text
     ├─ selection-related AX structure
     ├─ multiple frames
-    ├─ ordered segments（C1で必要性を実証した場合だけ）
     └─ acquisition completeness / capture visibility
 ```
 
@@ -221,17 +220,11 @@ Selection Extensionは、取得できた情報だけを持つセッション内�
 ```swift
 struct VisionSelectionContext {
     let text: String?
-    let segments: [SelectionSegment]
     let structures: [SelectionStructure]
     let frames: [CGRect]
     let acquisitionCompleteness: AcquisitionCompleteness
     let acquisition: Acquisition
     let captureVisibility: CaptureVisibility
-}
-
-struct SelectionSegment {
-    let text: String?
-    let frame: CGRect?
 }
 
 struct SelectionStructure {
@@ -248,7 +241,6 @@ struct SelectionStructure {
 ```
 
 - `text`: ユーザーが選択した論理的な全文。先頭segmentの別名にしない
-- `segments`: document selectionが成立しない場合の複数AX断片。C1で必要性を証明した時だけ持つ
 - `structures`: selection取得中にすでに得たAX／DOM相当のrole、label、relation、state、action、frame。
   text segmentとは独立させ、各項目にselectionとのrelationshipと
   `whole` / `partial` / `context` / `unknown`のcoverageを持つ
@@ -257,8 +249,8 @@ struct SelectionStructure {
   Gateway送信用の切り詰めとは別
 - `acquisition`: 公開AX range、複数AX fragment、画像上の選択等の取得方法
 - `captureVisibility`: `visible` / `partial` / `offCapture` / `unknown`
-- structureの`role` / `label` / `parentLabel`は本文の名前や要約ではない。coverageが`whole`と
-  根拠づけられない限り、選択全体を表すmetadataとして扱わない
+- structureの`role` / `label` / `parentLabel`は本文の名前や要約ではない。coverageはcontainerと
+  selection rangeの重なりだけを示し、`whole`でも選択全体を命名するmetadataとして扱わない
 
 制約:
 
@@ -266,8 +258,8 @@ struct SelectionStructure {
   作る。先頭だけを残す切り詰めは禁止する。
 - `complete`は「採用した公開AX APIがselection全体として返した値をローカルで切らずに取得した」
   ことを意味し、画像との完全一致を証明したという意味にはしない。
-- password等のsecure fieldは対象にもCompose入力先にも含めない。document root、text container、
-  segment fallbackの全経路で、値・label・frameを読む前にsecure判定を再適用する。
+- password等のsecure fieldは対象にもCompose入力先にも含めない。focused ancestor、document root、
+  text containerの全経路で、値・label・frameを読む前にsecure判定を再適用する。
 - AX値、アプリ名、ウインドウタイトル、矩形はusageへ保存しない。
 - selectionと画像はVision session終了時に破棄する。
 - AX要素参照そのものをGatewayへ送らない。送るのは必要な値だけ。
@@ -370,7 +362,7 @@ guidance > latest question > initial selection > initial observation
 - textを取得できた初回は、その全文を回答の主対象として実際に要約・説明する。「本文も選択されている」
   と選択状態だけを報告して説明を省略することを成功としない
 - screenshotから見た目、配置、選択ハイライト、現在状態を読む
-- AX／画面構造からselectionの意味、関係、操作可能性を読み、segmentsがある時は各断片を結び付ける
+- AX／画面構造からselectionの意味、関係、操作可能性を読む
 - Skillから製品固有の意味を読む
 - `partial` / `visualOnly`では取得できていない部分を完全な全文だと断定しない
 - 情報が矛盾する時も周辺証拠でselection scopeを書き換えず、ユーザーに意味のある不確実性だけを示す
@@ -491,7 +483,7 @@ probeの結果により、プロジェクトBは次のいずれかを選ぶ。
 
 `POST /api/ai/vision`、model route、response、fallback、Skill、Copilotは現行の1系統を維持する。
 プロジェクトCでは、現行`focus_target` / `visual_selection_hint`を内部的なSelection Extensionへ
-正規化し、任意の`selection`へ移行する。segmentsはC1で必要性を実証した場合だけ任意追加する。
+正規化し、任意の`selection`へ移行する。C1で必要性を確認できなかったsegment fallbackは追加しない。
 
 ```json
 {
@@ -534,25 +526,23 @@ probeの結果により、プロジェクトBは次のいずれかを選ぶ。
 
 - `selection`は任意。無ければ通常Visionと同一で、requestからselectionを除いた結果も通常Visionと
   同じ入力構成になる。
-- `text`はユーザーが選択した論理的な全文、またはそのbounded representationで、
-  `segments[0].text`から代用しない。
+- `text`はユーザーが選択した論理的な全文、またはそのbounded representationであり、
+  structure labelから代用しない。
 - selectionのwire text上限は現行と同じ12,000 UTF-16 unitsとする。上限超過時は先頭だけを残さず、
   省略量を含むmarkerを中央へ置く。marker分を除いたbudgetを頭尾へ半分ずつ割り当て、
   grapheme clusterを途中で壊さない。
 - `acquisition_completeness`はローカル取得状態、`wire_truncated`は送信時の削減で直交する。
   `complete`と`wire_truncated: true`は「全文を取得したがwire上はbounded representation」の意味で
   矛盾しない。`original_utf16_units`で元の規模を示す。
-- `segments`はC1でdocument selectionだけでは失われる独立情報を実証した場合だけ任意で送る。
-  wire schemaをC1より先に必須化しない。採用する場合はsegment text用の総量・件数・公平配分を
-  C1結果と同じcommitで追記し、その規則が確定するまでC3へ進まない。
-- `structures`はsegment fallbackとは独立した任意fieldである。selection取得時にすでに得た構造だけを
+- segment fallbackはC1で必要性が確認されなかったため、内部型とwire schemaへ追加しない。
+- `structures`は任意fieldである。selection取得時にすでに得た構造だけを
   boundedに送り、初回turnの全画面candidate walkを追加しない。relationshipとcoverageを必須にし、
   `partial` / `context` / `unknown`のlabelをselection全体の名前としてpromptへ書かない。
 - `kind: text`かつ`acquisition_completeness != visualOnly`では非空`text`を必須にする。structures、
   frames、labelだけでtext selectionを成立させない。
 - `frames`は0件以上を許し、単一unionへ潰さない。`capture_visibility`でcapture内との関係を示す。
 - 全`frame`はcapture画像座標へ正規化して送る。AXのグローバル座標をそのまま送らない。
-- text総量、segment数、structure数、frame数、各role／label／state／action長、制御文字、座標範囲を
+- text総量、structure数、frame数、各role／label／state／action長、制御文字、座標範囲を
   Gatewayで検証する。
 - selectionはモデル入力とセッション内UIだけに使い、usageや運用ログへ内容を保存しない。
 - 応答形式、model routing、fallback notice、Skill、candidate ID、Copilot guidanceは現行Visionと共通。
@@ -589,7 +579,7 @@ probeの結果により、プロジェクトBは次のいずれかを選ぶ。
 追加・拡張:
 
 - `AXFocusSnapshot` — focused element、編集可能性、document root、選択rangeを同じ時点で取得
-- `VisionSelectionContext` — 全文、ordered segments、複数frame、完全性を持つセッション内拡張
+- `VisionSelectionContext` — 全文、supporting structures、複数frame、完全性を持つセッション内拡張
 - `VisionSession` / `GatewayVisionClient` — 任意のSelection Extension
 - `VisionSessionView` — 複数位置、全文、取得完全性を示す対象カードとハイライト
 - `PasteDeployer` — プロジェクトAでは退避・復元をせず、明示送信時だけclipboard＋⌘V
@@ -830,7 +820,7 @@ capture外、prompt injection、secure再判定、恒久legacy adapterをC1前�
   「公開・文書化され製品が依存できる」を結果表で分け、未文書属性へ製品依存しない。
 - private API、合成⌘C、ページ内JavaScriptは使わない。probe本体は完了後に削除する。
 
-#### C1中間実測（2026-07-31）
+#### C1実測結果（2026-07-31）
 
 macOS 26.5（25F71）で、リポジトリ外の短命Swift probeをAccessibility許可済みの実行hostから使った。
 probeは選択本文、URL、title、labelを出力せず、文字数、改行数、SHA-256、range、frame、
@@ -856,17 +846,17 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 同じ属性が常に使える契約ではない。marker系は実際に列挙・取得できても公開契約とは分け、
 製品依存しない。
 
-中間結論:
+C1結論:
 
 - 「focused elementに近い最初の非空値」は廃止する。
 - 「常に最外側」へ単純に反転もしない。focused window／applicationからdocument候補を独立に集め、
   direct selected textの候補間／pass間consensus、非collapsed range、coverage、安定性を検証して
   採用する。range string一致は補強証拠に留める。
-- 現時点ではsegment fallbackを採用する根拠はない。Chromeの既知複数DOM選択は単一document
+- segment fallbackを採用しない。Chromeの既知複数DOM選択は単一document
   selectionで成立し、Safariは公開fragment集約ではなく`visualOnly`候補である。
-- Safari上のGmail、Slack、Apple Mailの製品固有画面はまだ未計測である。ユーザーデータを
-  probe用に選択・送信・下書き作成しないため、既知内容を安全に用意した手動実機確認を終えるまで
-  C1判定ゲートは閉じず、C2の製品コードへ進まない。
+- Safari上のGmail、Slack、Apple Mailの製品固有画面は、既知内容を安全に用意するC6の手動golden
+  pathで確認する。C1のアーキテクチャ判断はcontrolled WebKit／Chromium／AppKit／Electronと
+  Chrome Gmail実測で確定し、製品固有画面のためにresolver実装を止めない。
 
 #### Chrome Gmailの製品経路診断
 
@@ -899,11 +889,9 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 
 判定ゲート:
 
-- document selectionが対象製品で全文を返すなら、C2は検証済みdocument candidateの単一selectionを
-  主経路とし、
-  segmentsをwireへ追加しない。
-- document selectionが成立しない製品で、複数公開断片から情報量が増えると実証できた場合だけ
-  segment fallbackを内部型とwireへ追加する。
+- document selectionが全文を返す製品では、検証済みdocument candidateの単一selectionを主経路とする。
+- 公開断片の集約がdocument selectionやvisualOnlyより情報量を増やす結果は得られなかったため、
+  segment fallbackを内部型とwireへ追加しない。
 - WebKitで公開・文書化された経路から全文を取得できなければ、`visualOnly`を受け入れ可能な
   製品結果として記録し、観測した未文書属性へ依存しない。
 
@@ -917,14 +905,19 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
   coverageを保持する。局所構造をselection-wide metadataへ昇格させない。
 - 最初の非空祖先では止めずdocument候補を集め、C1で実証したdirect textの候補間／pass間consensus、
   非collapsed range、coverage、安定性を満たすdocument selectionを優先する。
-- C1の判定ゲートが必要とした場合だけ、ordered `SelectionSegment`、重複除去、全文組み立てを追加する。
 - 安定判定とbounded retryを純粋関数とunit testで固定する。
-- secure判定をfocused ancestor、document root、text container、segment fallbackの全経路で
+- secure判定をfocused ancestor、document root、text containerの全経路で
   値・label・frame読取より前に適用する。
 - 未使用の新`region` variantは作らず、現行`VisionFocusTarget.region`を製品modelから削除する。
 - この段階では右Shiftの本番入口とGateway requestを切り替えない。
 
 コミット境界: resolver、値model、unit testだけ。現行`VisionFocusTarget`経路はまだ稼働する。
+
+完了（2026-07-31）: `VisionSelectionContext`、`VisionSelectionStructure`、純粋
+`VisionSelectionResolver`を現行`VisionFocusTarget`と並存する内部型として追加した。document全文、
+native consensus、短いlabel不変、range不一致、visualOnly、secure拒否、複数frameを含む8件の
+resolver testを追加し、macOS全36 unit testが成功した。未使用のlegacy `region` variantも削除した。
+右Shift入口、Gateway request、UIは変更していない。
 
 ### C3 — Gateway契約とprompt加算
 
@@ -987,7 +980,7 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 - document root／text container／AXWebAreaの選択探索
 - 内側に短い断片、documentに全文がある時にcoverageとdirect text consensusから全文を選ぶこと
 - coldなChromium treeのbounded retryと期限終了
-- 単一range、複数segment、重複segment、逆方向選択、画面外を含む選択の全文構成
+- 単一range、逆方向選択、画面外を含むselection、複数frameの保持
 - textだけ、複数frameだけ、両方、どちらも無いSelection Extension
 - 12,000 UTF-16 units内の頭尾均等保持、省略marker、元UTF-16長、grapheme境界、制御文字、座標変換
 - acquisition completenessとwire truncation、capture visibilityの全組み合わせ
@@ -1041,8 +1034,7 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 - Focused VisionからSelection Extensionを除いた入力と実行経路が通常Visionと同一である。
 - selection全文は明示された質問対象として保持され、先頭AX／DOM相当fragmentへ縮約されない。
 - direct text consensusとcoverageを検証したdocument selectionを内側fragmentより優先し、
-  segment fallbackは
-  C1で必要性を証明した製品だけに使う。
+  segment fallbackを内部型・wire・promptへ持たない。
 - screenshot、現行の通常AX candidate policy、identity、Skill、turnsはselection追加時にも維持される。
 - 初回turnは通常／Focusedとも全画面AX候補を待たず、selection取得済み情報だけを追加する。
 - AXのrole、label、relation、actionは第一級の構造情報としてselection理解へ加算される。
@@ -1056,7 +1048,6 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 - Electron版Slack、TextEdit、Apple Mailでも選択の取得または安全な退化を確認する。
 - `partial`等の内部取得状態は開発情報に置き、表面で常時警告するのは`visualOnly`だけである。
 - 上限超過時も先頭だけを送らず、12,000 UTF-16 units内で頭尾を均等に保持して省略を明示する。
-- segmentsを採用する場合はC1結果のcommitで別の総量・件数・公平配分を確定してからC3へ進む。
 - 追加質問はlatest questionをscopeとして優先し、新captureへ古いselection payloadを送らない。
 - capture外のselectionを画像で確認できたと装わない。
 - selection本文中の命令はuntrusted dataとして扱うが、選択操作と本文全体が回答scopeであることは

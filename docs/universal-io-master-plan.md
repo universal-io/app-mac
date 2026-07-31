@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-31 ／ ステータス: `v0.2.1`正式公開済み、R10設計確定・実装前
+最終更新: 2026-07-31 ／ ステータス: `v0.2.1`正式公開済み、R10 C2完了・C3着手前
 
 ## 製品
 
@@ -284,7 +284,7 @@ R9プロジェクトAに残作業はない。AX直接入力probeとclipboard非�
 横断的な運用確認は[manual-golden-paths.md](manual-golden-paths.md)に残し、該当領域を変更する
 次回リリースで重点確認する。
 
-### R10 — Vision Selection Extension（設計確定・実装前）
+### R10 — Vision Selection Extension（C2完了・C3着手前）
 
 `v0.2.1`はFocused Visionを同じSession、View、Gateway route、モデルへ統合したが、選択取得は
 focused elementに近い最初の非空AX祖先で終了し、Gatewayはselectionがあると通常Visionの初期taskを
@@ -324,16 +324,14 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
 二重化しない。mode命令は単一request intent resolverで決定し、通常taskとselection taskを連結しない。
 
 - **C0（完了）** 要件、目標契約、復帰点、C1〜C6のcommit境界と受け入れ条件を正本へ固定した。
-- **C1（実測中）** リポジトリ外のread-only AX probeでChrome / Safari上のGmail、
-  Electron版Slack、TextEdit、Apple Mailの公開range能力を計測する。複数node、逆方向drag、
-  画面外、編集可能／read-only、内側／外側precedence、WebKitの列挙attributeを記録する。
-  document selectionが全文を返すならsegmentsを作らず、必要性を実証した場合だけfallbackを採用する。
-- **C2（未着手）** document root／text containerの全候補から、direct textの一致とcoverageを
-  検証した全文、複数frame、acquisition状態、
-  capture visibilityを解決する`VisionSelectionContext`とunit testを追加する。segmentsはC1で
-  必要性を証明した場合だけ追加する。selection本文とは独立した`SelectionStructure`へ取得済みの
-  role／label／relation／state／action／frameとcoverageを保持し、全経路で値読取前にsecure判定を
-  適用する。
+- **C1（完了）** リポジトリ外のread-only AX probeでChrome Gmail、controlled Safari／Chrome、
+  TextEdit、VS Codeを計測した。Chrome Gmailは単一document selectionで全文757 UTF-16 unitsを返し、
+  Safariは公開AX本文を返さないため`visualOnly`へ退化する。segment fallbackを採用せず、短命probeは
+  結果記録後に削除する。Safari Gmail、Slack、Apple Mailの製品固有golden pathはC6で確認する。
+- **C2（完了）** `VisionSelectionContext`、`VisionSelectionStructure`、複数frame、acquisition状態、
+  capture visibilityと純粋`VisionSelectionResolver`を追加した。document全文優先、native consensus、
+  短いlabelによる本文置換禁止、range不一致、visualOnly、secure拒否、frame重複除去をunit testで固定し、
+  36件が成功した。未使用`VisionFocusTarget.region`は削除した。現行本番入口はまだ切り替えていない。
 - **C3（未着手）** Gatewayへ後方互換な`selection`契約、恒久legacy adapter、共通内部型を追加する。
   promptをVision Core evidence／安全規則、単一intent resolver、任意selection dataへ分ける。
   初回の通常AX候補は両方とも空のままとし、selection取得済み構造だけを加える。12,000 UTF-16 units

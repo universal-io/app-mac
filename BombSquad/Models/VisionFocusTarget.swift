@@ -8,13 +8,11 @@ struct VisionFocusTarget: Equatable {
     enum Kind: String {
         case selectedText = "selected_text"
         case accessibilityElement = "accessibility_element"
-        case region
     }
 
     enum Source: String {
         case axSelectedText = "ax_selected_text"
         case axElement = "ax_element"
-        case userRegion = "user_region"
     }
 
     private static let maxTextCharacters = 12_000
@@ -32,8 +30,6 @@ struct VisionFocusTarget: Equatable {
         switch kind {
         case .selectedText:
             return "選択中のテキスト"
-        case .region:
-            return "選択した領域"
         case .accessibilityElement:
             switch role {
             case "AXButton":
@@ -66,8 +62,6 @@ struct VisionFocusTarget: Equatable {
             return "選択テキスト"
         case .axElement:
             return "画面要素"
-        case .userRegion:
-            return "選択領域"
         }
     }
 
@@ -93,18 +87,6 @@ struct VisionFocusTarget: Equatable {
             label: snapshot.label,
             frame: snapshot.frame,
             source: .axElement
-        )
-    }
-
-    static func region(_ frame: CGRect) -> VisionFocusTarget? {
-        guard frame.width > 0, frame.height > 0 else { return nil }
-        return VisionFocusTarget(
-            kind: .region,
-            text: nil,
-            role: nil,
-            label: nil,
-            frame: frame,
-            source: .userRegion
         )
     }
 
@@ -155,8 +137,6 @@ struct VisionFocusTarget: Equatable {
             guard payload["role"] != nil || payload["label"] != nil || payload["frame"] != nil else {
                 return nil
             }
-        case .region:
-            guard payload["frame"] != nil else { return nil }
         }
         return payload
     }
@@ -183,8 +163,7 @@ struct VisionFocusTarget: Equatable {
     private var sourceMatchesKind: Bool {
         switch (kind, source) {
         case (.selectedText, .axSelectedText),
-             (.accessibilityElement, .axElement),
-             (.region, .userRegion):
+             (.accessibilityElement, .axElement):
             return true
         default:
             return false
@@ -240,5 +219,265 @@ struct VisionFocusTarget: Equatable {
             used += units
         }
         return (result, used < value.utf16.count)
+    }
+}
+
+/// The next-generation optional input to the existing Vision session.
+///
+/// `text` is the answer scope explicitly chosen by the user. Supporting
+/// structure is intentionally stored beside it, never as a label or alias for
+/// it, so a short AX/DOM label cannot replace a multi-node selection.
+struct VisionSelectionContext: Equatable {
+    enum Kind: String, Equatable {
+        case text
+        case accessibilityElement = "accessibility_element"
+        case visualOnly = "visual_only"
+    }
+
+    enum AcquisitionCompleteness: String, Equatable {
+        case complete
+        case partial
+        case visualOnly = "visual_only"
+    }
+
+    enum Acquisition: String, Equatable {
+        case axDocumentSelection = "ax_document_selection"
+        case axSelectedText = "ax_selected_text"
+        case axElement = "ax_element"
+        case visualHighlight = "visual_highlight"
+    }
+
+    enum CaptureVisibility: String, Equatable {
+        case visible
+        case partial
+        case offCapture = "off_capture"
+        case unknown
+    }
+
+    let kind: Kind
+    let text: String?
+    let structures: [VisionSelectionStructure]
+    let frames: [CGRect]
+    let acquisitionCompleteness: AcquisitionCompleteness
+    let acquisition: Acquisition
+    let captureVisibility: CaptureVisibility
+
+    static func visualOnly() -> Self {
+        Self(
+            kind: .visualOnly,
+            text: nil,
+            structures: [],
+            frames: [],
+            acquisitionCompleteness: .visualOnly,
+            acquisition: .visualHighlight,
+            captureVisibility: .unknown
+        )
+    }
+}
+
+struct VisionSelectionStructure: Equatable {
+    enum Source: String, Equatable {
+        case ax
+        case dom
+    }
+
+    enum Relationship: String, Equatable {
+        case selectionContainer = "selection_container"
+        case intersectsSelection = "intersects_selection"
+        case surroundingContext = "surrounding_context"
+    }
+
+    enum Coverage: String, Equatable {
+        case whole
+        case partial
+        case context
+        case unknown
+    }
+
+    let source: Source
+    let role: String?
+    let label: String?
+    let parentLabel: String?
+    let relationship: Relationship
+    let states: [String]
+    let actions: [String]
+    let frame: CGRect?
+    let coverage: Coverage
+}
+
+/// A value-only observation from one AX container. Element references never
+/// enter this resolver. `rangeEvidence` can strengthen diagnostics and frame
+/// collection but cannot replace or veto stable direct selected text.
+struct VisionSelectionCandidate: Equatable {
+    enum Scope: Int, Equatable {
+        case focusedElement
+        case ancestor
+        case document
+    }
+
+    enum RangeEvidence: Equatable {
+        case unavailable
+        case matching
+        case mismatching
+    }
+
+    let directText: String?
+    let role: String?
+    let label: String?
+    let containerFrame: CGRect?
+    let selectionFrames: [CGRect]
+    let scope: Scope
+    let depth: Int
+    let pass: Int
+    let rangeEvidence: RangeEvidence
+    let isSecure: Bool
+}
+
+/// Chooses the selected text, not the most prominent structure around it.
+/// Document-level direct text wins when available; native/editable controls
+/// fall back to agreement across the observed containers and passes.
+enum VisionSelectionResolver {
+    static func resolve(
+        candidates: [VisionSelectionCandidate],
+        visualSelectionHint: Bool = false
+    ) -> VisionSelectionContext? {
+        // Encountering a secure field anywhere on the acquisition path is a
+        // hard stop. Do not salvage labels, frames, or text from another node.
+        guard !candidates.contains(where: \.isSecure) else { return nil }
+
+        let usable = candidates.compactMap { candidate -> TextCandidate? in
+            guard let text = meaningfulText(candidate.directText) else { return nil }
+            return TextCandidate(text: text, observation: candidate)
+        }
+        guard !usable.isEmpty else {
+            return visualSelectionHint ? .visualOnly() : nil
+        }
+
+        let groups = Dictionary(grouping: usable, by: \.text).values
+        guard let chosen = groups.max(by: { isLowerQuality($0, than: $1) }),
+              let representative = chosen.max(by: { left, right in
+                  if left.observation.scope.rawValue != right.observation.scope.rawValue {
+                      return left.observation.scope.rawValue < right.observation.scope.rawValue
+                  }
+                  return left.observation.depth < right.observation.depth
+              }) else {
+            return visualSelectionHint ? .visualOnly() : nil
+        }
+
+        let structures = deduplicatedStructures(from: chosen)
+        let frames = deduplicatedFrames(chosen.flatMap(\.observation.selectionFrames))
+        let hasDocument = chosen.contains { $0.observation.scope == .document }
+        return VisionSelectionContext(
+            kind: .text,
+            text: representative.text,
+            structures: structures,
+            frames: frames,
+            acquisitionCompleteness: .complete,
+            acquisition: hasDocument ? .axDocumentSelection : .axSelectedText,
+            captureVisibility: .unknown
+        )
+    }
+
+    private struct TextCandidate {
+        let text: String
+        let observation: VisionSelectionCandidate
+    }
+
+    private static func meaningfulText(_ value: String?) -> String? {
+        guard let value,
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return value
+    }
+
+    private static func isLowerQuality(
+        _ left: [TextCandidate],
+        than right: [TextCandidate]
+    ) -> Bool {
+        let leftScore = score(left)
+        let rightScore = score(right)
+        if leftScore.hasDocument != rightScore.hasDocument {
+            return !leftScore.hasDocument
+        }
+        if leftScore.passCount != rightScore.passCount {
+            return leftScore.passCount < rightScore.passCount
+        }
+        if leftScore.observationCount != rightScore.observationCount {
+            return leftScore.observationCount < rightScore.observationCount
+        }
+        if leftScore.utf16Units != rightScore.utf16Units {
+            return leftScore.utf16Units < rightScore.utf16Units
+        }
+        return leftScore.maxDepth < rightScore.maxDepth
+    }
+
+    private static func score(_ group: [TextCandidate]) -> (
+        hasDocument: Bool,
+        passCount: Int,
+        observationCount: Int,
+        utf16Units: Int,
+        maxDepth: Int
+    ) {
+        (
+            hasDocument: group.contains { $0.observation.scope == .document },
+            passCount: Set(group.map(\.observation.pass)).count,
+            observationCount: group.count,
+            utf16Units: group.first?.text.utf16.count ?? 0,
+            maxDepth: group.map(\.observation.depth).max() ?? 0
+        )
+    }
+
+    private static func deduplicatedStructures(
+        from candidates: [TextCandidate]
+    ) -> [VisionSelectionStructure] {
+        var result: [VisionSelectionStructure] = []
+        for candidate in candidates {
+            let observation = candidate.observation
+            guard observation.role != nil
+                    || observation.label != nil
+                    || valid(observation.containerFrame) != nil else {
+                continue
+            }
+            let structure = VisionSelectionStructure(
+                source: .ax,
+                role: observation.role,
+                label: observation.label,
+                parentLabel: nil,
+                relationship: .selectionContainer,
+                states: [],
+                actions: [],
+                frame: valid(observation.containerFrame),
+                // This describes text coverage by the container, not whether
+                // its label semantically names the selected text.
+                coverage: .whole
+            )
+            if !result.contains(structure) {
+                result.append(structure)
+            }
+        }
+        return result
+    }
+
+    private static func deduplicatedFrames(_ frames: [CGRect]) -> [CGRect] {
+        var result: [CGRect] = []
+        for frame in frames {
+            guard let frame = valid(frame), !result.contains(frame) else { continue }
+            result.append(frame)
+        }
+        return result
+    }
+
+    private static func valid(_ frame: CGRect?) -> CGRect? {
+        guard let frame,
+              frame.origin.x.isFinite,
+              frame.origin.y.isFinite,
+              frame.width.isFinite,
+              frame.height.isFinite,
+              frame.width > 0,
+              frame.height > 0 else {
+            return nil
+        }
+        return frame
     }
 }
