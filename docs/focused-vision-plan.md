@@ -259,17 +259,19 @@ struct SelectionSegment {
 ### 5.1 取得優先順位
 
 **主対策は、focused elementに近い最初の非空値で止まらず、document rootまで全候補を調べ、
-候補自身のtext／range対応とselection coverageを検証して、最も完全なdocument selectionを
-採用することである。外側という理由だけでは採用しない。複数segment集約は、この方式が成立しない
-製品でだけ使う受け皿であり、最初から必須のデータモデルやwire契約にしない。**
+direct selected textの候補間／pass間の一致、非collapsed range、selection coverageを検証して、
+最も完全なdocument selectionを採用することである。外側という理由だけでは採用しない。
+`AXStringForRange`との完全一致は補強証拠であり、Chrome Gmailで実測した表現差だけで安定した
+direct textを棄却しない。複数segment集約は、この方式が成立しない製品でだけ使う受け皿であり、
+最初から必須のデータモデルやwire契約にしない。**
 
 1. focused elementからdocument rootまでの祖先を調べ、selectionを返す各containerを記録する。
    最初の非空`AXSelectedText`では終了しない。
 2. 外側のdocument／text containerが公開する`AXSelectedTextRanges`、`AXSelectedTextRange`、
    `AXSelectedText`と`AXStringForRange`／`AXBoundsForRange`を、実際に対応する範囲で読む。
 3. rangeはそのAX要素の文字空間に属するローカル値として扱い、別の祖先・子孫へ流用しない。
-   各候補上で`AXSelectedText`と`AXStringForRange`の一致、非collapsed range、coverage、pass間の
-   安定を検証する。
+   direct `AXSelectedText`の候補間／pass間の一致、非collapsed range、coverage、pass間の安定を
+   検証する。`AXStringForRange`が一致すれば補強証拠とするが、不一致だけでdirect textを棄却しない。
 4. 検証済みdocument containerがselection全体として値を返せば、それを`complete`なselection
    textとして内側の断片より優先する。外側候補のrange/textが不整合なら採用しない。
 5. C1でdocument selectionが成立しないと確認した製品だけ、複数要素の断片を文書順で集約し、
@@ -767,6 +769,7 @@ JavaScript、private APIは使っていない。
 | --- | --- | --- | --- | --- |
 | TextEdit 1.20 (415) | 編集可能、既知文字列20 UTF-16 units | focused `AXTextArea`の`AXSelectedText`、単一range、複数ranges、`AXStringForRange`が同じ値。boundsも有効 | 不要 | 同一要素内の公開range経路を`complete`にできる |
 | Chrome 151.0.7922.72 | local read-only HTML、複数DOM、順方向／逆方向drag | `AXWebArea`が両方向とも選択全文106 unitsを返し、`AXSelectedText`と`AXStringForRange`が一致 | marker textも同値 | document candidateをfocusとは独立に探索すれば単一selectionで取得可能。公開boundsは0サイズでframe根拠には使えない |
+| Chrome 151.0.7922.72上のGmail | 実メール、複数DOM選択、同一状態を2 pass | focused `AXHeading`は空だが、2階層上の`AXGroup`からdocument `AXWebArea`まで同じdirect `AXSelectedText` 757 unitsを安定して返した。rangeは非collapsedで同じ長さだが、`AXStringForRange`は別hash | marker textはdirect textと同値 | direct textの候補間／pass間consensusを主証拠にする。range string完全一致を必須にすると全文を誤って棄却する。segmentsは不要 |
 | Safari 26.5 (21624.2.5.11.4) | 同じlocal HTML、複数DOM drag | 本文`AXWebArea`の公開`AXSelectedText*`は値を返さない。focusがアドレス欄に残る場合もある | 列挙されるmarker経路では129 unitsを観測 | focused ancestorだけではアドレス欄を誤採用し得る。未文書markerへ依存せず、本文は`visualOnly`へ安全に退化する |
 | VS Code 1.131.0 | Electron、編集可能、AX tree準備後 | 内側`AXTextArea`では`AXSelectedText`と`AXStringForRange`が一致。複数の外側ancestorでは同じ長さのrangeでも`AXStringForRange`が別値 | marker textは直接選択値と一致 | rangeは要素ローカル。最外側を無条件採用せず、候補自身でtext／range整合性を検証する |
 
@@ -784,10 +787,11 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 
 - 「focused elementに近い最初の非空値」は廃止する。
 - 「常に最外側」へ単純に反転もしない。focused window／applicationからdocument候補を独立に集め、
-  各候補上でdirect selected text、range/string一致、coverage、安定性を検証して採用する。
+  direct selected textの候補間／pass間consensus、非collapsed range、coverage、安定性を検証して
+  採用する。range string一致は補強証拠に留める。
 - 現時点ではsegment fallbackを採用する根拠はない。Chromeの既知複数DOM選択は単一document
   selectionで成立し、Safariは公開fragment集約ではなく`visualOnly`候補である。
-- Chrome／Safari上のGmail、Slack、Apple Mailの製品固有画面はまだ未計測である。ユーザーデータを
+- Safari上のGmail、Slack、Apple Mailの製品固有画面はまだ未計測である。ユーザーデータを
   probe用に選択・送信・下書き作成しないため、既知内容を安全に用意した手動実機確認を終えるまで
   C1判定ゲートは閉じず、C2の製品コードへ進まない。
 
@@ -807,8 +811,8 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 ### C2 — Selection Resolverとデータモデル
 
 - `VisionSelectionContext`、複数frame、acquisition completeness、capture visibilityを追加する。
-- 最初の非空祖先では止めずdocument候補を集め、C1で実証した候補自身のtext／range整合性、
-  coverage、安定性を満たすdocument selectionを優先する。
+- 最初の非空祖先では止めずdocument候補を集め、C1で実証したdirect textの候補間／pass間consensus、
+  非collapsed range、coverage、安定性を満たすdocument selectionを優先する。
 - C1の判定ゲートが必要とした場合だけ、ordered `SelectionSegment`、重複除去、全文組み立てを追加する。
 - 安定判定とbounded retryを純粋関数とunit testで固定する。
 - secure判定をfocused ancestor、document root、text container、segment fallbackの全経路で
@@ -925,7 +929,8 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 
 - Focused VisionからSelection Extensionを除いた入力と実行経路が通常Visionと同一である。
 - selection全文は明示された質問対象として保持され、先頭AX／DOM相当fragmentへ縮約されない。
-- 整合性とcoverageを検証したdocument selectionを内側fragmentより優先し、segment fallbackは
+- direct text consensusとcoverageを検証したdocument selectionを内側fragmentより優先し、
+  segment fallbackは
   C1で必要性を証明した製品だけに使う。
 - screenshot、現行の通常AX candidate policy、identity、Skill、turnsはselection追加時にも維持される。
 - 初回turnは通常／Focusedとも全画面AX候補を待たず、selection取得済み情報だけを追加する。
@@ -988,9 +993,9 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 - 通常Visionの証拠・安全規則をselection専用taskへ置換せず、selectionを参照データとして追記する。
   mode命令は単一request intent resolverで一度だけ決め、矛盾するtaskを連結しない。
 - 選択取得はAccessibility APIだけを使い、合成⌘Cへfallbackしない。
-- 主取得は最初の非空祖先で止まらずdocument候補を全て調べ、候補自身のtext／range整合性、
-  coverage、安定性を満たすselectionを優先する。segment集約はC1で必要性を実証した製品だけの
-  fallbackとする。
+- 主取得は最初の非空祖先で止まらずdocument候補を全て調べ、direct textの候補間／pass間consensus、
+  非collapsed range、coverage、安定性を満たすselectionを優先する。range string一致は補強証拠とし、
+  segment集約はC1で必要性を実証した製品だけのfallbackとする。
 - Chromium／Electronでは両AX属性、document root／text container探索、captureと並行するbounded retryを使う。
 - AXで対象を取れない場合、画像上の選択をbest-effortで読み、失敗時は通常Visionへ退化する。
 - Focused Visionは画面画像を使い、画面全体の文脈内で対象を説明する。

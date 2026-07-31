@@ -136,8 +136,10 @@ Focused Vision - Selection Extension = 通常Vision
 
 選択全文はユーザーが明示した回答対象として保持する。最初の非空祖先では止めずdocument rootまで
 全候補を調べる。ただしrangeはAX要素ごとのローカル値なので、外側という理由だけで採用せず、
-各候補自身の`AXSelectedText`、range、`AXStringForRange`の整合性とselection coverageを検証して
-最も完全なdocument selectionを採用する。複数segment集約は、実機probeで公開document selectionが
+direct `AXSelectedText`の候補間／pass間の一致、非collapsed range、selection coverageを検証して
+最も完全なdocument selectionを採用する。`AXStringForRange`との完全一致は補強証拠に留め、
+Chrome Gmailで実測した表現差を理由に安定したdirect textを捨てない。複数segment集約は、
+実機probeで公開document selectionが
 成立せず、公開断片の集約で情報量が増えると分かった製品だけのfallbackとする。
 
 通常Visionのスクリーンショット、現行のAX候補方針、画面identity、Skill、会話、Copilotを減らさず、
