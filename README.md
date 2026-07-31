@@ -148,12 +148,15 @@ Chrome Gmailで実測した表現差を理由に安定したdirect textを捨て
 
 通常Visionのスクリーンショット、現行のAX候補方針、画面identity、Skill、会話、Copilotを減らさず、
 選択取得時にすでに得た構造だけを追加する。初回応答の全画面AX候補は通常／Focusedとも現行どおり空とし、
-cold browser treeを待つ性能劣化を持ち込まない。AX／画面構造とVisionは引き続き第一級の情報源であり、
-選択テキストの代用品ではなく、意味・関係・操作可能性・見た目・配置を共同で理解するために使う。
+cold browser treeを待つ性能劣化を持ち込まない。初回Focused Visionでは、ユーザーの選択操作が
+回答scopeを決め、選択全文が必ず扱う対象そのものになる。AX／画面構造、スクリーンショット、Skillは
+意味・関係・操作可能性・見た目・配置を説明する重要情報だが、件名、label、目立つ要素で選択本文を
+置換・縮約・無視する権限は持たない。
 
 modeはguidance、最新質問、初回selection、初回observationの優先順で単一resolverが決め、
 矛盾する`observation`／`answer`命令を連結しない。長文は先頭だけへ切らず頭尾を均等に残し、
-selection本文は常にuntrusted dataとして扱う。新しいsurface、endpoint、model route、別promptは
+selection本文中の命令には従わないが、文字列全体がユーザーの指定対象であることは信頼する。
+新しいsurface、endpoint、model route、別promptは
 作らない。公開済み旧fieldは恒久入力adapterから同じ内部型へ正規化する。要件、
 マイルストーン、受け入れ条件、復帰点は
 [focused-vision-plan.md](docs/focused-vision-plan.md)のプロジェクトCと

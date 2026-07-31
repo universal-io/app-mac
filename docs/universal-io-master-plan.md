@@ -43,9 +43,11 @@ macOS UI
   記録し、運用上のDB書き込みをユーザーの待ち時間から外す。
 - Visionは画像、同一captureの候補、会話を1回のVLM呼び出しへ渡す。
 - Focused Visionは別taskではなく`Vision Core + Selection Extension`とする。selectionは
-  ユーザーが明示した回答scopeで、画像、現行の通常AX candidate policy、identity、Skill、会話、
+  ユーザーが明示した回答scopeである。初回は選択操作が対象を決め、選択全文を必ず扱う。画像、
+  現行の通常AX candidate policy、identity、Skill、会話、
   Copilotを減らさず、選択全文、取得済みの関連AX構造、複数frameを加える。selectionを除いた入力と
-  実行経路は通常Visionと同一でなければならない。segmentは実機で必要性を証明した場合だけ加える。
+  実行経路は通常Visionと同一でなければならない。周辺観測はselectionを説明する材料であり、
+  scopeを別のlabelや要素へ変更する権限を持たない。segmentは実機で必要性を証明した場合だけ加える。
 - Composeの先回り文案は共通判断、ユーザーが確認したファクト、任意のアプリ文脈を独立した添付として
   渡す。ファクトはglobalと画面に効いているツールのscopeだけを注入し、固定Personaは持たない。
   最新メッセージの話者・宛先・行為主体を確定してから、現在のユーザー視点で文案を作る。
@@ -306,6 +308,8 @@ Focused Vision - Selection Extension = 通常Vision
 
 selection全文はユーザーが明示した回答scopeとして保持する。screenshot、AX／画面構造、identity、
 Skillは引き続き第一級の観測であり、selectionの意味、関係、操作可能性、見た目、配置を共同で理解する。
+ここで第一級とは情報を捨てないという意味であり、回答scopeを決める権限が同格という意味ではない。
+初回のscopeは選択操作と選択全文が決め、周辺観測はそれを置換・縮約・無視できない。
 主対策はdocument rootまで全候補を調べ、direct selected textの候補間／pass間の一致、
 非collapsed range、selection coverageを検証して最も完全なdocument selectionを採用することである。
 rangeはAX要素ごとのローカル値であり、外側という理由だけでは採用しない。
