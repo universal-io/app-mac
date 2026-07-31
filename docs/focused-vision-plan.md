@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-08-01 ／ ステータス: プロジェクトA完了・プロジェクトC C4完了／C5着手前
+最終更新: 2026-08-01 ／ ステータス: プロジェクトA完了・プロジェクトC C5完了／C6着手前
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -978,6 +978,16 @@ document selectionを待つ。macOS unit test 35件が成功した。
 - VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionを確認する。
 
 コミット境界: Selection ExtensionのUI表示とアクセシビリティtestだけ。
+
+完了（2026-08-01）: 既存Visionパネルの右列へ「選択した内容」カードを追加し、選択全文を短いAX labelより
+先に表示する。長文は5行から全文スクロールへ展開でき、UI要素選択だけはその要素自身のlabelを使う。
+左の同一captureには交差する全frameをunionせず個別のアクセント色破線枠で描き、枠と「選択範囲（Nか所）」
+labelを併用する。`visualOnly`だけは「選択範囲を画像から確認中」と表面へ示し、通常のcomplete／partialや
+acquisitionは常時表示しない。位置不明とcapture外は事実として示す。既存の処理情報へ、selection内容を
+含めずkind、acquisition、segment／structure／frame数、completeness、capture visibility、wire truncationを
+追加した。操作はネイティブButtonでFull Keyboard Accessに乗り、VoiceOverの論理順序、Increase Contrast、
+Reduce Transparency、Reduce Motionに応答する。全文優先、全visible frame、visualOnly、要素label、capture外の
+presentationをunit testで固定し、macOS全39件が成功した。各支援設定を有効にした実機golden pathはC6で行う。
 
 ### C6 — 統合検証と完了記録
 

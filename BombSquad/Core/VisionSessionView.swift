@@ -48,6 +48,12 @@ struct VisionSessionView: View {
         session.screenshotHighlight
     }
 
+    private var selectionPresentation: VisionSelectionPresentation? {
+        session.selection.map {
+            VisionSelectionPresentation(selection: $0, attachment: session.attachment)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
@@ -97,7 +103,8 @@ struct VisionSessionView: View {
                     annotations: $annotations,
                     highlight: previewHighlight,
                     highlightTint: .red,
-                    highlightLabel: "次の操作"
+                    highlightLabel: "次の操作",
+                    selectionHighlights: selectionPresentation?.visibleFrames ?? []
                 )
                 .padding(4)
             }
@@ -108,6 +115,11 @@ struct VisionSessionView: View {
 
     private var conversationColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let selectionPresentation {
+                VisionSelectionCard(presentation: selectionPresentation)
+                    .accessibilitySortPriority(4)
+            }
+
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
@@ -202,6 +214,26 @@ struct VisionSessionView: View {
             lines.append("status: waiting")
         }
 
+        lines += ["", "[selection]"]
+        if let selection = session.selection {
+            let visibleFrameCount = selection.visibleNormalizedFrames(in: session.attachment).count
+            let wireTruncated = selection.wirePayload(for: session.attachment)?["wire_truncated"]
+                as? Bool ?? false
+            lines += [
+                "kind: \(selection.kind.rawValue)",
+                "acquisition: \(selection.acquisition.rawValue)",
+                "segment_count: \(selection.kind == .text ? 1 : 0)",
+                "structure_count: \(selection.structures.count)",
+                "frame_count: \(selection.frames.count)",
+                "visible_frame_count: \(visibleFrameCount)",
+                "acquisition_completeness: \(selection.acquisitionCompleteness.rawValue)",
+                "capture_visibility: \(selection.captureVisibility.rawValue)",
+                "wire_truncated: \(wireTruncated)",
+            ]
+        } else {
+            lines.append("status: none")
+        }
+
         lines += ["", "[accessibility]"]
         if let diagnostics = session.candidateDiagnostics {
             lines += [
@@ -286,6 +318,94 @@ struct VisionSessionView: View {
 #endif
             }
         }
+    }
+}
+
+private struct VisionSelectionCard: View {
+    let presentation: VisionSelectionPresentation
+
+    @State private var isExpanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    private var isLongText: Bool {
+        guard let text = presentation.bodyText else { return false }
+        return text.count > 280 || text.filter(\.isNewline).count > 4
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(presentation.title, systemImage: "scope")
+                .font(.headline)
+
+            if let text = presentation.bodyText, !text.isEmpty {
+                Group {
+                    if isExpanded {
+                        ScrollView {
+                            selectionText(text)
+                        }
+                        .frame(maxHeight: 180)
+                    } else {
+                        selectionText(text)
+                            .lineLimit(5)
+                    }
+                }
+
+                if isLongText {
+                    Button(isExpanded ? "折りたたむ" : "全文を表示") {
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .accessibilityLabel(
+                        isExpanded ? "選択した内容を折りたたむ" : "選択した内容の全文を表示"
+                    )
+                    .accessibilityHint(
+                        isExpanded
+                            ? "選択した内容を短く表示します"
+                            : "選択した内容全文をスクロール可能な領域に表示します"
+                    )
+                }
+            }
+
+            if let statusText = presentation.statusText {
+                Label(statusText, systemImage: "eye")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let positionText = presentation.positionText {
+                Label(
+                    positionText,
+                    systemImage: presentation.visibleFrames.isEmpty ? "info.circle" : "viewfinder"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(
+                    colorSchemeContrast == .increased ? Color.primary : Color.accentColor,
+                    lineWidth: colorSchemeContrast == .increased ? 2 : 1
+                )
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(presentation.title)
+    }
+
+    private func selectionText(_ text: String) -> some View {
+        Text(text)
+            .font(.body)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

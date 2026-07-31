@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-08-01 ／ ステータス: `v0.2.1`正式公開済み、R10 C4完了・C5着手前
+最終更新: 2026-08-01 ／ ステータス: `v0.2.1`正式公開済み、R10 C5完了・C6着手前
 
 ## 製品
 
@@ -284,7 +284,7 @@ R9プロジェクトAに残作業はない。AX直接入力probeとclipboard非�
 横断的な運用確認は[manual-golden-paths.md](manual-golden-paths.md)に残し、該当領域を変更する
 次回リリースで重点確認する。
 
-### R10 — Vision Selection Extension（C4完了・C5着手前）
+### R10 — Vision Selection Extension（C5完了・C6着手前）
 
 `v0.2.1`はFocused Visionを同じSession、View、Gateway route、モデルへ統合したが、選択取得は
 focused elementに近い最初の非空AX祖先で終了し、Gatewayはselectionがあると通常Visionの初期taskを
@@ -343,9 +343,12 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   削除し、画像上だけの選択も`visualOnly` extensionとして同じVision Coreへ渡す。追加質問は同じsessionの
   最新質問を優先し、Copilotの新captureへ古いselection payloadを渡さない。macOS unit test 35件が
   成功した。
-- **C5（未着手）** 同じVisionパネルへ全文と全visible frameを表示し、`visualOnly`だけを表面へ示す。
-  acquisition、segment数、capture visibility、wire truncationは情報ボタンへ置き、
-  VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionを確認する。
+- **C5（完了）** 同じVisionパネルへ選択全文カードと全visible frameの個別枠を追加した。テキスト選択を
+  短いstructure labelで置換せず、`visualOnly`だけを表面の取得状態として示す。位置不明／capture外は
+  その事実を表示し、acquisition、segment／structure／frame数、completeness、capture visibility、
+  wire truncationは内容なしで既存の処理情報へ追加した。ネイティブButton、VoiceOver順序、Increase
+  Contrast、Reduce Transparency、Reduce Motionへ対応し、presentationを含むmacOS unit test 39件が
+  成功した。
 - **C6（未着手）** 自動／実機golden path、API移行、privacy、通常Vision回帰、開始tagからの差分を
   検証する。warm時のGateway dispatch追加時間はp50 +50ms以内、p95 +150ms以内、cold時は
   既存2秒deadlineを延長しない。正本を実装済み状態へ更新する。

@@ -174,6 +174,69 @@ struct VisionSelectionContext: Equatable {
             captureVisibility: visibility
         )
     }
+
+    /// Selection frames clipped to the captured image and normalized to the
+    /// preview's top-left 0...1 coordinate space. Each frame stays separate;
+    /// the UI must not replace multiple selected regions with one union box.
+    func visibleNormalizedFrames(in attachment: ScreenshotAttachment) -> [CGRect] {
+        guard let captureRect = attachment.captureRect,
+              captureRect.width > 0,
+              captureRect.height > 0 else {
+            return []
+        }
+        return frames.compactMap { frame in
+            let visible = frame.intersection(captureRect)
+            guard !visible.isNull, visible.width > 0, visible.height > 0 else {
+                return nil
+            }
+            return CGRect(
+                x: (visible.minX - captureRect.minX) / captureRect.width,
+                y: (visible.minY - captureRect.minY) / captureRect.height,
+                width: visible.width / captureRect.width,
+                height: visible.height / captureRect.height
+            )
+        }
+    }
+}
+
+/// User-facing selection presentation derived without changing the Vision
+/// request. Text selections always show the selected text itself; supporting
+/// structure labels can name an explicitly selected UI element, but can never
+/// replace text selection content.
+struct VisionSelectionPresentation: Equatable {
+    let title: String
+    let bodyText: String?
+    let statusText: String?
+    let positionText: String?
+    let visibleFrames: [CGRect]
+
+    init(selection: VisionSelectionContext, attachment: ScreenshotAttachment) {
+        visibleFrames = selection.visibleNormalizedFrames(in: attachment)
+        switch selection.kind {
+        case .text:
+            title = "選択した内容"
+            bodyText = selection.text
+            statusText = nil
+        case .accessibilityElement:
+            title = "選択した画面要素"
+            bodyText = selection.structures.lazy.compactMap(\.label).first { !$0.isEmpty }
+            statusText = nil
+        case .visualOnly:
+            title = "選択範囲"
+            bodyText = nil
+            statusText = "選択範囲を画像から確認中"
+        }
+
+        if !visibleFrames.isEmpty {
+            positionText = "\(visibleFrames.count)か所の選択位置を表示中"
+        } else if selection.kind == .visualOnly {
+            positionText = nil
+        } else if selection.captureVisibility == .offCapture {
+            positionText = "選択位置はこのスクリーンショットの範囲外です"
+        } else {
+            positionText = "スクリーンショット上の位置は取得できませんでした"
+        }
+    }
 }
 
 struct VisionSelectionStructure: Equatable {

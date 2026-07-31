@@ -1,6 +1,6 @@
 # Universal I/O Gateway API契約
 
-最終更新: 2026-08-01 ／ ステータス: 現行（`v0.2.1`正式公開済み）＋R10 C4実装済み契約
+最終更新: 2026-08-01 ／ ステータス: 現行（`v0.2.1`正式公開済み）＋R10 Selection Extension契約
 
 R9 A7でproduction buildのroute一覧とmacOSクライアントを再照合し、AI endpointが
 `review`、`suggest`、`transcribe`、`vision`の4つだけであることを確認した。

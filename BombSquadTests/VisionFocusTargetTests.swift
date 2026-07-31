@@ -286,6 +286,96 @@ final class VisionSelectionContextTests: XCTestCase {
         )
     }
 
+    func testTextSelectionPresentationShowsFullTextAndEveryVisibleFrame() {
+        let selection = VisionSelectionContext(
+            kind: .text,
+            text: "件名と、ユーザーが明示的に選択した本文全体",
+            structures: [
+                VisionSelectionStructure(
+                    source: .ax,
+                    role: "AXHeading",
+                    label: "短い件名",
+                    parentLabel: "Gmail",
+                    relationship: .intersectsSelection,
+                    states: [],
+                    actions: [],
+                    frame: nil,
+                    coverage: .partial
+                ),
+            ],
+            frames: [
+                CGRect(x: 150, y: 250, width: 100, height: 50),
+                CGRect(x: 50, y: 150, width: 100, height: 100),
+                CGRect(x: 700, y: 700, width: 20, height: 20),
+            ],
+            acquisitionCompleteness: .complete,
+            acquisition: .axDocumentSelection,
+            captureVisibility: .partial
+        )
+
+        let presentation = VisionSelectionPresentation(
+            selection: selection,
+            attachment: attachment()
+        )
+
+        XCTAssertEqual(presentation.title, "選択した内容")
+        XCTAssertEqual(presentation.bodyText, selection.text)
+        XCTAssertNotEqual(presentation.bodyText, "短い件名")
+        XCTAssertEqual(presentation.visibleFrames.count, 2)
+        XCTAssertEqual(presentation.positionText, "2か所の選択位置を表示中")
+        XCTAssertNil(presentation.statusText)
+    }
+
+    func testVisualOnlyPresentationAnnouncesImageInspection() {
+        let presentation = VisionSelectionPresentation(
+            selection: .visualOnly(captureVisibility: .visible),
+            attachment: attachment()
+        )
+
+        XCTAssertEqual(presentation.title, "選択範囲")
+        XCTAssertEqual(presentation.statusText, "選択範囲を画像から確認中")
+        XCTAssertNil(presentation.bodyText)
+        XCTAssertNil(presentation.positionText)
+    }
+
+    func testElementPresentationMayUseItsOwnLabel() throws {
+        let selection = try XCTUnwrap(VisionSelectionContext.accessibilityElement(
+            role: "AXButton",
+            label: "送信",
+            frame: CGRect(x: 150, y: 250, width: 100, height: 50)
+        ))
+        let presentation = VisionSelectionPresentation(
+            selection: selection,
+            attachment: attachment()
+        )
+
+        XCTAssertEqual(presentation.title, "選択した画面要素")
+        XCTAssertEqual(presentation.bodyText, "送信")
+        XCTAssertEqual(presentation.positionText, "1か所の選択位置を表示中")
+    }
+
+    func testOffCapturePresentationDoesNotClaimAVisiblePosition() {
+        let selection = VisionSelectionContext(
+            kind: .text,
+            text: "画面外の選択",
+            structures: [],
+            frames: [CGRect(x: 700, y: 700, width: 20, height: 20)],
+            acquisitionCompleteness: .complete,
+            acquisition: .axSelectedText,
+            captureVisibility: .offCapture
+        )
+        let presentation = VisionSelectionPresentation(
+            selection: selection,
+            attachment: attachment()
+        )
+
+        XCTAssertTrue(presentation.visibleFrames.isEmpty)
+        XCTAssertEqual(
+            presentation.positionText,
+            "選択位置はこのスクリーンショットの範囲外です"
+        )
+    }
+
     private func selectionCandidate(
         text: String?,
         role: String?,

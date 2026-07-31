@@ -166,7 +166,10 @@ Selection resolver／データモデル、C3の後方互換Gateway契約／単�
 候補から選択全文を決め、同時に得た短い部分候補は本文の代替ではなく補助構造として保持する。
 macOSクライアントは旧`focus_target`／`visual_selection_hint`を送らず、通常Visionと同じ画像、identity、
 Skill、会話、model routeへ任意`selection`だけを加える。旧fieldの受理は公開済みクライアント向けGateway
-adapterだけに残る。単一対象を表示していた旧カードは撤去し、複数frameと全文の表示はC5で追加する。
+adapterだけに残る。C5では同じVisionパネルへ選択全文カードを追加し、captureと交差する全frameを別々に
+表示する。短いAX labelをテキスト選択の見出しへ使わず、`visualOnly`だけを表面の取得状態として示す。
+acquisition、frame数、capture visibility、wire truncationは内容を含めず既存の処理情報へ置く。
+残るC6は実機golden path、性能、privacy、通常Vision回帰、開始tagからの差分を検証する最終工程である。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
