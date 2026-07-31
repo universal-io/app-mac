@@ -123,7 +123,7 @@ Developer ID署名、notarization、staple、Gatekeeper評価を完了し、検�
 ### 次期改修: Vision Selection Extension
 
 現行`v0.2.1`は同じVisionパネル、Gateway、モデル、スクリーンショットを使う一方、選択取得が
-focused elementの最も近い単一AX祖先で止まり、初期promptも通常Visionへ情報を加えるのではなく
+focused elementに近い最初の非空AX祖先で止まり、初期promptも通常Visionへ情報を加えるのではなく
 selection専用taskへ置き換える。このため、Gmail等で複数の画面構造にまたがって選択した全文が
 先頭断片へ縮約され、画像・AX・Skillを使えるのにタイトルだけを説明する結果になり得る。
 
@@ -134,13 +134,19 @@ Focused Vision = Vision Core + Selection Extension
 Focused Vision - Selection Extension = 通常Vision
 ```
 
-選択全文はユーザーが明示した回答対象として保持する。通常Visionのスクリーンショット、AX候補、
-画面identity、Skill、会話、Copilotを一切減らさず、選択に関係する複数segment、role／label、
-複数位置、取得完全性を追加する。AX／画面構造とVisionは引き続き第一級の情報源であり、選択テキストの
-代用品ではなく、意味・関係・操作可能性・見た目・配置を共同で理解するために使う。
+選択全文はユーザーが明示した回答対象として保持する。最初の非空祖先では止めずdocument rootまで
+調べ、外側のdocument selectionを優先する。複数segment集約は、実機probeでdocument selectionが
+成立しないと分かった製品だけのfallbackとする。
 
-新しいsurface、endpoint、model route、別promptは作らない。現行APIとの後方互換を保ってから
-macOSを切り替え、最終的に同じ`VisionSession`のoptional extensionとして一本化する。要件、
+通常Visionのスクリーンショット、現行のAX候補方針、画面identity、Skill、会話、Copilotを減らさず、
+選択取得時にすでに得た構造だけを追加する。初回応答の全画面AX候補は通常／Focusedとも現行どおり空とし、
+cold browser treeを待つ性能劣化を持ち込まない。AX／画面構造とVisionは引き続き第一級の情報源であり、
+選択テキストの代用品ではなく、意味・関係・操作可能性・見た目・配置を共同で理解するために使う。
+
+modeはguidance、最新質問、初回selection、初回observationの優先順で単一resolverが決め、
+矛盾する`observation`／`answer`命令を連結しない。長文は先頭だけへ切らず頭尾を均等に残し、
+selection本文は常にuntrusted dataとして扱う。新しいsurface、endpoint、model route、別promptは
+作らない。公開済み旧fieldは恒久入力adapterから同じ内部型へ正規化する。要件、
 マイルストーン、受け入れ条件、復帰点は
 [focused-vision-plan.md](docs/focused-vision-plan.md)のプロジェクトCと
 [マスタープラン R10](docs/universal-io-master-plan.md)を正本とする。現時点では設計確定・実装前である。
