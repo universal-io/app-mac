@@ -409,6 +409,9 @@ final class VisionSession: ObservableObject {
                     try? FileManager.default.removeItem(at: capture.attachment.url)
                     return
                 }
+                // Confirm the exact adopted frame after capture, without
+                // delaying AX collection or the Gateway request.
+                CopilotCaptureCuePresenter.shared.flash(for: capture.attachment)
 #if DEBUG
                 NSLog(
                     "Vision progress capture adopted changeObserved=%d settled=%d",

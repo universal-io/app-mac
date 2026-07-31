@@ -469,6 +469,116 @@ enum StableScreenCaptureService {
     }
 }
 
+/// A non-blocking confirmation shown only after Copilot has selected the
+/// capture it will send to Vision. Stability probes stay invisible: flashing
+/// every comparison frame would imply that each one was analyzed by the model.
+@MainActor
+final class CopilotCaptureCuePresenter {
+    static let shared = CopilotCaptureCuePresenter()
+
+    private var windows: [NSWindow] = []
+    private var hideTask: Task<Void, Never>?
+    private var generation = 0
+
+    private init() {}
+
+    func flash(for attachment: ScreenshotAttachment) {
+        hideTask?.cancel()
+        hide()
+        generation += 1
+        let currentGeneration = generation
+
+        if let captureRect = attachment.captureRect, !captureRect.isEmpty {
+            let window = makeWindow(frame: captureRect)
+            windows = [window]
+        } else {
+            windows = NSScreen.screens.map { makeWindow(frame: $0.frame) }
+        }
+
+        let displayedWindows = windows
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        hideTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: reduceMotion ? 140_000_000 : 70_000_000)
+            guard !Task.isCancelled, self?.generation == currentGeneration else { return }
+
+            if reduceMotion {
+                self?.hide()
+                return
+            }
+
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.14
+                displayedWindows.forEach { $0.animator().alphaValue = 0 }
+            } completionHandler: { [weak self] in
+                Task { @MainActor in
+                    guard self?.generation == currentGeneration else { return }
+                    self?.hide()
+                }
+            }
+        }
+    }
+
+    private func makeWindow(frame: CGRect) -> NSWindow {
+        let window = OverlayWindow(clickThrough: true)
+        window.place(globalFrame: frame)
+        window.alphaValue = 1
+        window.contentView = CopilotCaptureCueView(
+            frame: NSRect(origin: .zero, size: frame.size)
+        )
+        window.orderFrontRegardless()
+        return window
+    }
+
+    private func hide() {
+        windows.forEach { $0.orderOut(nil) }
+        windows.removeAll()
+        hideTask = nil
+    }
+}
+
+private final class CopilotCaptureCueView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        NSColor.black.withAlphaComponent(0.22).setFill()
+        bounds.fill()
+
+        let borderRect = bounds.insetBy(dx: 8, dy: 8)
+        let border = NSBezierPath(roundedRect: borderRect, xRadius: 12, yRadius: 12)
+        border.lineWidth = 3
+        NSColor.controlAccentColor.withAlphaComponent(0.9).setStroke()
+        border.stroke()
+
+        guard bounds.width >= 100, bounds.height >= 100,
+              let eye = NSImage(
+                systemSymbolName: "eye.fill",
+                accessibilityDescription: "画面を確認しました"
+              ) else { return }
+        let symbol = eye.withSymbolConfiguration(
+            .init(pointSize: 26, weight: .semibold)
+        ) ?? eye
+        symbol.isTemplate = true
+        let symbolRect = NSRect(
+            x: bounds.midX - 24,
+            y: bounds.midY - 24,
+            width: 48,
+            height: 48
+        )
+        NSColor.white.withAlphaComponent(0.95).set()
+        symbol.draw(in: symbolRect)
+    }
+}
+
 final class ScreenshotCaptureCuePresenter {
     private var windows: [NSWindow] = []
 

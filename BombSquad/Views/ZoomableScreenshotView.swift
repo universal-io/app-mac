@@ -36,6 +36,8 @@ struct ZoomableScreenshotView: View {
     @State private var offset: CGSize = .zero
     /// Live drag translation while the hand tool is down.
     @State private var panTranslation: CGSize = .zero
+    /// Drives the grab cursor while the screenshot itself is being moved.
+    @State private var isPanning = false
     /// In-progress annotation rectangle (normalized) while the pen drags.
     @State private var draftRect: CGRect?
 
@@ -61,6 +63,10 @@ struct ZoomableScreenshotView: View {
             }
             .frame(width: container.width, height: container.height)
             .clipped()
+            .overlay {
+                ScreenshotPanCursor(cursor: isPanning ? .closedHand : .openHand)
+                    .allowsHitTesting(false)
+            }
             .gesture(dragGesture(in: container))
             .simultaneousGesture(magnifyGesture(in: container))
             .onTapGesture(count: 2) {
@@ -157,6 +163,7 @@ struct ZoomableScreenshotView: View {
             .onChanged { value in
                 switch tool {
                 case .pan:
+                    isPanning = true
                     panTranslation = value.translation
                 case .annotate:
                     let layout = layout(in: container)
@@ -173,6 +180,7 @@ struct ZoomableScreenshotView: View {
             .onEnded { _ in
                 switch tool {
                 case .pan:
+                    isPanning = false
                     offset.width += panTranslation.width
                     offset.height += panTranslation.height
                     panTranslation = .zero
@@ -326,6 +334,84 @@ struct ZoomableScreenshotView: View {
                         .allowsHitTesting(false)
                 }
             }
+        }
+    }
+}
+
+/// Cursor rectangles are the reliable macOS way to advertise direct
+/// manipulation without adding a separate hand-tool control to the UI.
+private struct ScreenshotPanCursor: NSViewRepresentable {
+    let cursor: NSCursor
+
+    func makeNSView(context: Context) -> CursorView {
+        CursorView(cursor: cursor)
+    }
+
+    func updateNSView(_ nsView: CursorView, context: Context) {
+        nsView.cursor = cursor
+    }
+
+    final class CursorView: NSView {
+        private var previousWindowBackgroundDragging: Bool?
+
+        var cursor: NSCursor {
+            didSet {
+                guard oldValue != cursor else { return }
+                window?.invalidateCursorRects(for: self)
+            }
+        }
+
+        init(cursor: NSCursor) {
+            self.cursor = cursor
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(
+                rect: .zero,
+                options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
+                owner: self,
+                userInfo: nil
+            ))
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            super.mouseEntered(with: event)
+            guard previousWindowBackgroundDragging == nil, let window else { return }
+            previousWindowBackgroundDragging = window.isMovableByWindowBackground
+            // The borderless panel normally moves from empty background.
+            // While the pointer is over the screenshot, its drag gesture owns
+            // the same mouse event and must pan the image instead.
+            window.isMovableByWindowBackground = false
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            restoreWindowBackgroundDragging()
+            super.mouseExited(with: event)
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow !== window {
+                restoreWindowBackgroundDragging()
+            }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: cursor)
+        }
+
+        private func restoreWindowBackgroundDragging() {
+            guard let previousWindowBackgroundDragging else { return }
+            window?.isMovableByWindowBackground = previousWindowBackgroundDragging
+            self.previousWindowBackgroundDragging = nil
         }
     }
 }
