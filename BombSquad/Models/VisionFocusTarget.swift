@@ -1,228 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// The optional subject of a Vision session. Coordinates stay in global AX
-/// space locally so A3 can draw the overlay; only the Gateway payload converts
-/// them into capture-local pixels. No AX element reference is retained.
-struct VisionFocusTarget: Equatable {
-    enum Kind: String {
-        case selectedText = "selected_text"
-        case accessibilityElement = "accessibility_element"
-    }
-
-    enum Source: String {
-        case axSelectedText = "ax_selected_text"
-        case axElement = "ax_element"
-    }
-
-    private static let maxTextCharacters = 12_000
-    private static let maxRoleCharacters = 128
-    private static let maxLabelCharacters = 512
-
-    let kind: Kind
-    let text: String?
-    let role: String?
-    let label: String?
-    let frame: CGRect?
-    let source: Source
-
-    var displayTitle: String {
-        switch kind {
-        case .selectedText:
-            return "選択中のテキスト"
-        case .accessibilityElement:
-            switch role {
-            case "AXButton":
-                return "選択中のボタン"
-            case "AXLink":
-                return "選択中のリンク"
-            case "AXImage":
-                return "選択中の画像"
-            case "AXCheckBox":
-                return "選択中のチェックボックス"
-            case "AXRadioButton":
-                return "選択中のラジオボタン"
-            case "AXTab":
-                return "選択中のタブ"
-            case "AXRow":
-                return "選択中の行"
-            case "AXCell":
-                return "選択中のセル"
-            case "AXTextField", "AXTextArea":
-                return "選択中のテキストフィールド"
-            default:
-                return "選択中の画面要素"
-            }
-        }
-    }
-
-    var sourceDescription: String {
-        switch source {
-        case .axSelectedText:
-            return "選択テキスト"
-        case .axElement:
-            return "画面要素"
-        }
-    }
-
-    static func from(snapshot: AXFocusSnapshot) -> VisionFocusTarget? {
-        guard !snapshot.isSecureField else { return nil }
-        if let text = normalized(snapshot.selectedText), !text.isEmpty {
-            return VisionFocusTarget(
-                kind: .selectedText,
-                text: text,
-                role: snapshot.role,
-                label: snapshot.label,
-                frame: snapshot.frame,
-                source: .axSelectedText
-            )
-        }
-        guard AXFocusLaunchDecision.destination(for: snapshot) == .focusedVision else {
-            return nil
-        }
-        return VisionFocusTarget(
-            kind: .accessibilityElement,
-            text: nil,
-            role: snapshot.role,
-            label: snapshot.label,
-            frame: snapshot.frame,
-            source: .axElement
-        )
-    }
-
-    /// Returns the strict wire representation. Text is bounded here so the
-    /// session can keep the complete local selection for the A3 target card.
-    func wirePayload(for attachment: ScreenshotAttachment) -> [String: Any]? {
-        guard sourceMatchesKind else { return nil }
-
-        var payload: [String: Any] = [
-            "kind": kind.rawValue,
-            "source": source.rawValue,
-        ]
-        let normalizedText = Self.normalized(text)
-        let boundedText = normalizedText.map {
-            Self.bounded($0, maxUTF16Units: Self.maxTextCharacters)
-        }
-        let truncatedText = boundedText?.value
-        let truncated = boundedText?.truncated ?? false
-        if let truncatedText, !truncatedText.isEmpty {
-            payload["text"] = truncatedText
-        }
-        if let role = Self.normalized(role), !role.isEmpty {
-            payload["role"] = Self.bounded(
-                role,
-                maxUTF16Units: Self.maxRoleCharacters
-            ).value
-        }
-        if let label = Self.normalized(label), !label.isEmpty {
-            payload["label"] = Self.bounded(
-                label,
-                maxUTF16Units: Self.maxLabelCharacters
-            ).value
-        }
-        if let frame = capturePixelFrame(for: attachment) {
-            payload["frame"] = [
-                "x": Double(frame.minX),
-                "y": Double(frame.minY),
-                "width": Double(frame.width),
-                "height": Double(frame.height),
-            ]
-        }
-        payload["truncated"] = truncated
-
-        switch kind {
-        case .selectedText:
-            guard payload["text"] != nil else { return nil }
-        case .accessibilityElement:
-            guard payload["role"] != nil || payload["label"] != nil || payload["frame"] != nil else {
-                return nil
-            }
-        }
-        return payload
-    }
-
-    /// Returns the target in the preview's normalized top-left coordinate
-    /// space. A target outside the captured display, or a capture whose
-    /// origin is unknown, deliberately has no drawable location.
-    func normalizedFrame(in attachment: ScreenshotAttachment) -> CGRect? {
-        guard let pixelFrame = capturePixelFrame(for: attachment),
-              let pixelWidth = attachment.pixelWidth,
-              let pixelHeight = attachment.pixelHeight,
-              pixelWidth > 0,
-              pixelHeight > 0 else {
-            return nil
-        }
-        return CGRect(
-            x: pixelFrame.minX / CGFloat(pixelWidth),
-            y: pixelFrame.minY / CGFloat(pixelHeight),
-            width: pixelFrame.width / CGFloat(pixelWidth),
-            height: pixelFrame.height / CGFloat(pixelHeight)
-        )
-    }
-
-    private var sourceMatchesKind: Bool {
-        switch (kind, source) {
-        case (.selectedText, .axSelectedText),
-             (.accessibilityElement, .axElement):
-            return true
-        default:
-            return false
-        }
-    }
-
-    private func capturePixelFrame(for attachment: ScreenshotAttachment) -> CGRect? {
-        guard let frame,
-              let captureRect = attachment.captureRect,
-              let pixelWidth = attachment.pixelWidth,
-              let pixelHeight = attachment.pixelHeight,
-              captureRect.width > 0,
-              captureRect.height > 0,
-              pixelWidth > 0,
-              pixelHeight > 0 else {
-            return nil
-        }
-        let visible = frame.intersection(captureRect)
-        guard !visible.isNull, visible.width > 0, visible.height > 0 else { return nil }
-        let scaleX = CGFloat(pixelWidth) / captureRect.width
-        let scaleY = CGFloat(pixelHeight) / captureRect.height
-        return CGRect(
-            x: (visible.minX - captureRect.minX) * scaleX,
-            y: (visible.minY - captureRect.minY) * scaleY,
-            width: visible.width * scaleX,
-            height: visible.height * scaleY
-        )
-    }
-
-    private static func normalized(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let scalars = value.unicodeScalars.filter { scalar in
-            scalar == "\n" || scalar == "\t" || (scalar.value >= 0x20 && scalar.value != 0x7f)
-        }
-        return String(String.UnicodeScalarView(scalars))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// JavaScript validates String.length (UTF-16 code units), so bound by the
-    /// same unit here. Swift Character counts would let emoji exceed the
-    /// Gateway limit even though the visible character count looked valid.
-    private static func bounded(
-        _ value: String,
-        maxUTF16Units: Int
-    ) -> (value: String, truncated: Bool) {
-        var result = ""
-        var used = 0
-        for character in value {
-            let piece = String(character)
-            let units = piece.utf16.count
-            guard used + units <= maxUTF16Units else { break }
-            result.append(character)
-            used += units
-        }
-        return (result, used < value.utf16.count)
-    }
-}
-
-/// The next-generation optional input to the existing Vision session.
+/// The optional Selection Extension added to the existing Vision session.
 ///
 /// `text` is the answer scope explicitly chosen by the user. Supporting
 /// structure is intentionally stored beside it, never as a label or alias for
@@ -266,7 +45,9 @@ struct VisionSelectionContext: Equatable {
     let acquisition: Acquisition
     let captureVisibility: CaptureVisibility
 
-    static func visualOnly() -> Self {
+    static func visualOnly(
+        captureVisibility: CaptureVisibility = .unknown
+    ) -> Self {
         Self(
             kind: .visualOnly,
             text: nil,
@@ -274,6 +55,35 @@ struct VisionSelectionContext: Equatable {
             frames: [],
             acquisitionCompleteness: .visualOnly,
             acquisition: .visualHighlight,
+            captureVisibility: captureVisibility
+        )
+    }
+
+    static func accessibilityElement(
+        role: String?,
+        label: String?,
+        frame: CGRect?
+    ) -> Self? {
+        guard role != nil || label != nil || frame != nil else { return nil }
+        return Self(
+            kind: .accessibilityElement,
+            text: nil,
+            structures: [
+                VisionSelectionStructure(
+                    source: .ax,
+                    role: role,
+                    label: label,
+                    parentLabel: nil,
+                    relationship: .selectionContainer,
+                    states: [],
+                    actions: [],
+                    frame: frame,
+                    coverage: .unknown
+                ),
+            ],
+            frames: frame.map { [$0] } ?? [],
+            acquisitionCompleteness: .complete,
+            acquisition: .axElement,
             captureVisibility: .unknown
         )
     }
@@ -324,6 +134,45 @@ struct VisionSelectionContext: Equatable {
                   payload["text"] == nil else { return nil }
         }
         return payload
+    }
+
+    func resolvingCaptureVisibility(for attachment: ScreenshotAttachment) -> Self {
+        guard !frames.isEmpty,
+              let captureRect = attachment.captureRect,
+              captureRect.width > 0,
+              captureRect.height > 0 else {
+            return self
+        }
+        var fullyVisible = 0
+        var partiallyVisible = 0
+        for frame in frames {
+            let intersection = frame.intersection(captureRect)
+            guard !intersection.isNull, intersection.width > 0, intersection.height > 0 else {
+                continue
+            }
+            if intersection == frame {
+                fullyVisible += 1
+            } else {
+                partiallyVisible += 1
+            }
+        }
+        let visibility: CaptureVisibility
+        if fullyVisible == frames.count {
+            visibility = .visible
+        } else if fullyVisible > 0 || partiallyVisible > 0 {
+            visibility = .partial
+        } else {
+            visibility = .offCapture
+        }
+        return Self(
+            kind: kind,
+            text: text,
+            structures: structures,
+            frames: frames,
+            acquisitionCompleteness: acquisitionCompleteness,
+            acquisition: acquisition,
+            captureVisibility: visibility
+        )
     }
 }
 
@@ -430,7 +279,7 @@ struct VisionSelectionCandidate: Equatable {
 enum VisionSelectionResolver {
     static func resolve(
         candidates: [VisionSelectionCandidate],
-        visualSelectionHint: Bool = false
+        allowVisualFallback: Bool = false
     ) -> VisionSelectionContext? {
         // Encountering a secure field anywhere on the acquisition path is a
         // hard stop. Do not salvage labels, frames, or text from another node.
@@ -441,7 +290,7 @@ enum VisionSelectionResolver {
             return TextCandidate(text: text, observation: candidate)
         }
         guard !usable.isEmpty else {
-            return visualSelectionHint ? .visualOnly() : nil
+            return allowVisualFallback ? .visualOnly() : nil
         }
 
         let groups = Dictionary(grouping: usable, by: \.text).values
@@ -452,11 +301,11 @@ enum VisionSelectionResolver {
                   }
                   return left.observation.depth < right.observation.depth
               }) else {
-            return visualSelectionHint ? .visualOnly() : nil
+            return allowVisualFallback ? .visualOnly() : nil
         }
 
-        let structures = deduplicatedStructures(from: chosen)
-        let frames = deduplicatedFrames(chosen.flatMap(\.observation.selectionFrames))
+        let structures = deduplicatedStructures(from: usable, chosenText: representative.text)
+        let frames = deduplicatedFrames(usable.flatMap(\.observation.selectionFrames))
         let hasDocument = chosen.contains { $0.observation.scope == .document }
         return VisionSelectionContext(
             kind: .text,
@@ -520,7 +369,8 @@ enum VisionSelectionResolver {
     }
 
     private static func deduplicatedStructures(
-        from candidates: [TextCandidate]
+        from candidates: [TextCandidate],
+        chosenText: String
     ) -> [VisionSelectionStructure] {
         var result: [VisionSelectionStructure] = []
         for candidate in candidates {
@@ -535,13 +385,15 @@ enum VisionSelectionResolver {
                 role: observation.role,
                 label: observation.label,
                 parentLabel: nil,
-                relationship: .selectionContainer,
+                relationship: candidate.text == chosenText
+                    ? .selectionContainer
+                    : .intersectsSelection,
                 states: [],
                 actions: [],
                 frame: valid(observation.containerFrame),
-                // This describes text coverage by the container, not whether
-                // its label semantically names the selected text.
-                coverage: .whole
+                // Coverage compares direct selected text only. Even `whole`
+                // never means this container's label names the selection.
+                coverage: candidate.text == chosenText ? .whole : .partial
             )
             if !result.contains(structure) {
                 result.append(structure)

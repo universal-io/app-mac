@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-31 ／ ステータス: `v0.2.1`正式公開済み、R10 C3完了・C4着手前
+最終更新: 2026-08-01 ／ ステータス: `v0.2.1`正式公開済み、R10 C4完了・C5着手前
 
 ## 製品
 
@@ -284,7 +284,7 @@ R9プロジェクトAに残作業はない。AX直接入力probeとclipboard非�
 横断的な運用確認は[manual-golden-paths.md](manual-golden-paths.md)に残し、該当領域を変更する
 次回リリースで重点確認する。
 
-### R10 — Vision Selection Extension（C3完了・C4着手前）
+### R10 — Vision Selection Extension（C4完了・C5着手前）
 
 `v0.2.1`はFocused Visionを同じSession、View、Gateway route、モデルへ統合したが、選択取得は
 focused elementに近い最初の非空AX祖先で終了し、Gatewayはselectionがあると通常Visionの初期taskを
@@ -337,9 +337,12 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   candidates、identity、model route、responseを共通のまま維持した。12,000 UTF-16 units内の頭尾保持、
   capture外、prompt injection、短い局所labelが長い選択全文を置換しないことを固定した。Gateway 8件、
   macOS 39件、型検査、対象lintが成功し、本番入口はまだ切り替えていない。
-- **C4（未着手）** 右Shift起動を`VisionSession(selection:)`へ切り替え、単一focus targetと
-  selection専用taskを同じ変更で削除する。追加質問は最新質問を優先し、Copilotの新captureには
-  古いselection payloadを渡さない。
+- **C4（完了）** 右Shiftの本番入口をresolverから`VisionSession(selection:)`へ切り替えた。AXは
+  documentまでのdirect selected text候補を収集し、選択全文と部分的に重なる複数構造を別provenanceで
+  保持する。macOSの単一`VisionFocusTarget`、旧field encoding、selection専用task、単一対象カードを
+  削除し、画像上だけの選択も`visualOnly` extensionとして同じVision Coreへ渡す。追加質問は同じsessionの
+  最新質問を優先し、Copilotの新captureへ古いselection payloadを渡さない。macOS unit test 35件が
+  成功した。
 - **C5（未着手）** 同じVisionパネルへ全文と全visible frameを表示し、`visualOnly`だけを表面へ示す。
   acquisition、segment数、capture visibility、wire truncationは情報ボタンへ置き、
   VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionを確認する。

@@ -36,7 +36,7 @@ final class AXFocusSnapshotTests: XCTestCase {
         )
     }
 
-    func testContainerSelectionDoesNotCreateFocusTarget() {
+    func testContainerSelectionDoesNotCreateSelectionContext() {
         let snapshot = makeSnapshot(
             selectedText: nil,
             role: "AXWebArea",
@@ -144,27 +144,69 @@ final class AXFocusSnapshotTests: XCTestCase {
         ))
     }
 
-    func testSelectedTextBecomesFocusTarget() {
+    func testWebFragmentDoesNotStopBeforeDocumentSelectionAppears() {
+        let snapshot = makeSnapshot(selectedText: nil, role: "AXStaticText")
+        let fragment = VisionSelectionCandidate(
+            directText: "件名",
+            role: "AXHeading",
+            label: "件名",
+            containerFrame: nil,
+            selectionFrames: [],
+            scope: .ancestor,
+            depth: 2,
+            pass: 1,
+            rangeEvidence: .unavailable,
+            isSecure: false
+        )
+
+        XCTAssertFalse(AXFocusSnapshotService.hasAuthoritativeSelection(
+            candidates: [fragment],
+            sawWebArea: true,
+            snapshot: snapshot
+        ))
+    }
+
+    func testWebDocumentSelectionStopsBoundedRetry() {
+        let snapshot = makeSnapshot(selectedText: nil, role: "AXStaticText")
+        let document = VisionSelectionCandidate(
+            directText: "件名と本文の選択全文",
+            role: "AXWebArea",
+            label: "Gmail",
+            containerFrame: nil,
+            selectionFrames: [],
+            scope: .document,
+            depth: 8,
+            pass: 2,
+            rangeEvidence: .unavailable,
+            isSecure: false
+        )
+
+        XCTAssertTrue(AXFocusSnapshotService.hasAuthoritativeSelection(
+            candidates: [document],
+            sawWebArea: true,
+            snapshot: snapshot
+        ))
+    }
+
+    func testSelectedTextBecomesSelectionContext() {
         let snapshot = makeSnapshot(
             selectedText: "選択部分",
             role: "AXStaticText"
         )
 
-        let target = VisionFocusTarget.from(snapshot: snapshot)
-
-        XCTAssertEqual(target?.kind, .selectedText)
-        XCTAssertEqual(target?.text, "選択部分")
-        XCTAssertEqual(target?.source, .axSelectedText)
+        XCTAssertEqual(snapshot.selection?.kind, .text)
+        XCTAssertEqual(snapshot.selection?.text, "選択部分")
+        XCTAssertEqual(snapshot.selection?.acquisition, .axSelectedText)
     }
 
-    func testSecureSnapshotNeverBecomesFocusTarget() {
+    func testSecureSnapshotNeverHasSelectionContext() {
         let snapshot = makeSnapshot(
             selectedText: "secret",
             role: "AXTextField",
             isSecureField: true
         )
 
-        XCTAssertNil(VisionFocusTarget.from(snapshot: snapshot))
+        XCTAssertNil(snapshot.selection)
     }
 
     private func makeSnapshot(
@@ -174,8 +216,23 @@ final class AXFocusSnapshotTests: XCTestCase {
         isSecureField: Bool = false,
         isElementSelected: Bool = false
     ) -> AXFocusSnapshot {
-        AXFocusSnapshot(
-            selectedText: selectedText,
+        let text = selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selection: VisionSelectionContext?
+        if !isSecureField, let text, !text.isEmpty {
+            selection = VisionSelectionContext(
+                kind: .text,
+                text: text,
+                structures: [],
+                frames: [],
+                acquisitionCompleteness: .complete,
+                acquisition: .axSelectedText,
+                captureVisibility: .unknown
+            )
+        } else {
+            selection = nil
+        }
+        return AXFocusSnapshot(
+            selection: selection,
             role: role,
             label: nil,
             frame: nil,

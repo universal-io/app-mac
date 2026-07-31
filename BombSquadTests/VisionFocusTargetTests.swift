@@ -1,175 +1,7 @@
 import XCTest
 @testable import Universal_IO
 
-final class VisionFocusTargetTests: XCTestCase {
-    func testSelectedTextWirePayloadUsesCapturePixelCoordinates() throws {
-        let snapshot = AXFocusSnapshot(
-            selectedText: "選択部分",
-            role: "AXStaticText",
-            label: "本文",
-            frame: CGRect(x: 150, y: 250, width: 100, height: 50),
-            isEditable: false,
-            isSecureField: false,
-            isElementSelected: false,
-            status: .complete,
-            collectionPasses: 1
-        )
-        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
-        let payload = try XCTUnwrap(target.wirePayload(for: attachment()))
-        let frame = try XCTUnwrap(payload["frame"] as? [String: Double])
-
-        XCTAssertEqual(payload["kind"] as? String, "selected_text")
-        XCTAssertEqual(payload["source"] as? String, "ax_selected_text")
-        XCTAssertEqual(payload["text"] as? String, "選択部分")
-        XCTAssertEqual(payload["truncated"] as? Bool, false)
-        XCTAssertEqual(frame["x"], 100)
-        XCTAssertEqual(frame["y"], 100)
-        XCTAssertEqual(frame["width"], 200)
-        XCTAssertEqual(frame["height"], 100)
-    }
-
-    func testFrameIsClippedToCaptureBeforeConversion() throws {
-        let snapshot = AXFocusSnapshot(
-            selectedText: "partly visible",
-            role: "AXStaticText",
-            label: nil,
-            frame: CGRect(x: 50, y: 150, width: 100, height: 100),
-            isEditable: false,
-            isSecureField: false,
-            isElementSelected: false,
-            status: .complete,
-            collectionPasses: 1
-        )
-        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
-        let payload = try XCTUnwrap(target.wirePayload(for: attachment()))
-        let frame = try XCTUnwrap(payload["frame"] as? [String: Double])
-
-        XCTAssertEqual(frame["x"], 0)
-        XCTAssertEqual(frame["y"], 0)
-        XCTAssertEqual(frame["width"], 100)
-        XCTAssertEqual(frame["height"], 100)
-    }
-
-    func testUnknownCaptureKeepsTextAndOmitsFrame() throws {
-        let snapshot = AXFocusSnapshot(
-            selectedText: "text only",
-            role: "AXStaticText",
-            label: nil,
-            frame: CGRect(x: 10, y: 10, width: 20, height: 20),
-            isEditable: false,
-            isSecureField: false,
-            isElementSelected: false,
-            status: .complete,
-            collectionPasses: 1
-        )
-        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
-        let unknown = ScreenshotAttachment(
-            url: URL(fileURLWithPath: "/tmp/focus-target.png")
-        )
-        let payload = try XCTUnwrap(target.wirePayload(for: unknown))
-
-        XCTAssertEqual(payload["text"] as? String, "text only")
-        XCTAssertNil(payload["frame"])
-        XCTAssertNil(target.normalizedFrame(in: unknown))
-    }
-
-    func testNormalizedFrameUsesClippedCaptureCoordinates() throws {
-        let snapshot = AXFocusSnapshot(
-            selectedText: "partly visible",
-            role: "AXStaticText",
-            label: nil,
-            frame: CGRect(x: 50, y: 150, width: 100, height: 100),
-            isEditable: false,
-            isSecureField: false,
-            isElementSelected: false,
-            status: .complete,
-            collectionPasses: 1
-        )
-        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
-        let frame = try XCTUnwrap(target.normalizedFrame(in: attachment()))
-
-        XCTAssertEqual(frame.minX, 0, accuracy: 0.0001)
-        XCTAssertEqual(frame.minY, 0, accuracy: 0.0001)
-        XCTAssertEqual(frame.width, 0.125, accuracy: 0.0001)
-        XCTAssertEqual(frame.height, 1.0 / 6.0, accuracy: 0.0001)
-    }
-
-    func testPresentationUsesNeutralRoleAndSourceNames() throws {
-        let snapshot = AXFocusSnapshot(
-            selectedText: nil,
-            role: "AXButton",
-            label: "送信",
-            frame: CGRect(x: 120, y: 220, width: 80, height: 30),
-            isEditable: false,
-            isSecureField: false,
-            isElementSelected: true,
-            status: .complete,
-            collectionPasses: 1
-        )
-        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
-
-        XCTAssertEqual(target.displayTitle, "選択中のボタン")
-        XCTAssertEqual(target.sourceDescription, "画面要素")
-    }
-
-    func testTextIsBoundedAndControlCharactersAreRemoved() throws {
-        let source = "A\u{0000}B" + String(repeating: "x", count: 12_100)
-        let snapshot = AXFocusSnapshot(
-            selectedText: source,
-            role: "AXStaticText",
-            label: nil,
-            frame: nil,
-            isEditable: false,
-            isSecureField: false,
-            isElementSelected: false,
-            status: .complete,
-            collectionPasses: 1
-        )
-        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
-        let payload = try XCTUnwrap(target.wirePayload(for: attachment()))
-        let text = try XCTUnwrap(payload["text"] as? String)
-
-        XCTAssertEqual(text.count, 12_000)
-        XCTAssertFalse(text.contains("\u{0000}"))
-        XCTAssertEqual(payload["truncated"] as? Bool, true)
-    }
-
-    func testEmojiTextUsesGatewayUTF16Limit() throws {
-        let snapshot = AXFocusSnapshot(
-            selectedText: String(repeating: "😀", count: 7_000),
-            role: "AXStaticText",
-            label: nil,
-            frame: nil,
-            isEditable: false,
-            isSecureField: false,
-            isElementSelected: false,
-            status: .complete,
-            collectionPasses: 1
-        )
-        let target = try XCTUnwrap(VisionFocusTarget.from(snapshot: snapshot))
-        let payload = try XCTUnwrap(target.wirePayload(for: attachment()))
-        let text = try XCTUnwrap(payload["text"] as? String)
-
-        XCTAssertEqual(text.utf16.count, 12_000)
-        XCTAssertEqual(payload["truncated"] as? Bool, true)
-    }
-
-    func testElementTargetRequiresMeaningfulSelectedElement() {
-        let snapshot = AXFocusSnapshot(
-            selectedText: nil,
-            role: "AXWebArea",
-            label: nil,
-            frame: nil,
-            isEditable: false,
-            isSecureField: false,
-            isElementSelected: true,
-            status: .complete,
-            collectionPasses: 1
-        )
-
-        XCTAssertNil(VisionFocusTarget.from(snapshot: snapshot))
-    }
-
+final class VisionSelectionContextTests: XCTestCase {
     func testSelectionResolverChoosesDocumentTextOverShortInnerFragment() throws {
         let candidates = [
             selectionCandidate(
@@ -193,6 +25,11 @@ final class VisionFocusTargetTests: XCTestCase {
 
         XCTAssertEqual(selection.text, "件名と、ユーザーが明示的に選択した本文全体")
         XCTAssertEqual(selection.acquisition, .axDocumentSelection)
+        XCTAssertEqual(selection.structures.count, 2)
+        XCTAssertEqual(selection.structures.first?.relationship, .intersectsSelection)
+        XCTAssertEqual(selection.structures.first?.coverage, .partial)
+        XCTAssertEqual(selection.structures.last?.relationship, .selectionContainer)
+        XCTAssertEqual(selection.structures.last?.coverage, .whole)
     }
 
     func testSelectionResolverNeverLetsShortLabelReplaceSelectedText() throws {
@@ -282,7 +119,7 @@ final class VisionFocusTargetTests: XCTestCase {
     func testSelectionResolverFallsBackToVisualOnlyWithoutAXText() throws {
         let selection = try XCTUnwrap(VisionSelectionResolver.resolve(
             candidates: [],
-            visualSelectionHint: true
+            allowVisualFallback: true
         ))
 
         XCTAssertEqual(selection.kind, .visualOnly)
@@ -399,6 +236,54 @@ final class VisionFocusTargetTests: XCTestCase {
         XCTAssertEqual(payload["acquisition_completeness"] as? String, "visual_only")
         XCTAssertEqual(payload["original_utf16_units"] as? Int, 0)
         XCTAssertNil(payload["text"])
+    }
+
+    func testAccessibilityElementSelectionKeepsStructureWithoutSyntheticText() throws {
+        let selection = try XCTUnwrap(VisionSelectionContext.accessibilityElement(
+            role: "AXButton",
+            label: "送信",
+            frame: CGRect(x: 150, y: 250, width: 100, height: 50)
+        ))
+
+        XCTAssertEqual(selection.kind, .accessibilityElement)
+        XCTAssertNil(selection.text)
+        XCTAssertEqual(selection.acquisition, .axElement)
+        XCTAssertEqual(selection.structures.first?.role, "AXButton")
+        XCTAssertEqual(selection.structures.first?.label, "送信")
+    }
+
+    func testSelectionResolvesCaptureVisibilityFromAllFrames() {
+        let base = VisionSelectionContext(
+            kind: .text,
+            text: "選択本文",
+            structures: [],
+            frames: [
+                CGRect(x: 150, y: 250, width: 100, height: 50),
+                CGRect(x: 450, y: 450, width: 100, height: 100),
+            ],
+            acquisitionCompleteness: .complete,
+            acquisition: .axSelectedText,
+            captureVisibility: .unknown
+        )
+
+        XCTAssertEqual(
+            base.resolvingCaptureVisibility(for: attachment()).captureVisibility,
+            .partial
+        )
+
+        let offCapture = VisionSelectionContext(
+            kind: .text,
+            text: "画面外",
+            structures: [],
+            frames: [CGRect(x: 700, y: 700, width: 20, height: 20)],
+            acquisitionCompleteness: .complete,
+            acquisition: .axSelectedText,
+            captureVisibility: .unknown
+        )
+        XCTAssertEqual(
+            offCapture.resolvingCaptureVisibility(for: attachment()).captureVisibility,
+            .offCapture
+        )
     }
 
     private func selectionCandidate(

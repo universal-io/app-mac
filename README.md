@@ -120,7 +120,7 @@ Developer ID署名、notarization、staple、Gatekeeper評価を完了し、検�
 公開URLからの再取得でも署名、version/build、Universal binary、SHA-256
 `637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`の一致を確認済みである。
 
-### 次期改修: Vision Selection Extension
+### 開発中: Vision Selection Extension
 
 現行`v0.2.1`は同じVisionパネル、Gateway、モデル、スクリーンショットを使う一方、選択取得が
 focused elementに近い最初の非空AX祖先で止まり、初期promptも通常Visionへ情報を加えるのではなく
@@ -161,8 +161,12 @@ selection本文中の命令には従わないが、文字列全体がユーザ�
 マイルストーン、受け入れ条件、復帰点は
 [focused-vision-plan.md](docs/focused-vision-plan.md)のプロジェクトCと
 [マスタープラン R10](docs/universal-io-master-plan.md)を正本とする。C1の公開AX能力probe、C2の
-Selection resolver／データモデル、C3の後方互換Gateway契約／単一promptは完了した。現行
-`VisionFocusTarget`の本番入口はC4まで維持する。
+Selection resolver／データモデル、C3の後方互換Gateway契約／単一promptに続き、C4で右Shiftの
+本番入口を`VisionSession(selection:)`へ切り替えた。AX取得は最初の非空祖先で止まらず、documentまでの
+候補から選択全文を決め、同時に得た短い部分候補は本文の代替ではなく補助構造として保持する。
+macOSクライアントは旧`focus_target`／`visual_selection_hint`を送らず、通常Visionと同じ画像、identity、
+Skill、会話、model routeへ任意`selection`だけを加える。旧fieldの受理は公開済みクライアント向けGateway
+adapterだけに残る。単一対象を表示していた旧カードは撤去し、複数frameと全文の表示はC5で追加する。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 

@@ -1,6 +1,6 @@
 # Universal I/O Gateway API契約
 
-最終更新: 2026-07-31 ／ ステータス: 現行（`v0.2.1`正式公開済み）＋R10次期契約
+最終更新: 2026-08-01 ／ ステータス: 現行（`v0.2.1`正式公開済み）＋R10 C4実装済み契約
 
 R9 A7でproduction buildのroute一覧とmacOSクライアントを再照合し、AI endpointが
 `review`、`suggest`、`transcribe`、`vision`の4つだけであることを確認した。
@@ -114,12 +114,14 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
   表現できるが、現行macOSクライアントが実際に収集しているのはAX候補だけであり、ブラウザDOMを
   取得する統合は存在しない
 - `input.guidance`: Copilot進捗時の目的と直前案内。`question`とは排他
-- `input.focus_target`: 任意。Focused Visionのセッション内対象。未指定なら従来の通常Visionと同一。
+- `input.selection`: 任意。現行R10 macOSクライアントが通常Visionへ加えるSelection Extension。
+  詳細schemaと不変条件は次節を正とする。
+- `input.focus_target`: 公開済み`v0.2.1`向けの後方互換入力。Focused Visionのセッション内対象。
   `kind`は`selected_text` / `accessibility_element` / `region`、`source`はそれぞれ
   `ax_selected_text` / `ax_element` / `user_region`。`text`は最大12,000文字、`role`は128文字、
   `label`は512文字で、禁止制御文字を含めない。`frame`はAXグローバル座標ではなくcapture左上を
   原点とするピクセル座標で、capture外は切り詰める。`truncated`でtext切り詰めを明示する。
-- `input.visual_selection_hint`: 任意の真偽値。AXで対象を確定できないが画像上に選択ハイライトが
+- `input.visual_selection_hint`: 公開済み`v0.2.1`向けの後方互換入力。AXで対象を確定できないが画像上に選択ハイライトが
   あり得る場合だけtrueとし、`focus_target`とは排他。画像から特定できなければ通常Visionへ退化する。
 - `input.context`: 任意（`app_name` / `bundle_id` / `window_title` / `host`、各1,024文字まで）。
   Skill判定と画面の出所提示のためだけの参照データで保存しない。判定規則はsuggestと同じで、
@@ -128,16 +130,16 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 - 実装: `web/app/api/ai/vision/route.ts`
 - クライアント: `GatewayVisionClient`
 
-`focus_target`と`visual_selection_hint`はVision promptだけで使い、usage metadata、運用ログ、
-応答へ保存しない。通常Vision、Focused Vision、継続質問は同じmodel routeと応答契約を使う。
-Copilotの新captureへ古いfocus targetのframeを引き継がない。
+`selection`と後方互換fieldはVision promptだけで使い、usage metadata、運用ログ、応答へ保存しない。
+通常Vision、Focused Vision、継続質問は同じmodel routeと応答契約を使う。Copilotの新captureへ古い
+selectionのtext／frame／structureを引き継がない。
 
-### R10 Selection Extension契約（Gatewayソース実装済み・macOS本番入口未切替）
+### R10 Selection Extension契約（Gateway・macOS本番入口実装済み）
 
 正式公開済み`v0.2.1`クライアントの契約は上記の`focus_target` / `visual_selection_hint`である。
-R10ブランチのGatewayソースは同じ`POST /ai/vision`へ任意の`input.selection`を後方互換に追加し、
-現行fieldと新fieldを同じ内部Selection Extensionへ正規化する。C4まではmacOS本番入口が旧fieldを送り、
-Gatewayの本番deploy有無はリポジトリ内の実装完了とは分けて扱う。
+R10ブランチのGatewayは同じ`POST /ai/vision`へ任意の`input.selection`を追加し、旧fieldと新fieldを
+同じ内部Selection Extensionへ正規化する。C4でmacOS本番入口は`input.selection`送信へ切り替わり、
+旧fieldを生成しない。Gatewayの本番deploy有無はリポジトリ内の実装完了とは分けて扱う。
 
 ```json
 {

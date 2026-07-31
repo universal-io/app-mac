@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-31 ／ ステータス: プロジェクトA完了・プロジェクトC C3完了／C4着手前
+最終更新: 2026-08-01 ／ ステータス: プロジェクトA完了・プロジェクトC C4完了／C5着手前
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -958,6 +958,16 @@ Gatewayのadapter／validation／prompt 8件、macOS全39件、TypeScript型検�
 - 通常Vision、継続質問、Copilot、fallbackの既存経路を維持する。
 
 コミット境界: 新しい入口へ切り替えるのと同時に、置換された旧意味分岐を削除する。
+
+完了（2026-08-01）: 右Shift起動のAX snapshotがdocumentまでのdirect selected text候補を収集し、
+resolverで確定した選択全文、同時に得た部分候補の構造、複数frameを`VisionSession(selection:)`へ渡す
+本番経路へ切り替えた。短い部分候補は`intersectsSelection`／`partial`として残るが、選択全文のscopeを
+置換しない。captureとの照合後にvisibilityを確定し、画像だけで選択を探す場合も`visualOnly` extensionを
+同じVision Coreへ渡す。macOSの単一`VisionFocusTarget`、旧field encoding、selection専用task、単一対象
+カードは削除した。通常Visionの画像、通常candidate policy、identity、Skill、会話、model route、responseは
+変更せず、追加質問ではlatest questionを優先し、Copilotの新captureへ旧selectionを渡さない。複数frameと
+全文の正しいパネル表示はC5の境界に残す。Web画面では短い内側fragmentだけでretryを終了せず、既存2秒枠内で
+document selectionを待つ。macOS unit test 35件が成功した。
 
 ### C5 — 複数範囲UIと診断表示
 
