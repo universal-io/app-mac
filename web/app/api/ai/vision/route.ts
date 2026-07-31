@@ -16,9 +16,15 @@ import {
   VISION_IMAGE_DETAIL,
   VISION_REASONING_EFFORT,
   type VisionCandidate,
-  type VisionFocusTarget,
   type VisionTurn,
 } from "@/lib/server/vision-engine";
+import {
+  isValidVisionSelectionWire,
+  normalizeVisionSelection,
+  visionSelectionFromWire,
+  type LegacyVisionFocusTarget,
+  type VisionSelectionWire,
+} from "@/lib/server/vision-selection";
 
 const MAX_IMAGE_BASE64_CHARS = 4 * 1024 * 1024;
 const MAX_CAPTURE_ID_CHARS = 128;
@@ -82,6 +88,7 @@ type VisionRequestBody = {
       truncated?: boolean;
     };
     visual_selection_hint?: boolean;
+    selection?: VisionSelectionWire;
     candidates?: Array<{
       id?: string;
       source?: string;
@@ -156,9 +163,15 @@ export async function POST(request: Request): Promise<Response> {
             : undefined,
           source: rawFocusTarget.source!,
           truncated: rawFocusTarget.truncated!,
-        } as VisionFocusTarget
+        } as LegacyVisionFocusTarget
       : undefined;
     const visualSelectionHint = body.input!.visual_selection_hint === true;
+    const rawSelection = body.input!.selection;
+    const selection = normalizeVisionSelection({
+      selection: rawSelection ? visionSelectionFromWire(rawSelection) : undefined,
+      focusTarget,
+      visualSelectionHint,
+    });
 
     const { userId, tenantId, entitlement } = await authenticate(request);
     await enforceQuota(tenantId, entitlement);
@@ -177,6 +190,8 @@ export async function POST(request: Request): Promise<Response> {
       has_context: Boolean(context),
       has_question: Boolean(question),
       is_guidance_progress: Boolean(guidance),
+      selection_present: Boolean(selection),
+      selection_acquisition_completeness: selection?.acquisitionCompleteness,
       api: "responses",
       image_detail: VISION_IMAGE_DETAIL,
       reasoning_effort: VISION_REASONING_EFFORT,
@@ -190,8 +205,7 @@ export async function POST(request: Request): Promise<Response> {
         turns,
         candidates,
         guidance,
-        focusTarget,
-        visualSelectionHint,
+        selection,
         context,
         language,
       });
@@ -354,6 +368,10 @@ function validateBody(
   if (focusTarget !== undefined && !isValidFocusTarget(focusTarget)) {
     return errorResponse(400, "BAD_REQUEST", "input.focus_target is invalid.", requestId);
   }
+  const selection = body.input?.selection;
+  if (selection !== undefined && !isValidVisionSelectionWire(selection)) {
+    return errorResponse(400, "BAD_REQUEST", "input.selection is invalid.", requestId);
+  }
   if (
     body.input?.visual_selection_hint !== undefined
     && typeof body.input.visual_selection_hint !== "boolean"
@@ -370,6 +388,14 @@ function validateBody(
       400,
       "BAD_REQUEST",
       "input.focus_target and input.visual_selection_hint are mutually exclusive.",
+      requestId,
+    );
+  }
+  if (selection && (focusTarget || body.input?.visual_selection_hint === true)) {
+    return errorResponse(
+      400,
+      "BAD_REQUEST",
+      "input.selection cannot be combined with legacy selection fields.",
       requestId,
     );
   }

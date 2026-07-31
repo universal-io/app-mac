@@ -77,6 +77,7 @@ struct GatewayVisionClient {
         candidates: [VisionObservation.Candidate] = [],
         candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
         identity: VisionObservationCaptureService.TargetIdentity? = nil,
+        selection: VisionSelectionContext? = nil,
         focusTarget: VisionFocusTarget? = nil,
         visualSelectionHint: Bool = false,
         guidanceContext: ScreenGuidanceContext? = nil,
@@ -100,11 +101,14 @@ struct GatewayVisionClient {
         if let identity {
             input["context"] = identity.wirePayload
         }
-        if let focusTarget,
+        if let selection,
+           let payload = selection.wirePayload(for: attachment) {
+            input["selection"] = payload
+        } else if let focusTarget,
            let payload = focusTarget.wirePayload(for: attachment) {
             input["focus_target"] = payload
         }
-        if visualSelectionHint, focusTarget == nil {
+        if visualSelectionHint, selection == nil, focusTarget == nil {
             input["visual_selection_hint"] = true
         }
         if let guidanceContext {

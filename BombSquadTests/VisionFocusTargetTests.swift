@@ -330,6 +330,77 @@ final class VisionFocusTargetTests: XCTestCase {
         ])
     }
 
+    func testSelectionWirePayloadKeepsBothEndsWithinUTF16Limit() throws {
+        let text = "HEAD-" + String(repeating: "😀", count: 7_000) + "-TAIL"
+        let selection = VisionSelectionContext(
+            kind: .text,
+            text: text,
+            structures: [],
+            frames: [],
+            acquisitionCompleteness: .complete,
+            acquisition: .axDocumentSelection,
+            captureVisibility: .unknown
+        )
+
+        let payload = try XCTUnwrap(selection.wirePayload(for: attachment()))
+        let wireText = try XCTUnwrap(payload["text"] as? String)
+
+        XCTAssertLessThanOrEqual(wireText.utf16.count, 12_000)
+        XCTAssertTrue(wireText.hasPrefix("HEAD-"))
+        XCTAssertTrue(wireText.hasSuffix("-TAIL"))
+        XCTAssertTrue(wireText.contains("UTF-16 units"))
+        XCTAssertEqual(payload["wire_truncated"] as? Bool, true)
+        XCTAssertEqual(payload["original_utf16_units"] as? Int, text.utf16.count)
+        XCTAssertEqual(selection.text, text)
+    }
+
+    func testSelectionWirePayloadKeepsStructuresSeparateFromText() throws {
+        let selection = VisionSelectionContext(
+            kind: .text,
+            text: "件名と本文の選択全文",
+            structures: [
+                VisionSelectionStructure(
+                    source: .ax,
+                    role: "AXHeading",
+                    label: "短い件名",
+                    parentLabel: "Gmail",
+                    relationship: .intersectsSelection,
+                    states: ["enabled"],
+                    actions: [],
+                    frame: CGRect(x: 150, y: 250, width: 100, height: 50),
+                    coverage: .partial
+                ),
+            ],
+            frames: [
+                CGRect(x: 150, y: 250, width: 100, height: 50),
+                CGRect(x: 300, y: 400, width: 50, height: 25),
+            ],
+            acquisitionCompleteness: .complete,
+            acquisition: .axDocumentSelection,
+            captureVisibility: .partial
+        )
+
+        let payload = try XCTUnwrap(selection.wirePayload(for: attachment()))
+        let structures = try XCTUnwrap(payload["structures"] as? [[String: Any]])
+        let frames = try XCTUnwrap(payload["frames"] as? [[String: Double]])
+
+        XCTAssertEqual(payload["text"] as? String, "件名と本文の選択全文")
+        XCTAssertEqual(structures.first?["label"] as? String, "短い件名")
+        XCTAssertEqual(structures.first?["coverage"] as? String, "partial")
+        XCTAssertEqual(frames.count, 2)
+    }
+
+    func testVisualOnlyWirePayloadHasNoSyntheticText() throws {
+        let payload = try XCTUnwrap(
+            VisionSelectionContext.visualOnly().wirePayload(for: attachment())
+        )
+
+        XCTAssertEqual(payload["kind"] as? String, "visual_only")
+        XCTAssertEqual(payload["acquisition_completeness"] as? String, "visual_only")
+        XCTAssertEqual(payload["original_utf16_units"] as? Int, 0)
+        XCTAssertNil(payload["text"])
+    }
+
     private func selectionCandidate(
         text: String?,
         role: String?,

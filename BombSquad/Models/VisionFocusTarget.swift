@@ -228,6 +228,10 @@ struct VisionFocusTarget: Equatable {
 /// structure is intentionally stored beside it, never as a label or alias for
 /// it, so a short AX/DOM label cannot replace a multi-node selection.
 struct VisionSelectionContext: Equatable {
+    private static let maxTextUTF16Units = 12_000
+    private static let maxStructures = 64
+    private static let maxFrames = 64
+
     enum Kind: String, Equatable {
         case text
         case accessibilityElement = "accessibility_element"
@@ -273,6 +277,54 @@ struct VisionSelectionContext: Equatable {
             captureVisibility: .unknown
         )
     }
+
+    /// Encodes the optional Selection Extension without changing the base
+    /// Vision request. Local text stays complete; only this wire value is
+    /// bounded, preserving both ends of a long multi-node selection.
+    func wirePayload(for attachment: ScreenshotAttachment) -> [String: Any]? {
+        var payload: [String: Any] = [
+            "kind": kind.rawValue,
+            "acquisition_completeness": acquisitionCompleteness.rawValue,
+            "acquisition": acquisition.rawValue,
+            "capture_visibility": captureVisibility.rawValue,
+        ]
+
+        let normalizedText = VisionSelectionWireEncoding.normalized(text)
+        let boundedText = normalizedText.map {
+            VisionSelectionWireEncoding.boundedHeadTail(
+                $0,
+                maxUTF16Units: Self.maxTextUTF16Units
+            )
+        }
+        if let value = boundedText?.value, !value.isEmpty {
+            payload["text"] = value
+        }
+        payload["wire_truncated"] = boundedText?.truncated ?? false
+        payload["original_utf16_units"] = normalizedText?.utf16.count ?? 0
+
+        let wireFrames = Array(frames.prefix(Self.maxFrames)).compactMap {
+            VisionSelectionWireEncoding.capturePixelFrame($0, for: attachment)
+        }.map(VisionSelectionWireEncoding.framePayload)
+        payload["frames"] = wireFrames
+
+        let wireStructures = Array(structures.prefix(Self.maxStructures)).compactMap {
+            $0.wirePayload(for: attachment)
+        }
+        payload["structures"] = wireStructures
+
+        switch kind {
+        case .text:
+            guard payload["text"] != nil,
+                  acquisitionCompleteness != .visualOnly else { return nil }
+        case .accessibilityElement:
+            guard !wireStructures.isEmpty || !wireFrames.isEmpty else { return nil }
+        case .visualOnly:
+            guard acquisitionCompleteness == .visualOnly,
+                  acquisition == .visualHighlight,
+                  payload["text"] == nil else { return nil }
+        }
+        return payload
+    }
 }
 
 struct VisionSelectionStructure: Equatable {
@@ -303,6 +355,45 @@ struct VisionSelectionStructure: Equatable {
     let actions: [String]
     let frame: CGRect?
     let coverage: Coverage
+
+    fileprivate func wirePayload(for attachment: ScreenshotAttachment) -> [String: Any]? {
+        var payload: [String: Any] = [
+            "source": source.rawValue,
+            "relationship": relationship.rawValue,
+            "coverage": coverage.rawValue,
+            "states": Array(states.prefix(16)).compactMap {
+                VisionSelectionWireEncoding.boundedField($0, maxUTF16Units: 128)
+            },
+            "actions": Array(actions.prefix(16)).compactMap {
+                VisionSelectionWireEncoding.boundedField($0, maxUTF16Units: 128)
+            },
+        ]
+        if let role = VisionSelectionWireEncoding.boundedField(role, maxUTF16Units: 128) {
+            payload["role"] = role
+        }
+        if let label = VisionSelectionWireEncoding.boundedField(label, maxUTF16Units: 512) {
+            payload["label"] = label
+        }
+        if let parentLabel = VisionSelectionWireEncoding.boundedField(
+            parentLabel,
+            maxUTF16Units: 512
+        ) {
+            payload["parent_label"] = parentLabel
+        }
+        if let frame,
+           let pixelFrame = VisionSelectionWireEncoding.capturePixelFrame(frame, for: attachment) {
+            payload["frame"] = VisionSelectionWireEncoding.framePayload(pixelFrame)
+        }
+        guard payload["role"] != nil
+                || payload["label"] != nil
+                || payload["parent_label"] != nil
+                || payload["frame"] != nil
+                || !(payload["states"] as? [String] ?? []).isEmpty
+                || !(payload["actions"] as? [String] ?? []).isEmpty else {
+            return nil
+        }
+        return payload
+    }
 }
 
 /// A value-only observation from one AX container. Element references never
@@ -479,5 +570,112 @@ enum VisionSelectionResolver {
             return nil
         }
         return frame
+    }
+}
+
+private enum VisionSelectionWireEncoding {
+    static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let scalars = value.unicodeScalars.filter { scalar in
+            scalar == "\n" || scalar == "\t" || (scalar.value >= 0x20 && scalar.value != 0x7f)
+        }
+        let normalized = String(String.UnicodeScalarView(scalars))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    static func boundedField(_ value: String?, maxUTF16Units: Int) -> String? {
+        guard let value = normalized(value) else { return nil }
+        var result = ""
+        var used = 0
+        for character in value {
+            let piece = String(character)
+            guard used + piece.utf16.count <= maxUTF16Units else { break }
+            result.append(character)
+            used += piece.utf16.count
+        }
+        return result.isEmpty ? nil : result
+    }
+
+    static func boundedHeadTail(
+        _ value: String,
+        maxUTF16Units: Int
+    ) -> (value: String, truncated: Bool) {
+        let originalUnits = value.utf16.count
+        guard originalUnits > maxUTF16Units else { return (value, false) }
+
+        var omittedUnits = originalUnits
+        var result = ""
+        for _ in 0..<8 {
+            let marker = "…[省略: \(omittedUnits) UTF-16 units]…"
+            let contentBudget = max(0, maxUTF16Units - marker.utf16.count)
+            let headBudget = contentBudget / 2
+            let tailBudget = contentBudget - headBudget
+            let head = prefix(value, maxUTF16Units: headBudget)
+            let tail = suffix(value, maxUTF16Units: tailBudget)
+            let newOmittedUnits = originalUnits - head.utf16.count - tail.utf16.count
+            result = head + "…[省略: \(newOmittedUnits) UTF-16 units]…" + tail
+            if newOmittedUnits == omittedUnits { break }
+            omittedUnits = newOmittedUnits
+        }
+        return (result, true)
+    }
+
+    static func capturePixelFrame(
+        _ frame: CGRect,
+        for attachment: ScreenshotAttachment
+    ) -> CGRect? {
+        guard let captureRect = attachment.captureRect,
+              let pixelWidth = attachment.pixelWidth,
+              let pixelHeight = attachment.pixelHeight,
+              captureRect.width > 0,
+              captureRect.height > 0,
+              pixelWidth > 0,
+              pixelHeight > 0 else {
+            return nil
+        }
+        let visible = frame.intersection(captureRect)
+        guard !visible.isNull, visible.width > 0, visible.height > 0 else { return nil }
+        let scaleX = CGFloat(pixelWidth) / captureRect.width
+        let scaleY = CGFloat(pixelHeight) / captureRect.height
+        return CGRect(
+            x: (visible.minX - captureRect.minX) * scaleX,
+            y: (visible.minY - captureRect.minY) * scaleY,
+            width: visible.width * scaleX,
+            height: visible.height * scaleY
+        )
+    }
+
+    static func framePayload(_ frame: CGRect) -> [String: Double] {
+        [
+            "x": Double(frame.minX),
+            "y": Double(frame.minY),
+            "width": Double(frame.width),
+            "height": Double(frame.height),
+        ]
+    }
+
+    private static func prefix(_ value: String, maxUTF16Units: Int) -> String {
+        var result = ""
+        var used = 0
+        for character in value {
+            let piece = String(character)
+            guard used + piece.utf16.count <= maxUTF16Units else { break }
+            result.append(character)
+            used += piece.utf16.count
+        }
+        return result
+    }
+
+    private static func suffix(_ value: String, maxUTF16Units: Int) -> String {
+        var pieces: [String] = []
+        var used = 0
+        for character in value.reversed() {
+            let piece = String(character)
+            guard used + piece.utf16.count <= maxUTF16Units else { break }
+            pieces.append(piece)
+            used += piece.utf16.count
+        }
+        return pieces.reversed().joined()
     }
 }

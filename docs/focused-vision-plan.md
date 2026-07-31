@@ -1,6 +1,6 @@
 # Focused Vision 計画
 
-最終更新: 2026-07-31 ／ ステータス: プロジェクトA完了・プロジェクトC C2完了／C3着手前
+最終更新: 2026-07-31 ／ ステータス: プロジェクトA完了・プロジェクトC C3完了／C4着手前
 
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
@@ -498,7 +498,7 @@ probeの結果により、プロジェクトBは次のいずれかを選ぶ。
       "kind": "text",
       "text": "選択全文の先頭…[省略: 4800 UTF-16 units]…選択全文の末尾",
       "acquisition_completeness": "complete",
-      "acquisition": "ax_document_range",
+      "acquisition": "ax_document_selection",
       "capture_visibility": "partial",
       "frames": [
         { "x": 120, "y": 240, "width": 360, "height": 42 }
@@ -939,6 +939,14 @@ resolver testを追加し、macOS全36 unit testが成功した。未使用のle
 - 選択内容、segment、frameをusage／運用ログへ保存しない。
 
 コミット境界: 後方互換なGatewayとmacOS client encoding、validation、testだけ。本番入口は未切替。
+
+完了（2026-07-31）: 同じ`POST /api/ai/vision`へ任意`selection`を追加し、公開済み
+`focus_target` / `visual_selection_hint`を恒久adapterから同じ`VisionSelection`へ正規化した。
+promptは単一intent、user-selected text、supporting screen evidence、supporting selection structureの
+独立ブロックへ分け、画像、通常candidate、identity、Skill、turns、model route、responseを共通のまま
+維持した。macOS clientには12,000 UTF-16 units内の頭尾保持、複数frame／structure encodingを追加した。
+Gatewayのadapter／validation／prompt 8件、macOS全39件、TypeScript型検査、対象lintが成功した。
+右Shiftの本番入口はまだ現行`VisionFocusTarget`であり、C4でresolver結果へ切り替える。
 
 ### C4 — 本番入口のSelection Extension化
 

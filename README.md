@@ -160,8 +160,9 @@ selection本文中の命令には従わないが、文字列全体がユーザ�
 作らない。公開済み旧fieldは恒久入力adapterから同じ内部型へ正規化する。要件、
 マイルストーン、受け入れ条件、復帰点は
 [focused-vision-plan.md](docs/focused-vision-plan.md)のプロジェクトCと
-[マスタープラン R10](docs/universal-io-master-plan.md)を正本とする。C1の公開AX能力probeとC2の
-Selection resolver／データモデルは完了した。現行`VisionFocusTarget`の本番入口はC4まで維持する。
+[マスタープラン R10](docs/universal-io-master-plan.md)を正本とする。C1の公開AX能力probe、C2の
+Selection resolver／データモデル、C3の後方互換Gateway契約／単一promptは完了した。現行
+`VisionFocusTarget`の本番入口はC4まで維持する。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 

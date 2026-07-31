@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-31 ／ ステータス: `v0.2.1`正式公開済み、R10 C2完了・C3着手前
+最終更新: 2026-07-31 ／ ステータス: `v0.2.1`正式公開済み、R10 C3完了・C4着手前
 
 ## 製品
 
@@ -284,7 +284,7 @@ R9プロジェクトAに残作業はない。AX直接入力probeとclipboard非�
 横断的な運用確認は[manual-golden-paths.md](manual-golden-paths.md)に残し、該当領域を変更する
 次回リリースで重点確認する。
 
-### R10 — Vision Selection Extension（C2完了・C3着手前）
+### R10 — Vision Selection Extension（C3完了・C4着手前）
 
 `v0.2.1`はFocused Visionを同じSession、View、Gateway route、モデルへ統合したが、選択取得は
 focused elementに近い最初の非空AX祖先で終了し、Gatewayはselectionがあると通常Visionの初期taskを
@@ -332,11 +332,11 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   capture visibilityと純粋`VisionSelectionResolver`を追加した。document全文優先、native consensus、
   短いlabelによる本文置換禁止、range不一致、visualOnly、secure拒否、frame重複除去をunit testで固定し、
   36件が成功した。未使用`VisionFocusTarget.region`は削除した。現行本番入口はまだ切り替えていない。
-- **C3（未着手）** Gatewayへ後方互換な`selection`契約、恒久legacy adapter、共通内部型を追加する。
-  promptをVision Core evidence／安全規則、単一intent resolver、任意selection dataへ分ける。
-  初回の通常AX候補は両方とも空のままとし、selection取得済み構造だけを加える。12,000 UTF-16 units
-  内の頭尾均等保持、capture外、prompt injection、短い局所labelが長い選択全文を置換しないことを
-  testで固定する。
+- **C3（完了）** Gatewayへ後方互換な`selection`契約、恒久legacy adapter、共通内部型を追加した。
+  promptを単一intent、selected text、screen evidence、selection structureへ分け、画像、Skill、turns、
+  candidates、identity、model route、responseを共通のまま維持した。12,000 UTF-16 units内の頭尾保持、
+  capture外、prompt injection、短い局所labelが長い選択全文を置換しないことを固定した。Gateway 8件、
+  macOS 39件、型検査、対象lintが成功し、本番入口はまだ切り替えていない。
 - **C4（未着手）** 右Shift起動を`VisionSession(selection:)`へ切り替え、単一focus targetと
   selection専用taskを同じ変更で削除する。追加質問は最新質問を優先し、Copilotの新captureには
   古いselection payloadを渡さない。

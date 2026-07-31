@@ -132,12 +132,12 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 応答へ保存しない。通常Vision、Focused Vision、継続質問は同じmodel routeと応答契約を使う。
 Copilotの新captureへ古いfocus targetのframeを引き継がない。
 
-### 次期R10契約（未実装）
+### R10 Selection Extension契約（Gatewayソース実装済み・macOS本番入口未切替）
 
-現行`v0.2.1`の契約は上記の`focus_target` / `visual_selection_hint`であり、ここに記す次期fieldを
-現行クライアントが送る、または本番Gatewayが受理するとはみなさない。R10では同じ
-`POST /ai/vision`へ任意の`input.selection`を後方互換に追加し、現行fieldと新fieldを同じ内部
-Selection Extensionへ正規化する。
+正式公開済み`v0.2.1`クライアントの契約は上記の`focus_target` / `visual_selection_hint`である。
+R10ブランチのGatewayソースは同じ`POST /ai/vision`へ任意の`input.selection`を後方互換に追加し、
+現行fieldと新fieldを同じ内部Selection Extensionへ正規化する。C4まではmacOS本番入口が旧fieldを送り、
+Gatewayの本番deploy有無はリポジトリ内の実装完了とは分けて扱う。
 
 ```json
 {
@@ -145,7 +145,7 @@ Selection Extensionへ正規化する。
     "kind": "text",
     "text": "選択全文の先頭…[省略: 4800 UTF-16 units]…選択全文の末尾",
     "acquisition_completeness": "complete",
-    "acquisition": "ax_document_range",
+    "acquisition": "ax_document_selection",
     "capture_visibility": "partial",
     "frames": [
       { "x": 120, "y": 240, "width": 360, "height": 42 }
