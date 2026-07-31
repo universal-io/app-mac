@@ -221,6 +221,7 @@ Selection Extensionは、取得できた情報だけを持つセッション内�
 struct VisionSelectionContext {
     let text: String?
     let segments: [SelectionSegment]
+    let structures: [SelectionStructure]
     let frames: [CGRect]
     let acquisitionCompleteness: AcquisitionCompleteness
     let acquisition: Acquisition
@@ -229,20 +230,34 @@ struct VisionSelectionContext {
 
 struct SelectionSegment {
     let text: String?
+    let frame: CGRect?
+}
+
+struct SelectionStructure {
+    let source: StructureSource
     let role: String?
     let label: String?
+    let parentLabel: String?
+    let relationship: SelectionRelationship
+    let states: [String]
+    let actions: [String]
     let frame: CGRect?
+    let coverage: StructureCoverage
 }
 ```
 
 - `text`: ユーザーが選択した論理的な全文。先頭segmentの別名にしない
 - `segments`: document selectionが成立しない場合の複数AX断片。C1で必要性を証明した時だけ持つ
+- `structures`: selection取得中にすでに得たAX／DOM相当のrole、label、relation、state、action、frame。
+  text segmentとは独立させ、各項目にselectionとのrelationshipと
+  `whole` / `partial` / `context` / `unknown`のcoverageを持つ
 - `frames`: 選択範囲を表す0個以上のグローバル矩形。単一unionへ潰さない
 - `acquisitionCompleteness`: `complete` / `partial` / `visualOnly`。AX取得の状態であり、
   Gateway送信用の切り詰めとは別
 - `acquisition`: 公開AX range、複数AX fragment、画像上の選択等の取得方法
 - `captureVisibility`: `visible` / `partial` / `offCapture` / `unknown`
-- `role` / `label`: selection全体ではなくsegmentに属する構造情報
+- structureの`role` / `label` / `parentLabel`は本文の名前や要約ではない。coverageが`whole`と
+  根拠づけられない限り、選択全体を表すmetadataとして扱わない
 
 制約:
 
@@ -456,6 +471,17 @@ probeの結果により、プロジェクトBは次のいずれかを選ぶ。
       "frames": [
         { "x": 120, "y": 240, "width": 360, "height": 42 }
       ],
+      "structures": [
+        {
+          "source": "ax",
+          "role": "AXHeading",
+          "label": "件名",
+          "relationship": "intersects_selection",
+          "states": [],
+          "actions": [],
+          "coverage": "partial"
+        }
+      ],
       "wire_truncated": true,
       "original_utf16_units": 16800
     },
@@ -479,9 +505,13 @@ probeの結果により、プロジェクトBは次のいずれかを選ぶ。
 - `segments`はC1でdocument selectionだけでは失われる独立情報を実証した場合だけ任意で送る。
   wire schemaをC1より先に必須化しない。採用する場合はsegment text用の総量・件数・公平配分を
   C1結果と同じcommitで追記し、その規則が確定するまでC3へ進まない。
+- `structures`はsegment fallbackとは独立した任意fieldである。selection取得時にすでに得た構造だけを
+  boundedに送り、初回turnの全画面candidate walkを追加しない。relationshipとcoverageを必須にし、
+  `partial` / `context` / `unknown`のlabelをselection全体の名前としてpromptへ書かない。
 - `frames`は0件以上を許し、単一unionへ潰さない。`capture_visibility`でcapture内との関係を示す。
 - 全`frame`はcapture画像座標へ正規化して送る。AXのグローバル座標をそのまま送らない。
-- text総量、segment数、frame数、各role／label長、制御文字、座標範囲をGatewayで検証する。
+- text総量、segment数、structure数、frame数、各role／label／state／action長、制御文字、座標範囲を
+  Gatewayで検証する。
 - selectionはモデル入力とセッション内UIだけに使い、usageや運用ログへ内容を保存しない。
 - 応答形式、model routing、fallback notice、Skill、candidate ID、Copilot guidanceは現行Visionと共通。
 - Focused Vision専用モデル、endpoint、fallback、feature flagを作らない。
@@ -795,6 +825,35 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
   probe用に選択・送信・下書き作成しないため、既知内容を安全に用意した手動実機確認を終えるまで
   C1判定ゲートは閉じず、C2の製品コードへ進まない。
 
+#### Chrome Gmailの製品経路診断
+
+同じ複数DOM選択で現行Focused Visionを起動すると、「件名は……です。本文も広範囲に選択されています」
+という結果になり、選択本文そのものを説明しなかった。直前のprobeでは全文757 UTF-16 unitsを
+取得できていたため、これはAX文字列取得だけの失敗ではない。コード上の因果は次のとおりである。
+
+1. `AXFocusSnapshotService.captureAttempt`は最初の非空`AXSelectedText`で祖先walkを終了する。
+2. その同じAX要素のrole、label、単一frameを`AXFocusSnapshot`へ格納する。Gmailでは選択全文を返す
+   要素が局所的な`AXGroup`でもよく、そのlabelが件名等を表しても、選択全体へ適用できる根拠はない。
+3. `VisionFocusTarget.from`は全文とそのrole／label／frameを単一のselection-wide targetへ潰し、
+   `wirePayload`も区別せず送る。
+4. GatewayはそのJSONを`Focus target reported by the client`として渡し、初回taskを
+   `Explain the supplied focus target first`へ置換する。全文と局所labelのprovenance／coverageを
+   モデルが区別できず、短く明瞭な件名labelを対象の代表値として説明し得る。
+5. `VisionFocusTargetCard`もlabelを選択本文より前へ表示し、同じ誤った階層をUIで強化する。
+
+必要変更:
+
+- `VisionSelectionContext.text`をユーザーが明示した論理scopeとして独立保持する。
+- role、label、relation、action、frameは重要な構造情報のまま保持するが、selection-wide metadataへ
+  昇格させない。取得元要素とcoverageを持つselection-related structureとして本文へ加算する。
+- labelが論理selection全体を表すと公開契約から確認できない限り、本文の名前・要約・置換として
+  promptへ提示しない。
+- promptは「選択全文を最初から最後まで対象として理解し、画像と構造で意味を補う」と明示する。
+  通常Visionの画像・証拠・安全規則をselection専用taskで置換しない。
+- UIは選択全文を先に示し、構造情報は対象の補助情報として関連付ける。局所labelを見出しにしない。
+- 長い複数DOM本文と短い件名labelを同時に与え、回答scopeが件名へ縮約されないrequest／prompt testを
+  C3へ追加する。
+
 判定ゲート:
 
 - document selectionが対象製品で全文を返すなら、C2は検証済みdocument candidateの単一selectionを
@@ -811,6 +870,8 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 ### C2 — Selection Resolverとデータモデル
 
 - `VisionSelectionContext`、複数frame、acquisition completeness、capture visibilityを追加する。
+- selection本文と独立した`SelectionStructure`を追加し、role／label／relation／state／action／frameと
+  coverageを保持する。局所構造をselection-wide metadataへ昇格させない。
 - 最初の非空祖先では止めずdocument候補を集め、C1で実証したdirect textの候補間／pass間consensus、
   非collapsed range、coverage、安定性を満たすdocument selectionを優先する。
 - C1の判定ゲートが必要とした場合だけ、ordered `SelectionSegment`、重複除去、全文組み立てを追加する。
@@ -828,6 +889,8 @@ Appleの公開契約では、[`AXSelectedText`](https://developer.apple.com/docu
 - 共通のVision Core evidence／安全規則、単一request intent resolver、任意Selection Extensionの
   3層へprompt builderを分ける。mode命令はresolverが1つだけ出し、observation／answerを連結しない。
 - selectionの有無でimage、candidates、identity、Skill、turns、model routeが減らないことを
+  request snapshot／prompt testで固定する。
+- 長い複数DOM本文と短い局所labelを同時に入力し、labelが回答scopeやUI見出しを置換しないことを
   request snapshot／prompt testで固定する。
 - 初回turnの通常AX candidatesは通常／Focusedとも現行どおり空とし、追加walkを行わない。
   Focusedにはresolverが選択取得時にすでに得た構造だけを加える。

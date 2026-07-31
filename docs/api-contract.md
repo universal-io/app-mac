@@ -150,6 +150,17 @@ Selection Extensionへ正規化する。
     "frames": [
       { "x": 120, "y": 240, "width": 360, "height": 42 }
     ],
+    "structures": [
+      {
+        "source": "ax",
+        "role": "AXHeading",
+        "label": "件名",
+        "relationship": "intersects_selection",
+        "states": [],
+        "actions": [],
+        "coverage": "partial"
+      }
+    ],
     "wire_truncated": true,
     "original_utf16_units": 16800
   }
@@ -168,6 +179,13 @@ Selection Extension取得済み情報のために追加walkしない。
 segmentsはC1の結果次第の任意fieldで、先に必須契約へしない。採用時はsegment textの総量・件数・
 公平配分をC1結果と同じcommitで契約へ追加する。frameは複数を保持し、
 `capture_visibility`が`off_capture` / `unknown`なら画像上にselectionが見えると指示しない。
+
+`structures`はselection取得時にすでに得たAX／DOM相当構造を保持する任意fieldで、segmentsとは
+独立する。各項目は`source`、selectionとの`relationship`、任意のrole／label／parent label／
+states／actions／frameと、
+`whole` / `partial` / `context` / `unknown`の`coverage`を持つ。coverageが`whole`でないlabelを
+selection全文の名前、要約、代替textとして扱わない。初回turnでstructuresを増やすためだけの
+全画面candidate walkは追加しない。件数・文字数・座標はGatewayでbounded validationする。
 スクリーンショット原画像は常に送り、任意cropで置換しない。
 
 promptは共通Vision evidence／安全規則、単一request intent resolver、任意Selection Extensionへ

@@ -290,6 +290,13 @@ selection専用taskへ置換する。このため、複数nodeにまたがる選
 画面構造、Skillを共同で使うという製品要件を満たさない。初回turnの通常AX候補が空なのは
 cold browser treeを待たないための意図的な性能設計であり、R10でも維持する。
 
+2026-07-31のChrome Gmail実測では、複数DOM選択のdirect `AXSelectedText` 757 UTF-16 unitsは
+取得できた。それでも現行経路は最初の非空`AXGroup`のrole／label／frameを全文と同じ
+`VisionFocusTarget`へ格納し、Gatewayも単一の「focus target」として説明させる。件名のような
+局所labelが選択全文の名前として扱われるため、本文を取得済みでも件名だけを説明し得る。
+R10では選択全文とselection-related structureを別field・別provenanceで保持し、局所labelが
+全文のscopeを置換しないことをtestで固定する。
+
 R10では次を不変条件とする。
 
 ```text
@@ -320,11 +327,14 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
 - **C2（未着手）** document root／text containerの全候補から、direct textの一致とcoverageを
   検証した全文、複数frame、acquisition状態、
   capture visibilityを解決する`VisionSelectionContext`とunit testを追加する。segmentsはC1で
-  必要性を証明した場合だけ追加し、全経路で値読取前にsecure判定を適用する。
+  必要性を証明した場合だけ追加する。selection本文とは独立した`SelectionStructure`へ取得済みの
+  role／label／relation／state／action／frameとcoverageを保持し、全経路で値読取前にsecure判定を
+  適用する。
 - **C3（未着手）** Gatewayへ後方互換な`selection`契約、恒久legacy adapter、共通内部型を追加する。
   promptをVision Core evidence／安全規則、単一intent resolver、任意selection dataへ分ける。
   初回の通常AX候補は両方とも空のままとし、selection取得済み構造だけを加える。12,000 UTF-16 units
-  内の頭尾均等保持、capture外、prompt injectionをtestで固定する。
+  内の頭尾均等保持、capture外、prompt injection、短い局所labelが長い選択全文を置換しないことを
+  testで固定する。
 - **C4（未着手）** 右Shift起動を`VisionSession(selection:)`へ切り替え、単一focus targetと
   selection専用taskを同じ変更で削除する。追加質問は最新質問を優先し、Copilotの新captureには
   古いselection payloadを渡さない。

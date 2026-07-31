@@ -126,6 +126,10 @@ Developer ID署名、notarization、staple、Gatekeeper評価を完了し、検�
 focused elementに近い最初の非空AX祖先で止まり、初期promptも通常Visionへ情報を加えるのではなく
 selection専用taskへ置き換える。このため、Gmail等で複数の画面構造にまたがって選択した全文が
 先頭断片へ縮約され、画像・AX・Skillを使えるのにタイトルだけを説明する結果になり得る。
+Chrome Gmailの実測では選択全文757 UTF-16 units自体は取得できたが、最初の非空`AXGroup`の
+role／label／frameを全文と同じ単一`focus_target`へ格納するため、件名labelが選択全体の代表値として
+モデルへ伝わる経路も確認した。取得文字列の欠落だけでなく、全文と局所構造を同一対象へ潰すことが
+件名だけを説明する直接原因である。
 
 次期R10では次を不変条件として修正する。
 
