@@ -1,6 +1,6 @@
 # Vision Selection 証拠主義への修正計画（R10.5）
 
-最終更新: 2026-08-01 ／ ステータス: 検証完了・実装可（C6リリースブロッカー）
+最終更新: 2026-08-01 ／ ステータス: §5-1〜§5-4実装済み・実機検証待ち（§5-5は移行計測後）
 
 R10 C6の実機テストで、**何も選択していない画面でも常に選択カードが表示され、モデルが
 「選択範囲を確認できません」と回答する**不具合を確認した。通常Visionが単独で成立しない状態であり、
@@ -141,12 +141,25 @@ C2〜C6の完了記録は当時の事実として残し、書き換えない。�
 
 結果、旧・新クライアントとも通常Visionの観測プロンプトへ戻る。
 
+実施済み（2026-08-01、`349bb9c`）: `normalizeVisionSelection`が唯一の成立判定になり、
+`kind !== "text"`と空textを捨てる。legacy `accessibility_element` / `region` / `visual_selection_hint`は
+正規化しない。`resolveVisionIntent`のvisual_only／element分岐を削除し、内部型`VisionSelection`の
+`kind`を`"text"`、`text`を必須へ狭めた。選択が無いrequestでは証拠ブロックの見出しからも
+"user-selected text"を外し、promptに選択の語が一切現れないようにした。usageへ
+`selection_wire_kind`（正規化前のraw種別）を追加した。Gateway 17件、lint、production buildが成功。
+
 ### 3. Gateway を本番デプロイ
 
 `origin/main`へのpushが本番デプロイである。R10のGateway契約は既に`main`にあるため、
 ホットフィックスは**mainから短命ブランチを切って**mainへマージし、その後
 `feat/vision-selection-extension`へmainを取り込む。この時点で**公開中の`v0.2.1`ユーザーの
 症状が消える**。クライアント修正を待たない。
+
+実施済み（2026-08-01）: `fix/vision-selection-evidence`をmainへfast-forwardし、`349bb9c`を
+push。Vercelのproduction deployが同commitでREADYになったことを確認した。公開中の`v0.2.1`は
+`visual_selection_hint`を送り続けるが、Gatewayが無視するため通常Visionの観測promptへ戻る。
+ただし`focus_target.accessibility_element`のカードはクライアントローカル描画のため`v0.2.1`では
+残り、回答だけが正される（§7-1）。
 
 `v0.2.1`への効果の限定を正確に: `visual_selection_hint`にはカードが無いため症状は完全に消える。
 `focus_target.accessibility_element`のカードは**クライアントローカル描画**のため残り、回答だけが
@@ -185,6 +198,14 @@ retryが早期停止しなくなり、`sawWebArea`だけでretryを許す現行�
 これは「選択なしブラウザ画面」という**最頻の利用場面**のsummon遅延を直接短縮する。cold
 Chromiumで選択が遅れて公開されるケースは(b)(c)が受け止める。効果と安全性はC6の同一端末
 p50／p95比較で、**選択なしブラウザ画面と複数node Gmail選択の両方**を計測して確認する。
+
+実施済み（2026-08-01）: 上記をすべて削除し、`selectionExtension`は`snapshot.selection`を
+返すだけになった。`isMeaningfulSelectedElement`の消滅で`AXSelected`という概念自体が
+クライアントから無くなったため、`AXFocusSnapshot.isElementSelected`とその`kAXSelectedAttribute`
+読取も削除した（summonごとのAX readが1回減る）。`VisionSelectionContext`は`kind`を単一case、
+`text`を非optionalへ狭め、型として「取得できた選択テキスト以外は存在しない」を表現する。
+`VisionSelectionPresentation`の`statusText`と、それを描いていたVisionパネルのLabelも削除した。
+retry規則は下記のとおり再設計した。macOS 40件、署名なしDebug buildが成功。
 
 ### 5. 移行完了を計測してから wire を撤去
 

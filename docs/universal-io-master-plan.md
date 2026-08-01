@@ -358,13 +358,19 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   probe残骸、起動時clipboard／合成⌘Cの再混入が無いことを確認した。後方互換Gatewayは2026-08-01に
   macOS候補版より先に`main`／本番へ配備した。署名付き候補版の実機golden pathと、同一端末でのwarm
   p50／p95比較を残す。coldの2秒deadlineはコード・unit test上で維持している。
-- **R10.5（リリースブロッカー、実装前）** C6実機テストで、何も選択していない画面にも選択カードと
+- **R10.5（実装済み・実機検証待ち）** C6実機テストで、何も選択していない画面にも選択カードと
   選択用promptが常に付き、モデルが選択の不在報告から回答を始める不具合を確認した。原因は
   `visualOnly`／`accessibilityElement`という観測主体を持たない状態で、正本が実装不能な条件を
   書いていたことに起因する。修正計画・判定記録・受け入れ条件は
   [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md)を正とする。
   順序は正本修正（済）→ Gateway「受理して無視」ホットフィックス → 本番デプロイ
   （この時点で`v0.2.1`ユーザーの症状も消える）→ クライアント削除＋retry再設計 → 計測後にwire撤去。
+  正本修正・Gatewayホットフィックス・本番デプロイ（`349bb9c`）・クライアント削除・retry再設計まで
+  完了した。selectionは`VisionSelectionResolver`が確定した非空textからのみ成立し、内部型は
+  `kind`単一case・`text`必須へ収縮した。`AXSelected`はクライアントから概念ごと消え、bounded retryは
+  証拠の兆候がある間だけ継続する。Gateway 17件、macOS 40件、Web lint／production build、署名なし
+  Debug buildが成功。残るのは署名付き候補版での実機golden path（選択なし画面で何も出ないこと）と
+  性能比較、および移行計測後のwire撤去である。
 
 受け入れ条件と詳細なcommit境界は[focused-vision-plan.md](focused-vision-plan.md)の
 プロジェクトCを正とする。R10はR9のclipboard安全化やTransform撤去を巻き戻さず、選択理解の

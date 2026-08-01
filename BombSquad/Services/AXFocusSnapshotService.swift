@@ -23,7 +23,6 @@ struct AXFocusSnapshot: Equatable {
     let frame: CGRect?
     let isEditable: Bool
     let isSecureField: Bool
-    let isElementSelected: Bool
     let status: CaptureStatus
     let collectionPasses: Int
 
@@ -35,7 +34,6 @@ struct AXFocusSnapshot: Equatable {
             frame: nil,
             isEditable: false,
             isSecureField: false,
-            isElementSelected: false,
             status: status,
             collectionPasses: collectionPasses
         )
@@ -52,60 +50,25 @@ enum AXFocusLaunchDecision {
 
     static func destination(for snapshot: AXFocusSnapshot) -> Destination {
         guard !snapshot.isSecureField else { return .vision }
-        if snapshot.selection != nil || isMeaningfulSelectedElement(snapshot) {
-            return .vision
-        }
+        if snapshot.selection != nil { return .vision }
         return snapshot.isEditable ? .compose : .vision
     }
 
-    /// Adds selection detail to the same Vision destination. Text returned by
-    /// AX remains authoritative; a selected UI element contributes its own
-    /// structure, and unresolved non-secure captures may use visual fallback.
+    /// Adds selection detail to the same Vision destination. Only text the user
+    /// actually selected qualifies. A failed read, a timeout, a focused
+    /// element, and an `AXSelected` current item are not evidence that the user
+    /// chose anything: those summons are ordinary Vision, which is the complete
+    /// surface rather than a degraded one.
     static func selectionExtension(for snapshot: AXFocusSnapshot) -> VisionSelectionContext? {
         guard !snapshot.isSecureField else { return nil }
-        if let selection = snapshot.selection { return selection }
-        if isMeaningfulSelectedElement(snapshot) {
-            return VisionSelectionContext.accessibilityElement(
-                role: snapshot.role,
-                label: snapshot.label,
-                frame: snapshot.frame
-            )
-        }
-        return shouldLookForVisualSelection(in: snapshot)
-            ? .visualOnly(captureVisibility: .visible)
-            : nil
-    }
-
-    /// When a non-secure AX read produced no target, Vision may inspect the
-    /// capture for a visible selection highlight. The prompt remains
-    /// best-effort and falls back to ordinary full-screen reading.
-    static func shouldLookForVisualSelection(in snapshot: AXFocusSnapshot) -> Bool {
-        guard destination(for: snapshot) == .vision,
-              !snapshot.isSecureField,
-              snapshot.selection == nil,
-              !isMeaningfulSelectedElement(snapshot) else {
-            return false
-        }
-        switch snapshot.status {
-        case .permissionDenied, .invalidTarget:
-            return false
-        case .complete, .noFocusedElement, .timedOut, .invalidatedElement:
-            return true
-        }
-    }
-
-    static func isMeaningfulSelectedElement(_ snapshot: AXFocusSnapshot) -> Bool {
-        guard snapshot.isElementSelected, let role = snapshot.role else { return false }
-        return ![
-            "AXApplication", "AXWindow", "AXSheet", "AXGroup", "AXScrollArea",
-            "AXSplitterGroup", "AXWebArea", "AXUnknown",
-        ].contains(role)
+        return snapshot.selection
     }
 }
 
-/// The bounded-retry rule is also pure. It mirrors the existing Vision identity
-/// collection: cold/growing web trees get another pass, while native trees stop
-/// as soon as their node count stabilizes.
+/// The bounded-retry rule is also pure. Waiting is justified only by a positive
+/// sign that selection evidence can still appear, never by the mere absence of
+/// a selection: the summon blocks on this read, and most summons happen on a
+/// screen where the user selected nothing at all.
 enum AXFocusSnapshotRetryPolicy {
     static func shouldRetry(
         pass: Int,
@@ -114,15 +77,21 @@ enum AXFocusSnapshotRetryPolicy {
         hasSelection: Bool,
         hasFocusedElement: Bool,
         sawWebArea: Bool,
+        hasPartialSelectionEvidence: Bool,
         visitedNodes: Int,
         previousVisitedNodes: Int
     ) -> Bool {
         guard pass < maxPasses, beforeExpiry, !hasSelection else { return false }
-        if !hasFocusedElement {
-            return true
-        }
-        let stillGrowing = Double(visitedNodes) > Double(previousVisitedNodes) * 1.25
-        return sawWebArea || stillGrowing
+        // Focus itself is still missing, so nothing has been observed yet.
+        if !hasFocusedElement { return true }
+        // The tree is still being built, so more of it is about to exist.
+        if Double(visitedNodes) > Double(previousVisitedNodes) * 1.25 { return true }
+        // Fragments are visible but the document-wide selection has not settled.
+        if hasPartialSelectionEvidence { return true }
+        // A web area alone only buys one extra pass for a tree that may still be
+        // cold. A settled page with no sign of a selection stops here instead of
+        // spending the rest of the budget in front of the user.
+        return sawWebArea && pass < 2
     }
 }
 
@@ -205,8 +174,7 @@ enum AXFocusSnapshotService {
 
             let hasSelection = hasAuthoritativeSelection(
                 candidates: attempt.selectionCandidates,
-                sawWebArea: attempt.sawWebArea,
-                snapshot: attempt.snapshot
+                sawWebArea: attempt.sawWebArea
             )
             let retry = AXFocusSnapshotRetryPolicy.shouldRetry(
                 pass: pass,
@@ -215,6 +183,10 @@ enum AXFocusSnapshotService {
                 hasSelection: hasSelection,
                 hasFocusedElement: attempt.hasFocusedElement,
                 sawWebArea: attempt.sawWebArea,
+                hasPartialSelectionEvidence: hasPartialSelectionEvidence(
+                    candidates: attempt.selectionCandidates,
+                    sawWebArea: attempt.sawWebArea
+                ),
                 visitedNodes: attempt.visitedNodes,
                 previousVisitedNodes: previousVisitedNodes
             )
@@ -223,24 +195,13 @@ enum AXFocusSnapshotService {
             try? await Task.sleep(nanoseconds: Budget.passWaitNanoseconds)
         }
 
-        let resolvedText = VisionSelectionResolver.resolve(candidates: selectionCandidates)
-        let resolvedSelection = resolvedText ?? (
-            AXFocusLaunchDecision.isMeaningfulSelectedElement(best)
-                ? VisionSelectionContext.accessibilityElement(
-                    role: best.role,
-                    label: best.label,
-                    frame: best.frame
-                )
-                : nil
-        )
         return AXFocusSnapshot(
-            selection: resolvedSelection,
+            selection: VisionSelectionResolver.resolve(candidates: selectionCandidates),
             role: best.role,
             label: best.label,
             frame: best.frame,
             isEditable: best.isEditable,
             isSecureField: best.isSecureField,
-            isElementSelected: best.isElementSelected,
             status: best.status,
             collectionPasses: pass
         )
@@ -252,12 +213,22 @@ enum AXFocusSnapshotService {
     /// on their direct text immediately.
     static func hasAuthoritativeSelection(
         candidates: [VisionSelectionCandidate],
-        sawWebArea: Bool,
-        snapshot: AXFocusSnapshot
+        sawWebArea: Bool
     ) -> Bool {
-        if AXFocusLaunchDecision.isMeaningfulSelectedElement(snapshot) { return true }
         if candidates.contains(where: { $0.scope == .document }) { return true }
         return !sawWebArea && !candidates.isEmpty
+    }
+
+    /// Fragments are visible but the document-wide selection has not appeared.
+    /// This is the only unsettled state where waiting can still change the
+    /// answer, so it is the only one that keeps spending the budget.
+    static func hasPartialSelectionEvidence(
+        candidates: [VisionSelectionCandidate],
+        sawWebArea: Bool
+    ) -> Bool {
+        sawWebArea
+            && !candidates.isEmpty
+            && !candidates.contains { $0.scope == .document }
     }
 
     private static func captureAttempt(
@@ -290,7 +261,6 @@ enum AXFocusSnapshotService {
                     frame: nil,
                     isEditable: false,
                     isSecureField: true,
-                    isElementSelected: false,
                     status: .complete,
                     collectionPasses: pass
                 ),
@@ -304,7 +274,6 @@ enum AXFocusSnapshotService {
         let focusedRole = copyString(focused, kAXRoleAttribute).value
         let focusedLabel = label(for: focused)
         let focusedFrame = copyFrame(focused).value
-        let focusedSelected = copyBool(focused, kAXSelectedAttribute).value ?? false
         let editable = isEditable(focused, role: focusedRole, subrole: focusedSubrole)
 
         var element = focused
@@ -325,8 +294,7 @@ enum AXFocusSnapshotService {
                         frame: nil,
                         isEditable: false,
                         isSecureField: true,
-                        isElementSelected: false,
-                        status: .complete,
+                            status: .complete,
                         collectionPasses: pass
                     ),
                     selectionCandidates: [],
@@ -403,7 +371,6 @@ enum AXFocusSnapshotService {
                 frame: focusedFrame,
                 isEditable: editable,
                 isSecureField: false,
-                isElementSelected: focusedSelected,
                 status: status,
                 collectionPasses: pass
             ),
@@ -624,17 +591,6 @@ enum AXFocusSnapshotService {
     private static func copyString(_ element: AXUIElement, _ attribute: String) -> Read<String> {
         let read = copyValue(element, attribute)
         return Read(value: read.value as? String, error: read.error)
-    }
-
-    private static func copyBool(_ element: AXUIElement, _ attribute: String) -> Read<Bool> {
-        let read = copyValue(element, attribute)
-        if let value = read.value as? Bool {
-            return Read(value: value, error: read.error)
-        }
-        if let value = read.value as? NSNumber {
-            return Read(value: value.boolValue, error: read.error)
-        }
-        return Read(value: nil, error: read.error)
     }
 
     private static func copyFrame(_ element: AXUIElement) -> Read<CGRect> {

@@ -116,15 +116,10 @@ final class VisionSelectionContextTests: XCTestCase {
         XCTAssertNil(VisionSelectionResolver.resolve(candidates: [candidate]))
     }
 
-    func testSelectionResolverFallsBackToVisualOnlyWithoutAXText() throws {
-        let selection = try XCTUnwrap(VisionSelectionResolver.resolve(
-            candidates: [],
-            allowVisualFallback: true
-        ))
-
-        XCTAssertEqual(selection.kind, .visualOnly)
-        XCTAssertNil(selection.text)
-        XCTAssertEqual(selection.acquisitionCompleteness, .visualOnly)
+    /// Nothing acquired means no Selection Extension. The resolver has no way
+    /// to see the screenshot, so it can never claim a selection it did not read.
+    func testSelectionResolverProducesNothingWithoutAXText() {
+        XCTAssertNil(VisionSelectionResolver.resolve(candidates: []))
     }
 
     func testSelectionResolverRejectsEntirePathWhenSecureCandidateAppears() {
@@ -285,31 +280,39 @@ final class VisionSelectionContextTests: XCTestCase {
 
         XCTAssertNotNil(selectionPayload)
         XCTAssertTrue(NSDictionary(dictionary: ordinary).isEqual(to: focusedWithoutExtension))
+        // An unselected summon carries no selection field of any generation.
+        XCTAssertNil(ordinary["selection"])
+        XCTAssertNil(ordinary["focus_target"])
+        XCTAssertNil(ordinary["visual_selection_hint"])
     }
 
-    func testVisualOnlyWirePayloadHasNoSyntheticText() throws {
-        let payload = try XCTUnwrap(
-            VisionSelectionContext.visualOnly().wirePayload(for: attachment())
+    /// Structure and geometry cannot manufacture a selection on the wire. With
+    /// no acquired text there is nothing to send, and the request stays an
+    /// ordinary Vision one.
+    func testStructureAndFramesAloneProduceNoSelectionWire() {
+        let blankText = VisionSelectionContext(
+            kind: .text,
+            text: "   \n\t",
+            structures: [
+                VisionSelectionStructure(
+                    source: .ax,
+                    role: "AXButton",
+                    label: "送信",
+                    parentLabel: nil,
+                    relationship: .selectionContainer,
+                    states: [],
+                    actions: [],
+                    frame: CGRect(x: 150, y: 250, width: 100, height: 50),
+                    coverage: .unknown
+                ),
+            ],
+            frames: [CGRect(x: 150, y: 250, width: 100, height: 50)],
+            acquisitionCompleteness: .complete,
+            acquisition: .axSelectedText,
+            captureVisibility: .unknown
         )
 
-        XCTAssertEqual(payload["kind"] as? String, "visual_only")
-        XCTAssertEqual(payload["acquisition_completeness"] as? String, "visual_only")
-        XCTAssertEqual(payload["original_utf16_units"] as? Int, 0)
-        XCTAssertNil(payload["text"])
-    }
-
-    func testAccessibilityElementSelectionKeepsStructureWithoutSyntheticText() throws {
-        let selection = try XCTUnwrap(VisionSelectionContext.accessibilityElement(
-            role: "AXButton",
-            label: "送信",
-            frame: CGRect(x: 150, y: 250, width: 100, height: 50)
-        ))
-
-        XCTAssertEqual(selection.kind, .accessibilityElement)
-        XCTAssertNil(selection.text)
-        XCTAssertEqual(selection.acquisition, .axElement)
-        XCTAssertEqual(selection.structures.first?.role, "AXButton")
-        XCTAssertEqual(selection.structures.first?.label, "送信")
+        XCTAssertNil(blankText.wirePayload(for: attachment()))
     }
 
     func testSelectionResolvesCaptureVisibilityFromAllFrames() {
@@ -383,35 +386,6 @@ final class VisionSelectionContextTests: XCTestCase {
         XCTAssertNotEqual(presentation.bodyText, "短い件名")
         XCTAssertEqual(presentation.visibleFrames.count, 2)
         XCTAssertEqual(presentation.positionText, "2か所の選択位置を表示中")
-        XCTAssertNil(presentation.statusText)
-    }
-
-    func testVisualOnlyPresentationAnnouncesImageInspection() {
-        let presentation = VisionSelectionPresentation(
-            selection: .visualOnly(captureVisibility: .visible),
-            attachment: attachment()
-        )
-
-        XCTAssertEqual(presentation.title, "選択範囲")
-        XCTAssertEqual(presentation.statusText, "選択範囲を画像から確認中")
-        XCTAssertNil(presentation.bodyText)
-        XCTAssertNil(presentation.positionText)
-    }
-
-    func testElementPresentationMayUseItsOwnLabel() throws {
-        let selection = try XCTUnwrap(VisionSelectionContext.accessibilityElement(
-            role: "AXButton",
-            label: "送信",
-            frame: CGRect(x: 150, y: 250, width: 100, height: 50)
-        ))
-        let presentation = VisionSelectionPresentation(
-            selection: selection,
-            attachment: attachment()
-        )
-
-        XCTAssertEqual(presentation.title, "選択した画面要素")
-        XCTAssertEqual(presentation.bodyText, "送信")
-        XCTAssertEqual(presentation.positionText, "1か所の選択位置を表示中")
     }
 
     func testOffCapturePresentationDoesNotClaimAVisiblePosition() {

@@ -1027,6 +1027,15 @@ document textを読み得る順序を修正した。macOS 41件、Web lint／Typ
 `visualOnly`／`accessibilityElement`の撤回、Gatewayの「受理して無視」ホットフィックス、
 retry停止規則の再設計、不在検査の追加を含む。
 
+R10.5実装記録（2026-08-01）: 正本修正のあとGatewayホットフィックスを`main`へ配備し（`349bb9c`、
+production READY確認済み）、続けてクライアントから推測経路を削除した。`normalizeVisionSelection`が
+唯一の成立判定になり、内部型は`kind`単一case・`text`必須へ収縮した。`AXSelected`はクライアントから
+概念ごと消え、`kAXSelectedAttribute`の読取も無くなった。bounded retryは「選択の証拠がまだ現れ得る
+積極的な兆候」（focus未取得／tree成長中／断片ありdocument未確定）でのみ継続し、web areaを見た
+だけでは追加1passに留める。選択なしの安定した画面が2秒予算を使い切っていた挙動を、最頻の利用場面の
+遅延として解消した。Gateway 17件、macOS 40件、Web lint／production build、署名なしDebug buildが
+成功した。署名付き候補版での実機golden pathと性能比較は未実施であり、C6は引き続き未完了である。
+
 ## 14. 検証
 
 ### 自動検証

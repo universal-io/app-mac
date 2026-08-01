@@ -220,9 +220,7 @@ struct VisionSessionView: View {
             let wireTruncated = selection.wirePayload(for: session.attachment)?["wire_truncated"]
                 as? Bool ?? false
             lines += [
-                "kind: \(selection.kind.rawValue)",
                 "acquisition: \(selection.acquisition.rawValue)",
-                "segment_count: \(selection.kind == .text ? 1 : 0)",
                 "structure_count: \(selection.structures.count)",
                 "frame_count: \(selection.frames.count)",
                 "visible_frame_count: \(visibleFrameCount)",
@@ -367,12 +365,6 @@ private struct VisionSelectionCard: View {
                             : "選択した内容全文をスクロール可能な領域に表示します"
                     )
                 }
-            }
-
-            if let statusText = presentation.statusText {
-                Label(statusText, systemImage: "eye")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
 
             if let positionText = presentation.positionText {

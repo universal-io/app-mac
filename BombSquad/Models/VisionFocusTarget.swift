@@ -11,23 +11,20 @@ struct VisionSelectionContext: Equatable {
     private static let maxStructures = 64
     private static let maxFrames = 64
 
+    /// One case on purpose. A Selection Extension exists only for text the user
+    /// actually selected, so there is no kind for "something may be selected".
     enum Kind: String, Equatable {
         case text
-        case accessibilityElement = "accessibility_element"
-        case visualOnly = "visual_only"
     }
 
     enum AcquisitionCompleteness: String, Equatable {
         case complete
         case partial
-        case visualOnly = "visual_only"
     }
 
     enum Acquisition: String, Equatable {
         case axDocumentSelection = "ax_document_selection"
         case axSelectedText = "ax_selected_text"
-        case axElement = "ax_element"
-        case visualHighlight = "visual_highlight"
     }
 
     enum CaptureVisibility: String, Equatable {
@@ -38,55 +35,14 @@ struct VisionSelectionContext: Equatable {
     }
 
     let kind: Kind
-    let text: String?
+    /// The answer scope the user chose. Non-optional because a Selection
+    /// Extension without acquired text is not a selection at all.
+    let text: String
     let structures: [VisionSelectionStructure]
     let frames: [CGRect]
     let acquisitionCompleteness: AcquisitionCompleteness
     let acquisition: Acquisition
     let captureVisibility: CaptureVisibility
-
-    static func visualOnly(
-        captureVisibility: CaptureVisibility = .unknown
-    ) -> Self {
-        Self(
-            kind: .visualOnly,
-            text: nil,
-            structures: [],
-            frames: [],
-            acquisitionCompleteness: .visualOnly,
-            acquisition: .visualHighlight,
-            captureVisibility: captureVisibility
-        )
-    }
-
-    static func accessibilityElement(
-        role: String?,
-        label: String?,
-        frame: CGRect?
-    ) -> Self? {
-        guard role != nil || label != nil || frame != nil else { return nil }
-        return Self(
-            kind: .accessibilityElement,
-            text: nil,
-            structures: [
-                VisionSelectionStructure(
-                    source: .ax,
-                    role: role,
-                    label: label,
-                    parentLabel: nil,
-                    relationship: .selectionContainer,
-                    states: [],
-                    actions: [],
-                    frame: frame,
-                    coverage: .unknown
-                ),
-            ],
-            frames: frame.map { [$0] } ?? [],
-            acquisitionCompleteness: .complete,
-            acquisition: .axElement,
-            captureVisibility: .unknown
-        )
-    }
 
     /// Encodes the optional Selection Extension without changing the base
     /// Vision request. Local text stays complete; only this wire value is
@@ -122,17 +78,8 @@ struct VisionSelectionContext: Equatable {
         }
         payload["structures"] = wireStructures
 
-        switch kind {
-        case .text:
-            guard payload["text"] != nil,
-                  acquisitionCompleteness != .visualOnly else { return nil }
-        case .accessibilityElement:
-            guard !wireStructures.isEmpty || !wireFrames.isEmpty else { return nil }
-        case .visualOnly:
-            guard acquisitionCompleteness == .visualOnly,
-                  acquisition == .visualHighlight,
-                  payload["text"] == nil else { return nil }
-        }
+        // Structures and frames cannot stand in for the selected text itself.
+        guard payload["text"] != nil else { return nil }
         return payload
     }
 
@@ -206,31 +153,16 @@ struct VisionSelectionContext: Equatable {
 struct VisionSelectionPresentation: Equatable {
     let title: String
     let bodyText: String?
-    let statusText: String?
     let positionText: String?
     let visibleFrames: [CGRect]
 
     init(selection: VisionSelectionContext, attachment: ScreenshotAttachment) {
         visibleFrames = selection.visibleNormalizedFrames(in: attachment)
-        switch selection.kind {
-        case .text:
-            title = "選択した内容"
-            bodyText = selection.text
-            statusText = nil
-        case .accessibilityElement:
-            title = "選択した画面要素"
-            bodyText = selection.structures.lazy.compactMap(\.label).first { !$0.isEmpty }
-            statusText = nil
-        case .visualOnly:
-            title = "選択範囲"
-            bodyText = nil
-            statusText = "選択範囲を画像から確認中"
-        }
+        title = "選択した内容"
+        bodyText = selection.text
 
         if !visibleFrames.isEmpty {
             positionText = "\(visibleFrames.count)か所の選択位置を表示中"
-        } else if selection.kind == .visualOnly {
-            positionText = nil
         } else if selection.captureVisibility == .offCapture {
             positionText = "選択位置はこのスクリーンショットの範囲外です"
         } else {
@@ -340,10 +272,7 @@ struct VisionSelectionCandidate: Equatable {
 /// Document-level direct text wins when available; native/editable controls
 /// fall back to agreement across the observed containers and passes.
 enum VisionSelectionResolver {
-    static func resolve(
-        candidates: [VisionSelectionCandidate],
-        allowVisualFallback: Bool = false
-    ) -> VisionSelectionContext? {
+    static func resolve(candidates: [VisionSelectionCandidate]) -> VisionSelectionContext? {
         // Encountering a secure field anywhere on the acquisition path is a
         // hard stop. Do not salvage labels, frames, or text from another node.
         guard !candidates.contains(where: \.isSecure) else { return nil }
@@ -352,9 +281,7 @@ enum VisionSelectionResolver {
             guard let text = meaningfulText(candidate.directText) else { return nil }
             return TextCandidate(text: text, observation: candidate)
         }
-        guard !usable.isEmpty else {
-            return allowVisualFallback ? .visualOnly() : nil
-        }
+        guard !usable.isEmpty else { return nil }
 
         let groups = Dictionary(grouping: usable, by: \.text).values
         guard let chosen = groups.max(by: { isLowerQuality($0, than: $1) }),
@@ -363,9 +290,7 @@ enum VisionSelectionResolver {
                       return left.observation.scope.rawValue < right.observation.scope.rawValue
                   }
                   return left.observation.depth < right.observation.depth
-              }) else {
-            return allowVisualFallback ? .visualOnly() : nil
-        }
+              }) else { return nil }
 
         let structures = deduplicatedStructures(from: usable, chosenText: representative.text)
         let frames = deduplicatedFrames(usable.flatMap(\.observation.selectionFrames))

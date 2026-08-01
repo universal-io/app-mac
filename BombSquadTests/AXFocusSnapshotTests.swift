@@ -19,43 +19,39 @@ final class AXFocusSnapshotTests: XCTestCase {
         let snapshot = makeSnapshot(selectedText: " \n\t", isEditable: true)
 
         XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .compose)
+        XCTAssertNil(AXFocusLaunchDecision.selectionExtension(for: snapshot))
     }
 
     func testEmptySelectionUsesVisionForNonEditableElement() {
         let snapshot = makeSnapshot(selectedText: nil, isEditable: false)
 
         XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .vision)
+        XCTAssertNil(AXFocusLaunchDecision.selectionExtension(for: snapshot))
     }
 
-    func testMeaningfulSelectedElementExtendsVisionWithoutText() {
+    /// A sidebar row, tab, or list item the app reports as its current item is
+    /// not something the user chose to ask about, however rich its structure is.
+    func testCurrentItemWithoutSelectedTextIsNotASelection() {
         let snapshot = makeSnapshot(
             selectedText: nil,
-            role: "AXButton",
-            isElementSelected: true
+            role: "AXRow",
+            label: "現在のサイドバー項目"
         )
 
-        XCTAssertEqual(
-            AXFocusLaunchDecision.destination(for: snapshot),
-            .vision
-        )
-        XCTAssertEqual(
-            AXFocusLaunchDecision.selectionExtension(for: snapshot)?.kind,
-            .accessibilityElement
-        )
-        XCTAssertEqual(
-            AXFocusLaunchDecision.selectionExtension(for: snapshot)?.structures.first?.role,
-            "AXButton"
-        )
-    }
-
-    func testContainerSelectionDoesNotCreateSelectionContext() {
-        let snapshot = makeSnapshot(
-            selectedText: nil,
-            role: "AXWebArea",
-            isElementSelected: true
-        )
-
+        XCTAssertNil(AXFocusLaunchDecision.selectionExtension(for: snapshot))
         XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .vision)
+    }
+
+    func testCurrentItemInsideAnEditableFieldOpensCompose() {
+        let snapshot = makeSnapshot(
+            selectedText: nil,
+            role: "AXTextField",
+            label: "検索",
+            isEditable: true
+        )
+
+        XCTAssertNil(AXFocusLaunchDecision.selectionExtension(for: snapshot))
+        XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .compose)
     }
 
     func testSecureFieldAlwaysFallsBackToVision() {
@@ -63,29 +59,34 @@ final class AXFocusSnapshotTests: XCTestCase {
             selectedText: "must never be retained",
             role: "AXTextField",
             isEditable: true,
-            isSecureField: true,
-            isElementSelected: true
+            isSecureField: true
         )
 
         XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .vision)
-        XCTAssertFalse(AXFocusLaunchDecision.shouldLookForVisualSelection(in: snapshot))
+        XCTAssertNil(AXFocusLaunchDecision.selectionExtension(for: snapshot))
     }
 
-    func testMissingAXSelectionEnablesBestEffortVisualHint() {
-        let snapshot = makeSnapshot(
-            selectedText: nil,
-            role: "AXWebArea",
-            isEditable: false
-        )
+    /// Every way acquisition can fail. None of them is evidence that the user
+    /// selected something, so each one is an ordinary Vision summon.
+    func testUnresolvedCapturesNeverClaimASelection() {
+        let statuses: [AXFocusSnapshot.CaptureStatus] = [
+            .complete, .permissionDenied, .invalidTarget,
+            .noFocusedElement, .timedOut, .invalidatedElement,
+        ]
 
-        XCTAssertTrue(AXFocusLaunchDecision.shouldLookForVisualSelection(in: snapshot))
-    }
+        for status in statuses {
+            let snapshot = AXFocusSnapshot.unavailable(status)
 
-    func testAccessibilityDenialDoesNotClaimAVisualSelection() {
-        let snapshot = AXFocusSnapshot.unavailable(.permissionDenied)
-
-        XCTAssertEqual(AXFocusLaunchDecision.destination(for: snapshot), .vision)
-        XCTAssertFalse(AXFocusLaunchDecision.shouldLookForVisualSelection(in: snapshot))
+            XCTAssertNil(
+                AXFocusLaunchDecision.selectionExtension(for: snapshot),
+                "\(status) must not produce a selection"
+            )
+            XCTAssertEqual(
+                AXFocusLaunchDecision.destination(for: snapshot),
+                .vision,
+                "\(status) must stay on ordinary Vision"
+            )
+        }
     }
 
     func testParallelSummonCaptureCanResolveToCompose() {
@@ -102,6 +103,7 @@ final class AXFocusSnapshotTests: XCTestCase {
             hasSelection: false,
             hasFocusedElement: false,
             sawWebArea: false,
+            hasPartialSelectionEvidence: false,
             visitedNodes: 0,
             previousVisitedNodes: 0
         ))
@@ -115,8 +117,46 @@ final class AXFocusSnapshotTests: XCTestCase {
             hasSelection: false,
             hasFocusedElement: true,
             sawWebArea: true,
+            hasPartialSelectionEvidence: false,
             visitedNodes: 150,
             previousVisitedNodes: 100
+        ))
+    }
+
+    /// The most common summon of all: a settled browser page with nothing
+    /// selected. One extra pass covers a tree that may still be cold; after
+    /// that, waiting cannot change the answer and only delays the panel.
+    func testSettledPageWithoutSelectionEvidenceStopsEarly() {
+        func retry(pass: Int) -> Bool {
+            AXFocusSnapshotRetryPolicy.shouldRetry(
+                pass: pass,
+                maxPasses: 6,
+                beforeExpiry: true,
+                hasSelection: false,
+                hasFocusedElement: true,
+                sawWebArea: true,
+                hasPartialSelectionEvidence: false,
+                visitedNodes: 200,
+                previousVisitedNodes: 200
+            )
+        }
+
+        XCTAssertTrue(retry(pass: 1))
+        XCTAssertFalse(retry(pass: 2))
+        XCTAssertFalse(retry(pass: 5))
+    }
+
+    func testFragmentsWithoutDocumentSelectionKeepRetrying() {
+        XCTAssertTrue(AXFocusSnapshotRetryPolicy.shouldRetry(
+            pass: 3,
+            maxPasses: 6,
+            beforeExpiry: true,
+            hasSelection: false,
+            hasFocusedElement: true,
+            sawWebArea: true,
+            hasPartialSelectionEvidence: true,
+            visitedNodes: 200,
+            previousVisitedNodes: 200
         ))
     }
 
@@ -128,6 +168,7 @@ final class AXFocusSnapshotTests: XCTestCase {
             hasSelection: false,
             hasFocusedElement: false,
             sawWebArea: false,
+            hasPartialSelectionEvidence: false,
             visitedNodes: 0,
             previousVisitedNodes: 0
         ))
@@ -138,6 +179,7 @@ final class AXFocusSnapshotTests: XCTestCase {
             hasSelection: false,
             hasFocusedElement: false,
             sawWebArea: true,
+            hasPartialSelectionEvidence: true,
             visitedNodes: 200,
             previousVisitedNodes: 100
         ))
@@ -151,13 +193,13 @@ final class AXFocusSnapshotTests: XCTestCase {
             hasSelection: true,
             hasFocusedElement: true,
             sawWebArea: true,
+            hasPartialSelectionEvidence: true,
             visitedNodes: 200,
             previousVisitedNodes: 100
         ))
     }
 
     func testWebFragmentDoesNotStopBeforeDocumentSelectionAppears() {
-        let snapshot = makeSnapshot(selectedText: nil, role: "AXStaticText")
         let fragment = VisionSelectionCandidate(
             directText: "件名",
             role: "AXHeading",
@@ -173,13 +215,15 @@ final class AXFocusSnapshotTests: XCTestCase {
 
         XCTAssertFalse(AXFocusSnapshotService.hasAuthoritativeSelection(
             candidates: [fragment],
-            sawWebArea: true,
-            snapshot: snapshot
+            sawWebArea: true
+        ))
+        XCTAssertTrue(AXFocusSnapshotService.hasPartialSelectionEvidence(
+            candidates: [fragment],
+            sawWebArea: true
         ))
     }
 
     func testWebDocumentSelectionStopsBoundedRetry() {
-        let snapshot = makeSnapshot(selectedText: nil, role: "AXStaticText")
         let document = VisionSelectionCandidate(
             directText: "件名と本文の選択全文",
             role: "AXWebArea",
@@ -195,8 +239,18 @@ final class AXFocusSnapshotTests: XCTestCase {
 
         XCTAssertTrue(AXFocusSnapshotService.hasAuthoritativeSelection(
             candidates: [document],
-            sawWebArea: true,
-            snapshot: snapshot
+            sawWebArea: true
+        ))
+        XCTAssertFalse(AXFocusSnapshotService.hasPartialSelectionEvidence(
+            candidates: [document],
+            sawWebArea: true
+        ))
+    }
+
+    func testNoCandidatesIsNotPartialEvidence() {
+        XCTAssertFalse(AXFocusSnapshotService.hasPartialSelectionEvidence(
+            candidates: [],
+            sawWebArea: true
         ))
     }
 
@@ -245,9 +299,9 @@ final class AXFocusSnapshotTests: XCTestCase {
     private func makeSnapshot(
         selectedText: String? = nil,
         role: String? = nil,
+        label: String? = nil,
         isEditable: Bool = false,
-        isSecureField: Bool = false,
-        isElementSelected: Bool = false
+        isSecureField: Bool = false
     ) -> AXFocusSnapshot {
         let text = selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
         let selection: VisionSelectionContext?
@@ -267,11 +321,10 @@ final class AXFocusSnapshotTests: XCTestCase {
         return AXFocusSnapshot(
             selection: selection,
             role: role,
-            label: nil,
+            label: label,
             frame: nil,
             isEditable: isEditable,
             isSecureField: isSecureField,
-            isElementSelected: isElementSelected,
             status: .complete,
             collectionPasses: 1
         )
