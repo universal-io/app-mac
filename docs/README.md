@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-最終更新: 2026-07-30 ／ ステータス: 現行
+最終更新: 2026-08-01 ／ ステータス: 現行
 
 このファイルがドキュメントの唯一の入口です。実装の正は現行コード、製品計画の正は
 `universal-io-master-plan.md`、APIの正は `api-contract.md` です。
@@ -19,7 +19,7 @@
 | [supabase-setup.md](supabase-setup.md) | 認証・データ基盤の設定 |
 | [admin-dashboard-plan.md](admin-dashboard-plan.md) | 本番Admin Console |
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
-| [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9と、将来のAX直接入力研究（プロジェクトB）の記録 |
+| [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9、Selection Extension改修（R10）、将来のAX直接入力研究の正本 |
 
 ## 参照資料
 

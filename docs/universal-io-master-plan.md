@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-07-30 ／ ステータス: `v0.2.1`正式公開済み、R9完了
+最終更新: 2026-08-01 ／ ステータス: `v0.2.1`正式公開済み、R10 C5完了・C6着手前
 
 ## 製品
 
@@ -42,6 +42,12 @@ macOS UI
 - 全AI routeのusage記録は共通処理で応答後に実行する。SSEも最終結果をクライアントへ返してから
   記録し、運用上のDB書き込みをユーザーの待ち時間から外す。
 - Visionは画像、同一captureの候補、会話を1回のVLM呼び出しへ渡す。
+- Focused Visionは別taskではなく`Vision Core + Selection Extension`とする。selectionは
+  ユーザーが明示した回答scopeである。初回は選択操作が対象を決め、選択全文を必ず扱う。画像、
+  現行の通常AX candidate policy、identity、Skill、会話、
+  Copilotを減らさず、選択全文、取得済みの関連AX構造、複数frameを加える。selectionを除いた入力と
+  実行経路は通常Visionと同一でなければならない。周辺観測はselectionを説明する材料であり、
+  scopeを別のlabelや要素へ変更する権限を持たない。segmentは実機で必要性を証明した場合だけ加える。
 - Composeの先回り文案は共通判断、ユーザーが確認したファクト、任意のアプリ文脈を独立した添付として
   渡す。ファクトはglobalと画面に効いているツールのscopeだけを注入し、固定Personaは持たない。
   最新メッセージの話者・宛先・行為主体を確定してから、現在のユーザー視点で文案を作る。
@@ -200,6 +206,12 @@ macOS、環境変数にモデル名やfallback順序を重複させない。Admi
   定数に収まっているかで設計の合否を判定する。1本目はGA4（`analytics.google.com`）。会話系ではなく
   操作系の初例で、`conventions`を持たず`affordances`／`attention`が厚い——用途別にセクションを
   出し分ける設計の実地検証になる。
+- **M7（未着手）** Skillsカタログを数百・数千製品へ拡張できる基盤へ移行する。製品識別子、製品内の
+  画面モジュール、Skill本文を分離し、宣言的な定義からhost／bundle IDの索引を生成する。検出後は
+  該当製品と必要な1〜3モジュールだけを遅延ロードし、追加のたびにmacOSクライアントの更新を要求しない。
+  重複識別子・曖昧な一致・必須項目・トークン上限をビルド時に検証し、golden case、段階公開、
+  バージョン管理、即時ロールバックを運用に含める。詳細は
+  [v3-tool-fit-plan.md](v3-tool-fit-plan.md)「数百・数千ツールへの拡張」に従う。
 - **セットアップウィザード（未実装・案）** 画面検出とは別の取得経路として、対話形式で精度に効く
   項目を決め打ちで埋める。初回起動には置かず、マイページ常設＋ある程度使った段階での導線とし、
   1問も答えなくても全機能が動くオプショナル層に留める。設計は[v3-tool-fit-plan.md](v3-tool-fit-plan.md) §4。
@@ -271,6 +283,83 @@ R9プロジェクトAに残作業はない。AX直接入力probeとclipboard非�
 プロジェクトB（B0/B1）で将来判断する。provider ZDR、本番課金、退会、権限拒否、offline復帰などの
 横断的な運用確認は[manual-golden-paths.md](manual-golden-paths.md)に残し、該当領域を変更する
 次回リリースで重点確認する。
+
+### R10 — Vision Selection Extension（C5完了・C6着手前）
+
+`v0.2.1`はFocused Visionを同じSession、View、Gateway route、モデルへ統合したが、選択取得は
+focused elementに近い最初の非空AX祖先で終了し、Gatewayはselectionがあると通常Visionの初期taskを
+selection専用taskへ置換する。このため、複数nodeにまたがる選択全文、スクリーンショット、
+画面構造、Skillを共同で使うという製品要件を満たさない。初回turnの通常AX候補が空なのは
+cold browser treeを待たないための意図的な性能設計であり、R10でも維持する。
+
+2026-07-31のChrome Gmail実測では、複数DOM選択のdirect `AXSelectedText` 757 UTF-16 unitsは
+取得できた。それでも現行経路は最初の非空`AXGroup`のrole／label／frameを全文と同じ
+`VisionFocusTarget`へ格納し、Gatewayも単一の「focus target」として説明させる。件名のような
+局所labelが選択全文の名前として扱われるため、本文を取得済みでも件名だけを説明し得る。
+R10では選択全文とselection-related structureを別field・別provenanceで保持し、局所labelが
+全文のscopeを置換しないことをtestで固定する。
+
+R10では次を不変条件とする。
+
+```text
+Focused Vision = Vision Core + Selection Extension
+Focused Vision - Selection Extension = 通常Vision
+```
+
+selection全文はユーザーが明示した回答scopeとして保持する。screenshot、AX／画面構造、identity、
+Skillは引き続き第一級の観測であり、selectionの意味、関係、操作可能性、見た目、配置を共同で理解する。
+ここで第一級とは情報を捨てないという意味であり、回答scopeを決める権限が同格という意味ではない。
+初回のscopeは選択操作と選択全文が決め、周辺観測はそれを置換・縮約・無視できない。
+主対策はdocument rootまで全候補を調べ、direct selected textの候補間／pass間の一致、
+非collapsed range、selection coverageを検証して最も完全なdocument selectionを採用することである。
+rangeはAX要素ごとのローカル値であり、外側という理由だけでは採用しない。
+`AXStringForRange`との完全一致は補強証拠であり、Chrome Gmailで実測した表現差だけで安定した
+direct textを棄却しない。複数segment集約は実機probeで必要性を証明した製品だけのfallbackとする。
+画像上でだけ観測できる場合は`visualOnly`として表面へ明示し、その他の取得状態は開発情報へ置く。
+
+復帰点はtag `pre-vision-selection-extension-20260731`、commit `dcac535`。作業branchは
+`feat/vision-selection-extension`。同じ`VisionSession`、`/api/ai/vision`、model route、
+fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、長期feature flagは作らない。
+現行`v0.2.1`との旧fieldは恒久入力adapterとして受理するが、同じ内部型へ正規化して意味経路を
+二重化しない。mode命令は単一request intent resolverで決定し、通常taskとselection taskを連結しない。
+
+- **C0（完了）** 要件、目標契約、復帰点、C1〜C6のcommit境界と受け入れ条件を正本へ固定した。
+- **C1（完了）** リポジトリ外のread-only AX probeでChrome Gmail、controlled Safari／Chrome、
+  TextEdit、VS Codeを計測した。Chrome Gmailは単一document selectionで全文757 UTF-16 unitsを返し、
+  Safariは公開AX本文を返さないため`visualOnly`へ退化する。segment fallbackを採用せず、短命probeは
+  結果記録後に削除する。Safari Gmail、Slack、Apple Mailの製品固有golden pathはC6で確認する。
+- **C2（完了）** `VisionSelectionContext`、`VisionSelectionStructure`、複数frame、acquisition状態、
+  capture visibilityと純粋`VisionSelectionResolver`を追加した。document全文優先、native consensus、
+  短いlabelによる本文置換禁止、range不一致、visualOnly、secure拒否、frame重複除去をunit testで固定し、
+  36件が成功した。未使用`VisionFocusTarget.region`は削除した。現行本番入口はまだ切り替えていない。
+- **C3（完了）** Gatewayへ後方互換な`selection`契約、恒久legacy adapter、共通内部型を追加した。
+  promptを単一intent、selected text、screen evidence、selection structureへ分け、画像、Skill、turns、
+  candidates、identity、model route、responseを共通のまま維持した。12,000 UTF-16 units内の頭尾保持、
+  capture外、prompt injection、短い局所labelが長い選択全文を置換しないことを固定した。Gateway 8件、
+  macOS 39件、型検査、対象lintが成功し、本番入口はまだ切り替えていない。
+- **C4（完了）** 右Shiftの本番入口をresolverから`VisionSession(selection:)`へ切り替えた。AXは
+  documentまでのdirect selected text候補を収集し、選択全文と部分的に重なる複数構造を別provenanceで
+  保持する。macOSの単一`VisionFocusTarget`、旧field encoding、selection専用task、単一対象カードを
+  削除し、画像上だけの選択も`visualOnly` extensionとして同じVision Coreへ渡す。追加質問は同じsessionの
+  最新質問を優先し、Copilotの新captureへ古いselection payloadを渡さない。macOS unit test 35件が
+  成功した。
+- **C5（完了）** 同じVisionパネルへ選択全文カードと全visible frameの個別枠を追加した。テキスト選択を
+  短いstructure labelで置換せず、`visualOnly`だけを表面の取得状態として示す。位置不明／capture外は
+  その事実を表示し、acquisition、segment／structure／frame数、completeness、capture visibility、
+  wire truncationは内容なしで既存の処理情報へ追加した。ネイティブButton、VoiceOver順序、Increase
+  Contrast、Reduce Transparency、Reduce Motionへ対応し、presentationを含むmacOS unit test 39件が
+  成功した。
+- **C6（進行中）** ローカル自動検証と差分監査を実施した。通常／Selection Extension requestの
+  selection以外の同一性、単一intent、全文scope、prompt injection、legacy adapter、secure descendant、
+  capture外を回帰testへ追加し、起動先を同じVisionへ一本化した。macOS 41件、Gateway 14件、Web lint、
+  TypeScript、production build、署名なしDebug buildが成功し、別endpoint、別model route、長期flag、
+  probe残骸、起動時clipboard／合成⌘Cの再混入が無いことを確認した。後方互換Gatewayは2026-08-01に
+  macOS候補版より先に`main`／本番へ配備した。署名付き候補版の実機golden pathと、同一端末でのwarm
+  p50／p95比較を残す。coldの2秒deadlineはコード・unit test上で維持している。
+
+受け入れ条件と詳細なcommit境界は[focused-vision-plan.md](focused-vision-plan.md)の
+プロジェクトCを正とする。R10はR9のclipboard安全化やTransform撤去を巻き戻さず、選択理解の
+データモデルとprompt合成だけを正す。
 
 ## リリース判定
 

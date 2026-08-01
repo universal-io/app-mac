@@ -42,11 +42,15 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
 - 入力履歴は管理画面からだけ閲覧し、入力パネルでは読み込まない。自動返信モードがオフの時は
   見出しとスイッチだけを残して下段を畳む。ただし、そのセッションですでに完成した文案は
   オフにしても保持し、次回のComposeから自動生成を止める。
-- Compose上部はブラウザ名やウインドウタイトルではなく、適用ツールと実際の参照元
-  （画面画像／AX周辺テキスト）を表示する。詳細から取得テキストと保存範囲を確認でき、
-  AX周辺テキストだけをそのセッションから除外できる。
+- Compose上部はブラウザ名やウインドウタイトルではなく、適用ツールを右側に表示する。
+  画面画像／AX周辺テキストの使用状況、実際の参照元、取得テキスト、保存範囲は
+  情報ボタン内で確認・コピーでき、AX周辺テキストだけをそのセッションから除外できる。
+  ComposeからVision撮影を直接起動するボタンは置かない。
 - Vision: スクリーンショットを読み、質問への回答や次の操作位置を提示。選択テキストまたは
-  選択要素がある時は、同じVisionパネルで対象を優先して説明
+  選択要素がある時は、同じVisionパネルで対象を優先して説明。スクリーンショットは画像上を
+  直接ドラッグして表示位置を動かし、トラックパッド操作で拡大・縮小できる。モデル、Gateway、
+  AX収集、captureの開発情報はツール名横の情報ボタンへ畳み、まとめてコピーできる。
+  Copilotはモデルへ渡す画面が確定した瞬間だけ撮影範囲を短く暗転し、画面を見た順序を示す
 - Copilot: ユーザーの操作後に画面を再取得し、目的に到達するまで次の一手を案内
 - 履歴: 実際に送信した内容のローカル履歴
 
@@ -79,15 +83,17 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
 
 設計根拠は[v3-tool-fit-plan.md](docs/v3-tool-fit-plan.md)、進捗と受け入れ条件は
 [マスタープラン R8](docs/universal-io-master-plan.md)を正本とする。
+数百・数千製品へ増やすカタログ基盤はR8の**M7（未着手）**として管理する。製品内を画面moduleへ
+分け、該当する1〜3 moduleだけを遅延ロードし、製品追加でmacOSクライアントを更新しない構成を目指す。
 
-### Focused Vision（Transform統合とclipboard安全化）
+### Focused Vision（現行`v0.2.1`）
 
-現行Transformは独立した製品surfaceとして残さず、選択テキスト・選択要素・位置を開始時点から
-持つVisionへ統合する。通常Visionが画面全体から質問で対象を絞るのに対し、Focused Visionは
+R9では当時のTransformを独立した製品surfaceとして残さず、選択テキスト・選択要素・位置を開始時点から
+持つVisionへ統合した。通常Visionが画面全体から質問で対象を絞るのに対し、Focused Visionは
 画面全体に加えて「この部分」を最初から指定した同じVision sessionで、初期解説、追加質問、
 Copilotへの移行を行う。
 
-この統合と同じプロジェクトAで、起動判定の合成⌘Cと標準クリップボードの退避・復元を廃止する。
+この統合と同じプロジェクトAで、起動判定の合成⌘Cと標準クリップボードの退避・復元を廃止した。
 選択取得はAccessibility APIだけを使い、取得失敗時は通常Vision／Composeへ安全に退化する。
 Compose送信は主要アプリとの互換性を維持するため当面clipboard＋合成⌘Vを使うが、送信後に古い内容を
 復元しない。送信本文がclipboardへ残る、明示操作に限った予測可能な副作用とする。
@@ -113,6 +119,63 @@ deploy済み。現行4 AI routeの応答と旧`/api/ai/transform`の404を確認
 Developer ID署名、notarization、staple、Gatekeeper評価を完了し、検証した同一byte列を正式公開した。
 公開URLからの再取得でも署名、version/build、Universal binary、SHA-256
 `637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`の一致を確認済みである。
+
+### 開発中: Vision Selection Extension
+
+現行`v0.2.1`は同じVisionパネル、Gateway、モデル、スクリーンショットを使う一方、選択取得が
+focused elementに近い最初の非空AX祖先で止まり、初期promptも通常Visionへ情報を加えるのではなく
+selection専用taskへ置き換える。このため、Gmail等で複数の画面構造にまたがって選択した全文が
+先頭断片へ縮約され、画像・AX・Skillを使えるのにタイトルだけを説明する結果になり得る。
+Chrome Gmailの実測では選択全文757 UTF-16 units自体は取得できたが、最初の非空`AXGroup`の
+role／label／frameを全文と同じ単一`focus_target`へ格納するため、件名labelが選択全体の代表値として
+モデルへ伝わる経路も確認した。取得文字列の欠落だけでなく、全文と局所構造を同一対象へ潰すことが
+件名だけを説明する直接原因である。
+
+次期R10では次を不変条件として修正する。
+
+```text
+Focused Vision = Vision Core + Selection Extension
+Focused Vision - Selection Extension = 通常Vision
+```
+
+選択全文はユーザーが明示した回答対象として保持する。最初の非空祖先では止めずdocument rootまで
+全候補を調べる。ただしrangeはAX要素ごとのローカル値なので、外側という理由だけで採用せず、
+direct `AXSelectedText`の候補間／pass間の一致、非collapsed range、selection coverageを検証して
+最も完全なdocument selectionを採用する。`AXStringForRange`との完全一致は補強証拠に留め、
+Chrome Gmailで実測した表現差を理由に安定したdirect textを捨てない。複数segment集約は、
+実機probeで公開document selectionが
+成立せず、公開断片の集約で情報量が増えると分かった製品だけのfallbackとする。
+
+通常Visionのスクリーンショット、現行のAX候補方針、画面identity、Skill、会話、Copilotを減らさず、
+選択取得時にすでに得た構造だけを追加する。初回応答の全画面AX候補は通常／Focusedとも現行どおり空とし、
+cold browser treeを待つ性能劣化を持ち込まない。初回Focused Visionでは、ユーザーの選択操作が
+回答scopeを決め、選択全文が必ず扱う対象そのものになる。AX／画面構造、スクリーンショット、Skillは
+意味・関係・操作可能性・見た目・配置を説明する重要情報だが、件名、label、目立つ要素で選択本文を
+置換・縮約・無視する権限は持たない。
+
+modeはguidance、最新質問、初回selection、初回observationの優先順で単一resolverが決め、
+矛盾する`observation`／`answer`命令を連結しない。長文は先頭だけへ切らず頭尾を均等に残し、
+selection本文中の命令には従わないが、文字列全体がユーザーの指定対象であることは信頼する。
+新しいsurface、endpoint、model route、別promptは
+作らない。公開済み旧fieldは恒久入力adapterから同じ内部型へ正規化する。要件、
+マイルストーン、受け入れ条件、復帰点は
+[focused-vision-plan.md](docs/focused-vision-plan.md)のプロジェクトCと
+[マスタープラン R10](docs/universal-io-master-plan.md)を正本とする。C1の公開AX能力probe、C2の
+Selection resolver／データモデル、C3の後方互換Gateway契約／単一promptに続き、C4で右Shiftの
+本番入口を`VisionSession(selection:)`へ切り替えた。AX取得は最初の非空祖先で止まらず、documentまでの
+候補から選択全文を決め、同時に得た短い部分候補は本文の代替ではなく補助構造として保持する。
+macOSクライアントは旧`focus_target`／`visual_selection_hint`を送らず、通常Visionと同じ画像、identity、
+Skill、会話、model routeへ任意`selection`だけを加える。旧fieldの受理は公開済みクライアント向けGateway
+adapterだけに残る。C5では同じVisionパネルへ選択全文カードを追加し、captureと交差する全frameを別々に
+表示する。短いAX labelをテキスト選択の見出しへ使わず、`visualOnly`だけを表面の取得状態として示す。
+acquisition、frame数、capture visibility、wire truncationは内容を含めず既存の処理情報へ置く。
+C6のローカル自動検証では、通常Visionとの差分が`selection`だけであるrequest比較、単一intent、
+全文scope、prompt injection、legacy adapter、secure descendant、capture外、旧経路・privacy監査を固定し、
+macOS 41件、Gateway 14件、Web lint／TypeScript／production build、署名なしDebug buildが成功した。
+起動先enumもVisionへ一本化し、文字を伴わない選択要素をSelection Extensionへ保持する。
+R10の後方互換Gateway契約は2026-08-01にmacOS候補版より先に`main`へ配備した。公開中の
+`v0.2.1`クライアントは旧fieldから同じ内部型へ合流するため互換性を維持する。C6完了には署名付き
+候補版で実機golden pathと同一端末の性能比較を行う必要がある。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
