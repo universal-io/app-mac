@@ -180,6 +180,12 @@ scope=document`、**取得1ms、document走査スキップ**。修正前は同�
 1,500msを費やしていた。document scopeが立つため`hasAuthoritativeSelection`が即座に成立し、
 bounded retryも1 passで止まる。
 
+実機確認（2026-08-01、署名なしDebug build）: 同じChrome Gmailで
+`acquisition: ax_document_selection` / `acquisition_completeness: complete` /
+`structure_count: 1`を確認した。修正前の同一画面は`[selection] status: none`だった。
+`frame_count: 0`はC1実測済みのChrome公開boundsの0サイズ問題で、選択位置の枠は描けない
+（カードには選択全文が出るため内容は確認できる）。
+
 残る死角（未修正・優先度低）:
 
 - **focused elementが取れないとdocument探索を一切しない。** `captureAttempt`は
