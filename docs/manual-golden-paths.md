@@ -172,9 +172,13 @@ R10の合否に使わない。
       （R10.5最重要受け入れ条件。2026-08-01、Apple Development署名のDebug buildで確認）。
 - [x] Chrome Gmailの本文選択でselectionが成立する（`ax_selected_text` / `complete` /
       structure 4件 / 2 pass / 960ms。2026-08-01）。retry再設計後も取得できている。
-- [ ] VS Codeのエディタ本文（`AXTextArea`）の選択が取得できる。拡張webview
-      （Claude Codeパネル）は公開AXが選択textを出さないため通常Visionとなる（2026-08-01確認済み、
-      R10.5の退行ではない）。エディタでも取れない場合はElectron全般の課題として切り出す。
+- [x] VS Codeの拡張webview（Claude Codeパネル）で文章を選択して右Shift×2すると、選択した内容
+      そのものが回答対象になる（2026-08-01。AXは文字列を返さないが、モデルが画像上の選択を
+      主対象として読む経路で成立）。
+- [ ] AXが選択文字列を返す画面（Chrome Gmail等）で、prompt変更後も従来どおり全文が扱われる
+      回帰確認。`selection` wireがある時は画像判定を行わず、mode命令が1つのままであること。
+- [ ] 画像判定の限界の確認：画面外へ続く長い選択、スクロールで隠れた部分、極小文字、低コントラスト
+      選択色。ここはAX／DOM取得が優れる領域で、§4-cのAX探索改善の価値を測る材料になる。
 - [ ] `AXSelected`な編集可能フィールドからはComposeが開く（R10.5の起動先変更の検証）。
 - [ ] Safari Gmailで公開AX本文が取れない時、選択カード・選択用promptの無い完全な通常Visionになる
       （`visualOnly`はR10.5で撤回。質問すればモデルは画像のハイライトから答えられる）。
