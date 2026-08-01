@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-08-01 ／ ステータス: `v0.2.1`正式公開済み、R10 C5完了・C6着手前
+最終更新: 2026-08-01 ／ ステータス: `v0.2.1`正式公開済み、R10 C6でリリースブロッカー発見・R10.5修正中
 
 ## 製品
 
@@ -284,7 +284,7 @@ R9プロジェクトAに残作業はない。AX直接入力probeとclipboard非�
 横断的な運用確認は[manual-golden-paths.md](manual-golden-paths.md)に残し、該当領域を変更する
 次回リリースで重点確認する。
 
-### R10 — Vision Selection Extension（C5完了・C6着手前）
+### R10 — Vision Selection Extension（C6ブロッカー発見・R10.5修正中）
 
 `v0.2.1`はFocused Visionを同じSession、View、Gateway route、モデルへ統合したが、選択取得は
 focused elementに近い最初の非空AX祖先で終了し、Gatewayはselectionがあると通常Visionの初期taskを
@@ -315,7 +315,9 @@ Skillは引き続き第一級の観測であり、selectionの意味、関係、
 rangeはAX要素ごとのローカル値であり、外側という理由だけでは採用しない。
 `AXStringForRange`との完全一致は補強証拠であり、Chrome Gmailで実測した表現差だけで安定した
 direct textを棄却しない。複数segment集約は実機probeで必要性を証明した製品だけのfallbackとする。
-画像上でだけ観測できる場合は`visualOnly`として表面へ明示し、その他の取得状態は開発情報へ置く。
+selectionは積極的に取得できた選択テキストからのみ成立し、取得できなければ完全な通常Visionとする。
+`visualOnly`（画像上の推測ハイライト）と`AXSelected`要素による成立はR10.5で撤回した — どちらも
+観測主体を持たない推測であり、選択していない画面に選択カードを常時表示する不具合の原因だった。
 
 復帰点はtag `pre-vision-selection-extension-20260731`、commit `dcac535`。作業branchは
 `feat/vision-selection-extension`。同じ`VisionSession`、`/api/ai/vision`、model route、
@@ -356,6 +358,13 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   probe残骸、起動時clipboard／合成⌘Cの再混入が無いことを確認した。後方互換Gatewayは2026-08-01に
   macOS候補版より先に`main`／本番へ配備した。署名付き候補版の実機golden pathと、同一端末でのwarm
   p50／p95比較を残す。coldの2秒deadlineはコード・unit test上で維持している。
+- **R10.5（リリースブロッカー、実装前）** C6実機テストで、何も選択していない画面にも選択カードと
+  選択用promptが常に付き、モデルが選択の不在報告から回答を始める不具合を確認した。原因は
+  `visualOnly`／`accessibilityElement`という観測主体を持たない状態で、正本が実装不能な条件を
+  書いていたことに起因する。修正計画・判定記録・受け入れ条件は
+  [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md)を正とする。
+  順序は正本修正（済）→ Gateway「受理して無視」ホットフィックス → 本番デプロイ
+  （この時点で`v0.2.1`ユーザーの症状も消える）→ クライアント削除＋retry再設計 → 計測後にwire撤去。
 
 受け入れ条件と詳細なcommit境界は[focused-vision-plan.md](focused-vision-plan.md)の
 プロジェクトCを正とする。R10はR9のclipboard安全化やTransform撤去を巻き戻さず、選択理解の

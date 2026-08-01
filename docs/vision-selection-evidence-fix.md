@@ -1,0 +1,287 @@
+# Vision Selection 証拠主義への修正計画（R10.5）
+
+最終更新: 2026-08-01 ／ ステータス: 検証完了・実装可（C6リリースブロッカー）
+
+R10 C6の実機テストで、**何も選択していない画面でも常に選択カードが表示され、モデルが
+「選択範囲を確認できません」と回答する**不具合を確認した。通常Visionが単独で成立しない状態であり、
+製品として出せない。
+
+本書は前セッションで計画を確定し、別セッションで§7〜§9の全判定をコード実物で裏取りした。
+判定の過程で**計画自体の欠陥3件**（§7-2）を発見し、本版へ反映済みである。正本
+（`focused-vision-plan.md`、`api-contract.md`、マスタープランR10、README）の矛盾修正は
+本書と同じコミットで実施済み。残るのはGatewayホットフィックス以降の実装である。
+
+## 0. 本来の意図（この機能の判断基準）
+
+この製品がやりたいことは2つだけである。
+
+1. **目の前の画面を正しく取得し、正しく理解する。**
+2. **ユーザーが何かを選択している時は、その選択を回答対象として最優先する。**
+
+選択は通常Visionへの純粋な加算であり、利用機会は選択していない時の方が圧倒的に多い。
+「実装がこうなっているから」「直近こう作ったから」「wire契約に値があるから」は、この2点を
+上書きする理由にならない。実装計画を評価する時は、新しい状態・enum値・fallbackの提案に対して
+**「それを観測する主体は誰か」「それは上の2点のどちらに資するか」**を必ず問う。
+
+## 1. 何が起きているか
+
+4段の連鎖である（全段コード実物で確認済み）。
+
+1. [`AXFocusSnapshotService.swift`](../BombSquad/Services/AXFocusSnapshotService.swift) の
+   `shouldLookForVisualSelection`（L82-95）が、destinationが`.vision`で選択が無く、statusが
+   `complete` / `noFocusedElement` / `timedOut` / `invalidatedElement`のときに`true`を返す。
+   これは「何も選択していない普通の画面」そのものである。
+2. `selectionExtension`（L74-76）がその`true`を`.visualOnly(captureVisibility: .visible)`へ
+   昇格させる。`.visible`は観測結果ではなく定数で、画像を見た主体は存在しない。
+   `resolvingCaptureVisibility`はframesが空のため素通しし、定数を訂正する機会も無い。
+3. `VisionSelectionPresentation`（VisionFocusTarget.swift L224-227）が
+   「選択範囲 / 選択範囲を画像から確認中」のカードを描く。
+4. [`vision-prompt.ts`](../web/lib/server/vision-prompt.ts) の`resolveVisionIntent`（L78-81）が、
+   初回taskを「画像から選択ハイライトを探して説明せよ」へ置換する。
+
+モデルはこの指示に従い、選択の不在報告から回答を始める。
+
+## 2. なぜ起きたか
+
+**実装だけの逸脱ではない。**
+
+正本§4.2は「capture上に選択ハイライトが**観測可能なら**`visualOnly`として加える」と条件付きで
+書いていたが、**この条件を判定できる実装主体が現在の構成に存在しない**。クライアントは画像解析を
+行わず、ハイライトを観測できるのはモデルだけで、その観測はselectionを組み立てた後に起きる。
+実装者はこの充足不可能な条件を、条件を落とすことで解決した。本来は「実装できない」と止める箇所だった。
+
+さらに、この推測的fallbackは**R10の発明ではなく`v0.2.1`に既に存在していた**。当時は
+`visual_selection_hint`という真偽値で、カードが無くプロンプト行だけだったため目立たなかった。
+R10はそれを一級の`selection`オブジェクトへ昇格させて可視化した。C1の判定ゲートと受け入れ条件が
+「取得不能なら`visualOnly`へ安全に退化する」と明記して追認していたため、実装は仕様どおりに通った。
+
+**したがってコードだけを直しても再発する。正本と受け入れ条件とテストを同時に直す**（正本側は
+本コミットで実施済み）。
+
+## 3. 不変条件
+
+> Selection Extensionは、積極的に取得できたユーザー選択からのみ成立する。ここでselectionとは
+> **`VisionSelectionResolver.resolve`が返した`.text`のみ**を指す。選択の不在、AX取得失敗、
+> timeout、フォーカス要素の存在、`AXSelected`による現在項目は、いずれも選択の証拠ではない。
+> selectionが成立しない場合は**完全な通常Vision**であり、劣化状態ではない。
+
+再発防止のための補助原則:
+
+> 「選択の不在」と「選択の不明」を区別しない。観測主体を持たない状態を、型・wire契約・UIへ
+> 持ち込まない。**証拠が無いと分かっている状態のために時間も使わない**（§5-4のretry再設計）。
+
+## 4. selection の成立条件
+
+| AXから得られたもの | selection | 起動先 |
+|---|---|---|
+| resolverが確定した非空の選択文字列 | `.text` | Vision（+ Selection Extension） |
+| 選択文字列なし・編集可能 | `nil` | Compose |
+| 選択文字列なし・非編集 | `nil` | Vision |
+| AX取得失敗 / timeout / focus要素なし | `nil` | Vision |
+| `AXSelected == true`の現在項目 | `nil` | 編集可能ならCompose、他はVision |
+| secure field | `nil` | Vision |
+
+全行の判定主体はAX snapshotの読取そのものであり、判定不能な行は無い。
+
+AX／DOMを軽視するのではない。選択文字列が取れたときの意味・構造・位置の補強、および通常Visionの
+画面構造証拠としては引き続き第一級で使う。**AXの状態だけからユーザー意図を推測しない**という限定である。
+
+`accessibility_element`を落とす理由: `AXSelected`はタブ、サイドバー、リスト、表で「現在表示中の項目」を
+意味することがあり、「ユーザーがVisionへの説明対象として選んだ」証拠にならない。role除外リストの
+追加では解けない（アプリ横断で意味が異なるため）。非テキスト要素を対象にしたいなら、専用の要素選択操作、
+クリック直後という時間的証拠、明示的な領域指定など、意図を区別できる仕組みを別途設計する。
+
+`visual_only`を「将来のために残さない」理由:
+
+1. 検出器が存在せず、導入計画も無い。残せば到達不能な状態のために型・契約・プロンプト・カード・
+   テストを維持することになり、今回の不具合を起こした構造をそのまま休眠させる。
+2. 仮に検出器を作っても得るものが無い。モデルは既に全画面のスクリーンショットを見ている。事前に
+   「ハイライトを探せ」と命じることは、通常の画面説明をこちら側の不確実性の報告へ変えるだけである。
+3. Safariの選択が公開AXで取得できない件（C1実測）は失われない。画面にはハイライトが写っており、
+   ユーザーが質問すればモデルは画像から答えられる。**質問が最後の選択拡張である。**
+
+## 5. 実装順序
+
+### 0. C6をリリースブロッカーとして未完了へ戻す — 実施済み
+
+### 1. 正本を先に直す（コードより先）— 実施済み（本コミット）
+
+- `focused-vision-plan.md`: §4.1判定ツリー、§4.2、§5データモデル、§5.1取得優先順位、§6.2、§8、
+  C1判定ゲート・結果表・結論、C4/C5仕様bullet、§14自動検証（不在検査の追加）、
+  プロジェクトC受け入れ条件
+- `api-contract.md`: R10契約の`selection.kind`有効値、旧fieldの扱い
+- `universal-io-master-plan.md`: R10不変条件段落、C1/C4/C6記録、ブロッカーの明記
+- `README.md`: 開発中セクションと操作セクション
+
+C2〜C6の完了記録は当時の事実として残し、書き換えない。仕様と受け入れ条件だけを直す。
+
+### 2. Gateway 後方互換ホットフィックス
+
+**validationを先に削ってはならない。** [`route.ts`](../web/app/api/ai/vision/route.ts)では
+`validateBody`（L117、内部でL372が`isValidVisionSelectionWire`を呼ぶ）が正規化（L170）より前に
+走るため、`kinds`から`visual_only`を削ると現行の新クライアントは400を受け、通常Visionへ退化せず
+**Visionセッションごと失敗する**（コード実物で確認済み）。
+
+変更内容（1コミット）:
+
+- `visual_selection_hint` → validationは現状のまま（booleanを受理し続けるので`v0.2.1`は無傷）、
+  [`vision-selection.ts`](../web/lib/server/vision-selection.ts) `normalizeVisionSelection`の
+  legacy分岐（L240-251）を削除し**正規化しない**
+- 新wire `selection.kind === "visual_only"` **および `"accessibility_element"`** →
+  wire validationは当面残したまま、`normalizeVisionSelection`で`undefined`として捨てる。
+  注意: 新wireはL210でkindを見ずに素通しするため、そこにkind検査を入れる（§5-2に
+  `visual_only`しか書いていなかったのは前版の欠落。候補ビルドは`accessibility_element`を送る）
+- 旧`focus_target.kind === "accessibility_element"`と`"region"`も同じく正規化で捨てる
+  （§7-1で「捨てる」に確定。`region`はどの公開クライアントも送らない死んだwire表面）
+- `resolveVisionIntent`の`visual_only`分岐と`accessibility_element`分岐を削除
+- **正規化前のraw wire種別をusage metadataへ記録する**（例: `selection_wire_kind`、
+  legacy fieldの別）。前版の§5-5は正規化後の`selection_acquisition_completeness`で移行を
+  計測する計画だったが、この値は正規化で捨てた瞬間に常に欠落し、**何も観測しない判定**になる
+  （route.ts L194で確認済み）。raw種別は内容を含まない列挙値であり、データ保存方針と整合する
+
+結果、旧・新クライアントとも通常Visionの観測プロンプトへ戻る。
+
+### 3. Gateway を本番デプロイ
+
+`origin/main`へのpushが本番デプロイである。R10のGateway契約は既に`main`にあるため、
+ホットフィックスは**mainから短命ブランチを切って**mainへマージし、その後
+`feat/vision-selection-extension`へmainを取り込む。この時点で**公開中の`v0.2.1`ユーザーの
+症状が消える**。クライアント修正を待たない。
+
+`v0.2.1`への効果の限定を正確に: `visual_selection_hint`にはカードが無いため症状は完全に消える。
+`focus_target.accessibility_element`のカードは**クライアントローカル描画**のため残り、回答だけが
+通常観察へ正される（§7-1）。
+
+### 4. クライアントから削除
+
+- `AXFocusLaunchDecision.shouldLookForVisualSelection`
+- `selectionExtension`のvisual分岐とelement分岐
+- `AXFocusLaunchDecision.isMeaningfulSelectedElement`（**3箇所すべて**: `selectionExtension`、
+  `destination`の起動先判定、`capture()`内の`resolvedSelection`（AXFocusSnapshotService L227-235）、
+  および`hasAuthoritativeSelection`（L258））
+- `VisionSelectionContext.visualOnly` factory、`Kind.visualOnly`、
+  `AcquisitionCompleteness.visualOnly`
+- `VisionSelectionContext.accessibilityElement` factory、`Kind.accessibilityElement`
+- `VisionSelectionResolver`の`allowVisualFallback`（本番からは`true`で呼ばれておらず削除は安全）
+- `VisionSelectionPresentation`のvisualOnly／accessibilityElement分岐
+- `visual_only`のwire生成
+
+**波及1（起動先）**: `isMeaningfulSelectedElement`を外すと`AXSelected == true`の
+**編集可能フィールド**が現在のVisionからComposeへ変わる。これは正本の「選択なし＋編集可能なら
+Compose」に一致させる修正であり望ましいが、起動経路の挙動変更なので回帰テストの明示対象とする。
+
+**波及2（retry停止＝summon遅延）**: `hasAuthoritativeSelection`は同関数を「選択あり＝bounded
+retry停止」の条件にも使っている。単純に外すと、AXSelected要素があるweb画面（GA4サイドバー等）で
+retryが早期停止しなくなり、`sawWebArea`だけでretryを許す現行規則
+（`AXFocusSnapshotRetryPolicy` L124-125）により**2秒予算を使い切る**。しかも
+`SessionCoordinator`はcaptureとsnapshotの両方を待ってからパネルを出す（L233）ため、これは
+そのまま起動遅延になる。そこでretry規則を不変条件の精神に合わせて再設計する:
+
+> retryを正当化するのは「選択の証拠がまだ現れ得る積極的な兆候」だけとする。すなわち
+> (a) focused elementが未取得、(b) treeが成長中、(c) 断片候補は在るがdocument選択が未確定、
+> のいずれか。`sawWebArea`単独では追加1passまでしか正当化しない。証拠の兆候ゼロの安定した
+> 画面で予算を使い切らない。
+
+これは「選択なしブラウザ画面」という**最頻の利用場面**のsummon遅延を直接短縮する。cold
+Chromiumで選択が遅れて公開されるケースは(b)(c)が受け止める。効果と安全性はC6の同一端末
+p50／p95比較で、**選択なしブラウザ画面と複数node Gmail選択の両方**を計測して確認する。
+
+### 5. 移行完了を計測してから wire を撤去
+
+「移行期間」は推測せず観測する。§5-2で追加したraw wire種別の記録で、`visual_only`／新wire
+`accessibility_element`の受信がゼロで安定したことを確認してから、wire validationのenumと型を
+別コミットで削除する。§9のデータモデル収縮（`kind`定数化、`acquisitionCompleteness`定数化、
+`captureVisibility`のframes導出化）もこの撤去コミットに同梱し、ブロッカー修正のdiffを
+不変条件の貫徹だけに保つ。
+
+`visual_selection_hint`と`focus_target`はこの対象外で、受理を**恒久的に**維持する
+（`v0.2.1`ユーザーは更新しないため）。段階撤去が必要なのは厳密なenumに入っている
+`selection.kind`だけである。
+
+## 6. 回帰テスト
+
+**不在を断言する形**（`XCTAssertNil`）で書く。現在は逆を断言しているテストがあるため、まず反転する
+（`AXFocusSnapshotTests`のL30-49・L74-82、`VisionFocusTargetTests`のvisualOnly生成・wire・
+presentation期待）。
+
+| ケース | 期待 |
+|---|---|
+| 選択なしの通常画面 | selection nil / カードなし / selectionプロンプトなし / selection wireなし |
+| focus要素なし | 同上 |
+| AX timeout | 同上 |
+| サイドバーの現在項目（`AXSelected`） | 同上 |
+| 選択中のタブ・行 | 同上 |
+| `AXSelected`な編集可能フィールド | **Composeへ起動**（波及1の検証） |
+| 兆候ゼロの安定web画面 | retryが早期停止する（波及2の検証） |
+| 断片候補あり・document未確定のweb画面 | retryが継続する（cold tree保護の検証） |
+| 非空の複数DOMテキスト選択 | `.text`成立、全文が回答scope |
+| Gateway: 旧`visual_selection_hint: true` | 200、通常Visionプロンプト |
+| Gateway: 旧`focus_target.kind: "accessibility_element"` | 200、通常Visionプロンプト |
+| Gateway: 新`kind: "visual_only"` | **200**（400でないこと）、通常Visionプロンプト |
+| Gateway: 新`kind: "accessibility_element"` | **200**、通常Visionプロンプト |
+| Gateway: 上記の無視ケース | usageへraw wire種別が記録される（§5-5の観測可能性） |
+
+実機では、GA4のようなサイドバー項目をクリックした直後の画面で右Shift×2を行い、カードが出ないことを
+確認する。今回の不具合はこの操作で再現した。
+
+## 7. 判定記録（2026-08-01、別セッションでコード実物により裏取り）
+
+### 7-1. 旧クライアントの`accessibility_element`をGatewayで捨てるか → **捨てる（確定）**
+
+- 理由: (a) サイドバーの現在項目を延々説明する回答より全画面観察が明確に有益、
+  (b) `visual_selection_hint`の無視が既に同型のreleased挙動変更であり一貫する、
+  (c) `accessibility_element`という状態・prompt分岐・adapter生成が系から完全に消え、
+  休眠状態を残さない。
+- 明示すべきトレードオフ: `v0.2.1`のカードはクライアントローカルなので**カードは残り**、
+  回答だけが正される。「v0.2.1ユーザーも救われる」はプロンプトについてのみ正しい。
+
+### 7-2. 前版計画の欠陥3件（本版で修正済み）
+
+1. **§5-5の計測が機能しなかった**: 正規化後のmetadataで移行を測る計画は、正規化で捨てた瞬間に
+   恒久ゼロになり無内容だった。→ raw wire種別の記録を§5-2へ追加。
+2. **新wire `accessibility_element`の扱いが未規定だった**: 候補ビルドが送るのに§5-2は
+   `visual_only`しか挙げていなかった。→ 同じ「受理して無視」へ追加。legacy `region`も同様。
+3. **`hasAuthoritativeSelection`の波及が未記載だった**: retry停止条件の変更はsummon遅延に直結し、
+   C6の性能受け入れ条件に響く。→ §5-4へretry再設計と計測ゲートを追加。
+
+### 7-3. 前版§10の6問への回答
+
+1. 不変条件は一意に実装可能か → 可。「selection＝resolverが返した`.text`のみ」を§3へ追記した。
+   §4表は全行AX snapshotだけで判定でき、判定主体の無い行は無い。
+2. Gateway段階撤去は400を出さないか → 出さない。`validateBody`→正規化の実行順を実コードで確認。
+   「受理して無視」が唯一安全。
+3. §5-4の波及 → 記載済みの起動先変更に加え、未記載のretry波及を発見（§7-2-3）。
+4. §7の結論 → 7-1で確定。
+5. `acquisition`／`captureVisibility`を畳むか → wire撤去コミット（§5-5）に同梱。
+   `captureVisibility`はframes×captureRectの幾何計算という観測主体を持つため`visual_only`と
+   同罪ではないが、framesから導出可能な冗長fieldではある。
+6. 他の受け入れ条件の同じ穴 → あった。「capture外のselectionを画像で確認できたと装わない」は
+   `.visible`決め打ちの時点で既に破られていたのに、検査がwire組合せテストだけだった。
+   §14へ不在検査を追加済み。
+
+## 8. C6の最重要受け入れ条件
+
+> 何も選択せずに呼び出した通常Visionに、選択カード、選択用プロンプト、選択の不在・不確実性への
+> 言及が一切現れない。
+
+今回すり抜けた理由はここにある。既存の受け入れ条件は「選択がある時に何が起きるか」しか規定しておらず、
+**圧倒的多数である「選択が無い時」を誰も検査していなかった。**
+
+## 9. 修正後に残るデータモデル
+
+この修正は機能の削減ではなく、**観測していない状態の削除**である。修正後、現行の
+`VisionSelectionContext`は次のように収縮する（収縮の実施は§5-5）。
+
+| フィールド | 現行 | 修正後 |
+|---|---|---|
+| `kind` | 3値 | **1値**（`text`）＝定数。フィールド自体が不要になる |
+| `acquisitionCompleteness` | 3値 | resolverは元々`.complete`しか生成していない＝定数 |
+| `acquisition` | 4値 | 2値（document / element-local）。モデルへの寄与は要検証 |
+| `captureVisibility` | 4値 | `frames`から導出される値であり独立情報ではない |
+| `text` | — | **必要** |
+| `frames` | — | **必要** |
+| `structures` | — | **必要**（意味・関係・操作可能性） |
+| `wireTruncated` / `originalUTF16Units` | — | **必要**（切り詰めの明示） |
+
+つまり本質的な形は「選択テキスト＋位置＋構造＋切り詰め」であり、残りは取得過程についての自己申告だった。
+**この製品が難しいのは選択の合成ではなく、取得できたかどうかを正直に扱うことである。**

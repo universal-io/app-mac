@@ -46,8 +46,8 @@ v3で文体・関係性メモリ（persona / relationship カード）を廃止�
   画面画像／AX周辺テキストの使用状況、実際の参照元、取得テキスト、保存範囲は
   情報ボタン内で確認・コピーでき、AX周辺テキストだけをそのセッションから除外できる。
   ComposeからVision撮影を直接起動するボタンは置かない。
-- Vision: スクリーンショットを読み、質問への回答や次の操作位置を提示。選択テキストまたは
-  選択要素がある時は、同じVisionパネルで対象を優先して説明。スクリーンショットは画像上を
+- Vision: スクリーンショットを読み、質問への回答や次の操作位置を提示。選択テキストが
+  ある時は、同じVisionパネルで対象を優先して説明。スクリーンショットは画像上を
   直接ドラッグして表示位置を動かし、トラックパッド操作で拡大・縮小できる。モデル、Gateway、
   AX収集、captureの開発情報はツール名横の情報ボタンへ畳み、まとめてコピーできる。
   Copilotはモデルへ渡す画面が確定した瞬間だけ撮影範囲を短く暗転し、画面を見た順序を示す
@@ -167,15 +167,19 @@ Selection resolver／データモデル、C3の後方互換Gateway契約／単�
 macOSクライアントは旧`focus_target`／`visual_selection_hint`を送らず、通常Visionと同じ画像、identity、
 Skill、会話、model routeへ任意`selection`だけを加える。旧fieldの受理は公開済みクライアント向けGateway
 adapterだけに残る。C5では同じVisionパネルへ選択全文カードを追加し、captureと交差する全frameを別々に
-表示する。短いAX labelをテキスト選択の見出しへ使わず、`visualOnly`だけを表面の取得状態として示す。
+表示する。短いAX labelをテキスト選択の見出しへ使わない。
 acquisition、frame数、capture visibility、wire truncationは内容を含めず既存の処理情報へ置く。
 C6のローカル自動検証では、通常Visionとの差分が`selection`だけであるrequest比較、単一intent、
 全文scope、prompt injection、legacy adapter、secure descendant、capture外、旧経路・privacy監査を固定し、
 macOS 41件、Gateway 14件、Web lint／TypeScript／production build、署名なしDebug buildが成功した。
-起動先enumもVisionへ一本化し、文字を伴わない選択要素をSelection Extensionへ保持する。
 R10の後方互換Gateway契約は2026-08-01にmacOS候補版より先に`main`へ配備した。公開中の
-`v0.2.1`クライアントは旧fieldから同じ内部型へ合流するため互換性を維持する。C6完了には署名付き
-候補版で実機golden pathと同一端末の性能比較を行う必要がある。
+`v0.2.1`クライアントは旧fieldから同じ内部型へ合流するため互換性を維持する。
+
+同日のC6実機テストで**リリースブロッカー**を確認した。何も選択していない画面にも選択カードと
+選択用promptが常に付き、モデルが選択の不在報告から回答を始める。原因は`visualOnly`／
+`accessibilityElement`という観測主体を持たない推測状態で、R10.5として撤回する。selectionは
+積極的に取得できた選択テキストからのみ成立し、成立しなければ完全な通常Visionとする。修正計画・
+判定記録は[vision-selection-evidence-fix.md](docs/vision-selection-evidence-fix.md)を正とする。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
@@ -302,8 +306,8 @@ macOSはStripeも直接呼びません。Gatewayがホスト型Checkoutまたは
 ## 操作
 
 - 右 Shift 1回: 入力パネル内のフォーカス切替（自分の下書き ⇄ 文案／レビュー結果）
-- 右 Shift 2回: 起動 / Vision開始 / 閉じる。起動時は、AXで選択テキストまたは意味のある選択要素を
-  取得できればFocused Vision、選択なしで編集可能な入力欄ならCompose、それ以外は通常Vision。
+- 右 Shift 2回: 起動 / Vision開始 / 閉じる。起動時は、AXで選択テキストを取得できればFocused Vision、
+  選択なしで編集可能な入力欄ならCompose、それ以外は通常Vision。
   AX snapshotと画面captureはパネル前面化前に並行し、clipboardへ触れない。Composeからさらに
   右 Shift 2回で先読みcaptureを使ってVisionへ進む
 - 右 Shift 長押し: 音声入力
