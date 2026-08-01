@@ -16,9 +16,15 @@ macOS候補版より先に配備した。旧`focus_target`／`visual_selection_h
 buildと、通常requestから`selection`だけが増えるmacOS request比較が成功した。
 
 同日のC6実機テストで、選択していない画面にも選択用promptが常に付く不具合を確認した（R10.5）。
-selectionは積極的に取得できた選択テキストからのみ成立し、`visual_only`／`accessibility_element`／
-`visual_selection_hint`はGatewayが**受理した上で無視**する（400にはしない — validationは正規化より
-先に走るため、拒否すると現行クライアントのVisionセッションごと失敗する）。詳細は
+`selection` wireは積極的に取得できた選択テキストからのみ作り、`visual_only`／
+`accessibility_element`／`visual_selection_hint`はGatewayが**受理した上で無視**する（400にはしない
+— validationは正規化より先に走るため、拒否すると現行クライアントのVisionセッションごと失敗する）。
+
+`selection`が無いrequestは「ユーザーが選択していない」を意味しない。AXが返さなかっただけであり、
+画像上の選択を観測できるのはモデルだけである。したがって**通常Visionのintent promptが常に
+「画像上に明確なテキスト選択が見えるならそれを主対象として読む。見えなければ通常の画面説明を行い、
+いずれの場合も選択の有無・不在・不確実性をユーザーへ述べない」と指示する**。`selection`が届いた
+場合はそちらが確定した回答scopeとなり、画像判定の指示は出さない（mode命令は常に1つ）。詳細は
 [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md)を正とする。
 
 ## 共通

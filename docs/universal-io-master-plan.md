@@ -315,9 +315,13 @@ Skillは引き続き第一級の観測であり、selectionの意味、関係、
 rangeはAX要素ごとのローカル値であり、外側という理由だけでは採用しない。
 `AXStringForRange`との完全一致は補強証拠であり、Chrome Gmailで実測した表現差だけで安定した
 direct textを棄却しない。複数segment集約は実機probeで必要性を証明した製品だけのfallbackとする。
-selectionは積極的に取得できた選択テキストからのみ成立し、取得できなければ完全な通常Visionとする。
-`visualOnly`（画像上の推測ハイライト）と`AXSelected`要素による成立はR10.5で撤回した — どちらも
-観測主体を持たない推測であり、選択していない画面に選択カードを常時表示する不具合の原因だった。
+構造化された`selection` wireは積極的に取得できた選択テキストからのみ作る。`visualOnly`
+（画像上の推測ハイライト）と`AXSelected`要素による成立はR10.5で撤回した — どちらも観測主体を
+持たない推測であり、選択していない画面に選択カードを常時表示する不具合の原因だった。
+**ただしAXが返さないことはユーザーが選択していないことを意味しない。** 画像上に選択が見えるかを
+観測できるのはモデルだけなので、通常Vision promptが「見えればそれを主対象として読む、見えなければ
+通常の画面説明、どちらでも選択の有無を口にしない」と指示し、判定をモデルへ委ねる。選択内容は
+回答対象を決めるsemantic authorityであり、AXはそれを運ぶacquisition channelにすぎない。
 
 復帰点はtag `pre-vision-selection-extension-20260731`、commit `dcac535`。作業branchは
 `feat/vision-selection-extension`。同じ`VisionSession`、`/api/ai/vision`、model route、
