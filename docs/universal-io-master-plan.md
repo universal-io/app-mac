@@ -1,6 +1,6 @@
 # Universal I/O マスタープラン
 
-最終更新: 2026-08-01 ／ ステータス: `v0.2.1`正式公開済み、R10 C6でリリースブロッカー発見・R10.5修正中
+最終更新: 2026-08-01 ／ ステータス: R10＋R10.5をmainへ統合、`0.2.2` build `6`のリリース準備中
 
 ## 製品
 
@@ -373,8 +373,15 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   完了した。selectionは`VisionSelectionResolver`が確定した非空textからのみ成立し、内部型は
   `kind`単一case・`text`必須へ収縮した。`AXSelected`はクライアントから概念ごと消え、bounded retryは
   証拠の兆候がある間だけ継続する。Gateway 17件、macOS 40件、Web lint／production build、署名なし
-  Debug buildが成功。残るのは署名付き候補版での実機golden path（選択なし画面で何も出ないこと）と
-  性能比較、および移行計測後のwire撤去である。
+  Debug buildが成功。残るのは移行計測後のwire撤去である。
+- **R10.5後半（完了）** 実機で「AXが選択を返しているのに製品が捨てている」ことが確定した。
+  祖先walkが`AXWebArea`をスキップし（Chromeはdocument自身をfocused elementにする）、それを拾う
+  はずのdocument走査は「window全体を256要素以内で走査完了」を要求して決して成立しなかった
+  （Chrome Gmail 1,540要素超、VS Code 5,824要素）。web areaをroleでdocument scopeと判定して読み、
+  走査上限を4,000へ上げ、完走必須条件を外した。secure保護は焦点チェーンの検査が担う。
+  実機でChrome Gmailが`ax_document_selection` / `complete`となり、probe計測では取得1ms
+  （修正前は候補0件でAX収集に1,500ms）。選択なし画面・VS Code webview・長い選択もすべて確認済み。
+  R10とR10.5をmainへ統合し、`0.2.2` build `6`として公開する。
 
 受け入れ条件と詳細なcommit境界は[focused-vision-plan.md](focused-vision-plan.md)の
 プロジェクトCを正とする。R10はR9のclipboard安全化やTransform撤去を巻き戻さず、選択理解の
