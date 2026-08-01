@@ -17,7 +17,7 @@ export type AIFeature =
   | "transcribe";
 
 export type AIModelTarget = Readonly<{
-  vendor: "openai" | "groq";
+  vendor: "openai" | "groq" | "cerebras";
   modelId: string;
   api: "responses" | "chat_completions" | "transcriptions";
 }>;
@@ -36,7 +36,10 @@ export const AI_MODEL_ROUTES: Readonly<Record<AIFeature, AIModelRoute>> = {
   },
   vision: {
     label: "Vision / Copilot",
-    primary: { vendor: "openai", modelId: "gpt-5.6-luna", api: "responses" },
+    // Trial: Cerebras gemma-4-31b in place of gpt-5.6-luna, to compare
+    // latency/quality on real screenshots. Falls back to the unchanged
+    // secondary if Cerebras errors or CEREBRAS_API_KEY is unset.
+    primary: { vendor: "cerebras", modelId: "gemma-4-31b", api: "chat_completions" },
     secondary: { vendor: "openai", modelId: "gpt-5.4-mini", api: "responses" },
   },
   suggest: {
@@ -148,7 +151,9 @@ export async function runWithModelFallback<T>(
 export function endpointFor(target: AIModelTarget): string {
   const base = target.vendor === "openai"
     ? "https://api.openai.com/v1"
-    : "https://api.groq.com/openai/v1";
+    : target.vendor === "groq"
+    ? "https://api.groq.com/openai/v1"
+    : "https://api.cerebras.ai/v1";
   switch (target.api) {
     case "responses":
       return `${base}/responses`;
@@ -161,7 +166,11 @@ export function endpointFor(target: AIModelTarget): string {
 
 export function apiKeyFor(target: AIModelTarget): string {
   const env = getServerEnv();
-  const key = target.vendor === "openai" ? env.openaiApiKey : env.groqApiKey;
+  const key = target.vendor === "openai"
+    ? env.openaiApiKey
+    : target.vendor === "groq"
+    ? env.groqApiKey
+    : env.cerebrasApiKey;
   if (!key) {
     throw new ProviderCallError(
       `No provider key configured for vendor "${target.vendor}".`,

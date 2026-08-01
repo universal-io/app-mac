@@ -220,6 +220,16 @@ bounded retryも「選択の証拠がまだ現れ得る積極的な兆候があ�
 またがる中規模機能。アカウント管理UI（`docs/admin-dashboard-plan.md` §9-b の権限/plan/account class 分離）と
 同じライフサイクル上にあるため、そのプロジェクトと合わせて設計・実装する。
 
+### アイデア: 音声入力のリアルタイム化（未着手）
+
+現行の音声入力は右Shift長押しを離した時点で録音済みWAV1本をまとめて送信する方式（バッチ）。
+将来案として、streaming ASR（OpenAIの`gpt-live-transcribe`等、WebSocketの
+`v1/realtime/transcription_sessions`系エンドポイント）へ切り替え、右Shiftを押している最中から
+部分認識結果（interim transcript）を継続表示することが考えられる。ただし現行のバッチ用モデルとの
+単純な差し替えでは実現できず、Gateway側にWebSocket中継層を新設し、interim結果の書き換わりに
+耐えるUIと、完了後の音声全体を検査する前提のハルシネーション除去ロジック（`no_speech_prob`等）の
+作り直しを要する別プロジェクトになる。優先度・着手時期は未定。
+
 ## データ保存
 
 - 入力履歴はComposeで実際に送信した原文と最終文だけを、ログイン中のユーザー専用領域へ
