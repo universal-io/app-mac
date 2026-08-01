@@ -175,15 +175,89 @@ test("legacy and current selected text produce the same internal prompt", () => 
   );
 });
 
-test("unknown visual-only selection does not claim a visible highlight", () => {
-  const selection = {
-    ...normalizeVisionSelection({ visualSelectionHint: true }),
-    captureVisibility: "unknown",
-  };
-  const intent = resolveVisionIntent({ ...baseInput, selection });
+test("an unselected screen mentions no selection anywhere in the request", () => {
+  const prompt = buildVisionPromptText(baseInput);
 
-  assert.match(intent, /initial screen observation/);
-  assert.doesNotMatch(intent, /contains.*selection highlight/);
+  // The overwhelmingly common case. Nothing on this side observed a selection,
+  // so nothing may hint at one — otherwise the model reports its absence.
+  assert.doesNotMatch(prompt, /select/i);
+  assert.doesNotMatch(prompt, /highlight/i);
+  assert.match(resolveVisionIntent(baseInput), /initial screen observation/);
+});
+
+test("kinds that carry no selected text are accepted and ignored", () => {
+  const ignored = {
+    structures: [],
+    frames: [],
+    acquisitionCompleteness: "visual_only",
+    acquisition: "visual_highlight",
+    captureVisibility: "visible",
+    wireTruncated: false,
+    originalUTF16Units: 0,
+  };
+
+  assert.equal(
+    normalizeVisionSelection({ selection: { ...ignored, kind: "visual_only" } }),
+    undefined,
+  );
+  assert.equal(
+    normalizeVisionSelection({
+      selection: { ...ignored, kind: "accessibility_element", acquisition: "ax_element" },
+    }),
+    undefined,
+  );
+  assert.equal(normalizeVisionSelection({ visualSelectionHint: true }), undefined);
+  assert.equal(normalizeVisionSelection({
+    focusTarget: {
+      kind: "accessibility_element",
+      role: "AXRow",
+      label: "現在のサイドバー項目",
+      source: "ax_element",
+      truncated: false,
+    },
+  }), undefined);
+  assert.equal(normalizeVisionSelection({
+    focusTarget: {
+      kind: "region",
+      frame: { x: 0, y: 0, width: 10, height: 10 },
+      source: "user_region",
+      truncated: false,
+    },
+  }), undefined);
+});
+
+test("blank selected text is not a selection", () => {
+  assert.equal(normalizeVisionSelection({
+    focusTarget: {
+      kind: "selected_text",
+      text: "   \n\t",
+      source: "ax_selected_text",
+      truncated: false,
+    },
+  }), undefined);
+});
+
+test("published wire kinds keep validating so sessions degrade instead of failing", () => {
+  // Validation runs before normalization, so removing these from the enum
+  // would 400 the request and take the whole Vision session down rather than
+  // falling back to ordinary Vision. They are accepted, then ignored.
+  const ignoredWire = {
+    kind: "visual_only",
+    acquisition_completeness: "visual_only",
+    acquisition: "visual_highlight",
+    capture_visibility: "visible",
+    frames: [],
+    structures: [],
+    wire_truncated: false,
+    original_utf16_units: 0,
+  };
+
+  assert.equal(isValidVisionSelectionWire(ignoredWire), true);
+  assert.equal(
+    normalizeVisionSelection({ selection: visionSelectionFromWire(ignoredWire) }),
+    undefined,
+  );
+  assert.match(resolveVisionIntent(baseInput), /initial screen observation/);
 });
 
 test("off-capture text never claims screenshot corroboration", () => {
@@ -199,12 +273,15 @@ test("off-capture text never claims screenshot corroboration", () => {
   }), /selection highlight/);
 });
 
-test("legacy visual hint preserves best-effort screenshot selection", () => {
+test("published clients that guessed at a highlight get ordinary Vision", () => {
+  // v0.2.1 sends this flag whenever AX found nothing. It never observed a
+  // highlight, so it cannot start a selection task.
   const selection = normalizeVisionSelection({ visualSelectionHint: true });
   const intent = resolveVisionIntent({ ...baseInput, selection });
 
-  assert.equal(selection.captureVisibility, "visible");
-  assert.match(intent, /best-effort visual identification/);
+  assert.equal(selection, undefined);
+  assert.match(intent, /initial screen observation/);
+  assert.doesNotMatch(intent, /best-effort visual identification/);
 });
 
 test("wire validation requires selected text independently of structures", () => {

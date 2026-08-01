@@ -17,9 +17,15 @@ export type VisionSelectionStructure = {
   coverage: "whole" | "partial" | "context" | "unknown";
 };
 
+/**
+ * The Selection Extension, which exists only for text the user actually
+ * selected. `kind` and a non-empty `text` are constants of the type because a
+ * selection that was not acquired is not a weaker selection — it is an
+ * ordinary Vision request.
+ */
 export type VisionSelection = {
-  kind: "text" | "accessibility_element" | "visual_only";
-  text?: string;
+  kind: "text";
+  text: string;
   structures: VisionSelectionStructure[];
   frames: VisionSelectionFrame[];
   acquisitionCompleteness: "complete" | "partial" | "visual_only";
@@ -27,6 +33,16 @@ export type VisionSelection = {
   captureVisibility: "visible" | "partial" | "off_capture" | "unknown";
   wireTruncated: boolean;
   originalUTF16Units: number;
+};
+
+/**
+ * A validated wire or legacy selection before the positive-evidence rule runs.
+ * `normalizeVisionSelection` is the only place that turns one of these into a
+ * `VisionSelection`.
+ */
+export type VisionSelectionCandidate = Omit<VisionSelection, "kind" | "text"> & {
+  kind: string;
+  text?: string;
 };
 
 export type VisionSelectionWire = {
@@ -115,9 +131,9 @@ export function isValidVisionSelectionWire(value: unknown): value is VisionSelec
     || frames.length > 0;
 }
 
-export function visionSelectionFromWire(raw: VisionSelectionWire): VisionSelection {
+export function visionSelectionFromWire(raw: VisionSelectionWire): VisionSelectionCandidate {
   return {
-    kind: raw.kind as VisionSelection["kind"],
+    kind: raw.kind!,
     text: raw.text,
     acquisitionCompleteness:
       raw.acquisition_completeness as VisionSelection["acquisitionCompleteness"],
@@ -198,58 +214,51 @@ export type LegacyVisionFocusTarget = {
 };
 
 /**
- * Permanent compatibility adapter. Once request validation has completed,
- * both old client fields and `selection` use one internal representation and
- * one prompt path.
+ * Permanent compatibility adapter and the single place where a request becomes
+ * (or does not become) a Selection Extension. Once request validation has
+ * completed, both old client fields and `selection` use one internal
+ * representation and one prompt path.
  */
 export function normalizeVisionSelection(input: {
-  selection?: VisionSelection;
+  selection?: VisionSelectionCandidate;
   focusTarget?: LegacyVisionFocusTarget;
+  /**
+   * Accepted from published clients and deliberately ignored. The client never
+   * looks at the screenshot, so this flag was always a guess about whether a
+   * highlight might be visible, never an observation of one.
+   */
   visualSelectionHint?: boolean;
 }): VisionSelection | undefined {
-  if (input.selection) return input.selection;
-  const target = input.focusTarget;
-  if (target?.kind === "selected_text") {
-    return {
-      kind: "text",
-      text: target.text,
-      structures: legacyStructures(target),
-      frames: target.frame ? [target.frame] : [],
-      acquisitionCompleteness: target.truncated ? "partial" : "complete",
-      acquisition: "ax_selected_text",
-      captureVisibility: target.frame ? "visible" : "unknown",
-      // The legacy payload did not carry the original length. Its `truncated`
-      // bit therefore describes incomplete acquisition, not a measurable
-      // truncation performed by this new wire contract.
-      wireTruncated: false,
-      originalUTF16Units: target.text?.length ?? 0,
-    };
-  }
-  if (target?.kind === "accessibility_element") {
-    return {
-      kind: "accessibility_element",
-      structures: legacyStructures(target),
-      frames: target.frame ? [target.frame] : [],
-      acquisitionCompleteness: "partial",
-      acquisition: "ax_element",
-      captureVisibility: target.frame ? "visible" : "unknown",
-      wireTruncated: false,
-      originalUTF16Units: 0,
-    };
-  }
-  if (target?.kind === "region" || input.visualSelectionHint) {
-    return {
-      kind: "visual_only",
-      structures: [],
-      frames: target?.frame ? [target.frame] : [],
-      acquisitionCompleteness: "visual_only",
-      acquisition: "visual_highlight",
-      captureVisibility: target?.frame || input.visualSelectionHint ? "visible" : "unknown",
-      wireTruncated: false,
-      originalUTF16Units: 0,
-    };
-  }
-  return undefined;
+  const candidate = input.selection ?? legacySelectedText(input.focusTarget);
+  // A Selection Extension needs text the user actually selected. Failed
+  // acquisition, a timeout, a focused element, an `AXSelected` current item,
+  // and a possible on-screen highlight are not evidence of a selection. Those
+  // requests are ordinary Vision, which is the complete product surface rather
+  // than a degraded one, so the kinds that carry no text are dropped here.
+  if (candidate?.kind !== "text") return undefined;
+  const text = candidate.text;
+  if (typeof text !== "string" || text.trim().length === 0) return undefined;
+  return { ...candidate, kind: "text", text };
+}
+
+function legacySelectedText(
+  target: LegacyVisionFocusTarget | undefined,
+): VisionSelectionCandidate | undefined {
+  if (target?.kind !== "selected_text") return undefined;
+  return {
+    kind: "text",
+    text: target.text,
+    structures: legacyStructures(target),
+    frames: target.frame ? [target.frame] : [],
+    acquisitionCompleteness: target.truncated ? "partial" : "complete",
+    acquisition: "ax_selected_text",
+    captureVisibility: target.frame ? "visible" : "unknown",
+    // The legacy payload did not carry the original length. Its `truncated`
+    // bit therefore describes incomplete acquisition, not a measurable
+    // truncation performed by this new wire contract.
+    wireTruncated: false,
+    originalUTF16Units: target.text?.length ?? 0,
+  };
 }
 
 function legacyStructures(target: LegacyVisionFocusTarget): VisionSelectionStructure[] {

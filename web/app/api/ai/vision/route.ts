@@ -192,6 +192,7 @@ export async function POST(request: Request): Promise<Response> {
       is_guidance_progress: Boolean(guidance),
       selection_present: Boolean(selection),
       selection_acquisition_completeness: selection?.acquisitionCompleteness,
+      selection_wire_kind: selectionWireKindForUsage(body.input!),
       api: "responses",
       image_detail: VISION_IMAGE_DETAIL,
       reasoning_effort: VISION_REASONING_EFFORT,
@@ -569,6 +570,22 @@ function isValidFocusTarget(
 
 function hasForbiddenControlCharacters(value: string): boolean {
   return /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);
+}
+
+/**
+ * Which selection field the client sent, recorded before normalization so the
+ * migration off the ignored legacy kinds can be observed instead of guessed.
+ * Normalized metadata cannot show it: the ignored kinds never reach a
+ * `VisionSelection`. Validation has already closed these enums, and no
+ * selected content is recorded.
+ */
+function selectionWireKindForUsage(
+  input: NonNullable<VisionRequestBody["input"]>,
+): string | null {
+  if (input.selection) return `selection:${input.selection.kind}`;
+  if (input.focus_target) return `focus_target:${input.focus_target.kind}`;
+  if (input.visual_selection_hint === true) return "visual_selection_hint";
+  return null;
 }
 
 function candidateDiagnosticsForUsage(
