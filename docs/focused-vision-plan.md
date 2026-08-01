@@ -1045,11 +1045,20 @@ R10.5実機確認（2026-08-01、Apple Development署名のDebug build）:
   retry再設計後も選択を取り切れており、旧規則が`sawWebArea`で最大6 passまで回していた区間を
   2 passへ短縮できている。`frame_count: 0`はC1で実測済みのChrome公開boundsの0サイズ問題であり、
   想定内である。
-- **VS Codeの拡張webview（Claude Codeパネル）内のテキスト選択は公開AXから取得できない。**
-  R10.5の退行ではなく元からの取得限界で、従来は`AXSelected`要素を拾って「選択した画面要素」カードを
-  出していたため認識されたように見えていた。§4.2の規定どおり通常Visionとして扱う。VS Codeの
-  エディタ本文（C1で`AXTextArea`から取得可能と実測済み）が現在も取得できるかは要再確認で、
-  取得できなければElectron全般の課題として切り出す。
+- **VS Codeの拡張webview（Claude Codeパネル）で選択が回答対象にならなかった。** 当初これを
+  「公開AXから取得できない限界」と記録したが、**この断定は誤りだったので撤回する**。read-only
+  probeで、選択中のfocused element（`AXTextArea`）自身が49 unitsの選択文字列を公開し、そこから
+  `AXWebArea`まで10要素が同じ値を返すことを実測した。取得できていない原因は公開の有無ではなく、
+  探索側の死角（focused element欠落時にdocument探索をしない、256要素上限と完走必須条件）と、
+  AX挙動の不安定さである。詳細は
+  [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md) §4-c。
+- **より本質的な誤りは、AX取得の失敗をユーザー意図の不在として扱ったことである。** 選択内容は
+  回答対象を決めるsemantic authorityであり、AXはそれを運ぶacquisition channelの一つにすぎない。
+  R10.5当初の「AXが返したtextだけがselection」という不変条件はこの2つを混同していた。同日、
+  通常Visionのpromptへ「画像上に明確なテキスト選択が見えるならそれを主対象として読む。ただし
+  選択の有無・不在・不確実性はユーザーへ述べない」を加え、判定主体を唯一画像を見られるモデルへ
+  移した（正本§3、§4-b）。これは`visualOnly`の復活ではない — クライアントは見ていないものを
+  報告せず、モデルが自分の観測から判断する。
 
 ## 14. 検証
 
