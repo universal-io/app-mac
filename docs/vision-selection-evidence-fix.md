@@ -146,6 +146,23 @@ AX／DOMを軽視するのではない。選択文字列が取れたときの意
 部分は、画像だけでは全文を回収できない。そこはAX・DOM等の取得経路が優れている。**しかしこれは
 取得精度の問題であり、AXをselectionの存在判定者にする理由にはならない。**
 
+## 4-c. AX探索側の死角（取得精度の課題、機能の前提ではない）
+
+2026-08-01のread-only probeで、現在のAX探索そのものに取りこぼしがあることを確認した。これらは
+§4-bのモデル判定があれば機能は成立するため、**優先度は精度向上であって前提ではない**。
+
+- **focused elementが取れないとdocument探索を一切しない。** `captureAttempt`は
+  `kAXFocusedUIElementAttribute`が無いとcandidateゼロで即returnする。マウスドラッグ選択で
+  Electron webviewがfocused elementを返すとは限らず、選択が存在しても取得経路全体が閉じる。
+- **256要素上限と「完走必須」条件。** document selectionは、window全走査が完了し、かつsecure
+  descendantが無い場合だけ読む。VS Codeのwindowは実測5,824要素あり、AXWebAreaは走査
+  754/757/763番目にある。256要素では`completedTraversal`が成立せず、途中でAXWebAreaを見つけても
+  選択文字列を一切読まない。secure fieldの検査はdocumentの子孫に限定すれば、window全走査を
+  要求せずに同じ安全性を保てる。
+- **実測でAXの挙動が不安定であること自体が、AXへ機能を依存させない根拠になる。** 同じVS Code
+  ウインドウで、選択中にfocused elementが49 unitsを返した観測と、180秒待ってもwindow全体で
+  選択を1件も公開しなかった観測の両方が出た。
+
 ## 5. 実装順序
 
 ### 0. C6をリリースブロッカーとして未完了へ戻す — 実施済み
