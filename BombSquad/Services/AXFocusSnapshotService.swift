@@ -107,13 +107,32 @@ enum AXFocusSnapshotService {
         static let axMessagingTimeout: Float = 0.1
         static let maxAncestorLevels = 16
         static let perPassDeadline: TimeInterval = 1.0
+        // Real windows are far larger than the old 256: Chrome Gmail reports
+        // 1,500+ nodes and VS Code 5,800, with their web areas at index 750+.
+        // The per-pass deadline, not this number, is what bounds the work.
+        static let maxDocumentSearchNodes = 4_000
     }
 
-    static func shouldReadDocumentSelection(
-        sawSecureDescendant: Bool,
-        completedTraversal: Bool
-    ) -> Bool {
-        completedTraversal && !sawSecureDescendant
+    /// Secure protection comes from the focused chain: a secure field anywhere
+    /// on it aborts the whole snapshot, and a selection lives in one place, so
+    /// a non-secure chain means the selected text is not secure either. A
+    /// secure field met during this sweep still stops the read. What is no
+    /// longer required is a *complete* window sweep — demanding one meant large
+    /// apps (Chrome Gmail at 1,500+ nodes, VS Code at 5,800) never read their
+    /// document at all, discarding selections that AX had already exposed.
+    static func shouldReadDocumentSelection(sawSecureDescendant: Bool) -> Bool {
+        !sawSecureDescendant
+    }
+
+    /// A web area is the document, wherever it sits on the chain. Chrome makes
+    /// it the focused element itself, so scope must come from the role rather
+    /// than from the walk position.
+    static func selectionScope(
+        role: String?,
+        isFocusedElement: Bool
+    ) -> VisionSelectionCandidate.Scope {
+        if role == "AXWebArea" { return .document }
+        return isFocusedElement ? .focusedElement : .ancestor
     }
 
     private struct Attempt {
@@ -306,33 +325,35 @@ enum AXFocusSnapshotService {
             let role = copyString(element, kAXRoleAttribute).value
             sawWebArea = sawWebArea || role == "AXWebArea"
 
-            // Document text is read only after its descendants have been
-            // checked for secure fields in collectDocumentSelectionCandidates.
-            if role != "AXWebArea" {
-                let selectedTextRead = copyString(element, kAXSelectedTextAttribute)
-                if selectedTextRead.error == .cannotComplete {
-                    status = .timedOut
-                    break
-                }
-                if selectedTextRead.error == .invalidUIElement {
-                    status = .invalidatedElement
-                    break
-                }
-                if let text = normalizedSelectedText(selectedTextRead.value) {
-                    let evidence = selectedTextEvidence(element, directText: text)
-                    selectionCandidates.append(VisionSelectionCandidate(
-                        directText: text,
-                        role: role,
-                        label: label(for: element),
-                        containerFrame: copyFrame(element).value,
-                        selectionFrames: evidence.frame.map { [$0] } ?? [],
-                        scope: visited == 1 ? .focusedElement : .ancestor,
-                        depth: visited - 1,
-                        pass: pass,
-                        rangeEvidence: evidence.rangeEvidence,
-                        isSecure: false
-                    ))
-                }
+            // Read every container on this chain, web areas included. Chrome
+            // reports the document itself as the focused element, so skipping
+            // it here threw the selection away even though AX had returned it.
+            // Secure content is already excluded: a secure field anywhere on
+            // this chain aborts the whole snapshot above, and a selection lives
+            // in one place, so a non-secure chain means non-secure text.
+            let selectedTextRead = copyString(element, kAXSelectedTextAttribute)
+            if selectedTextRead.error == .cannotComplete {
+                status = .timedOut
+                break
+            }
+            if selectedTextRead.error == .invalidUIElement {
+                status = .invalidatedElement
+                break
+            }
+            if let text = normalizedSelectedText(selectedTextRead.value) {
+                let evidence = selectedTextEvidence(element, directText: text)
+                selectionCandidates.append(VisionSelectionCandidate(
+                    directText: text,
+                    role: role,
+                    label: label(for: element),
+                    containerFrame: copyFrame(element).value,
+                    selectionFrames: evidence.frame.map { [$0] } ?? [],
+                    scope: selectionScope(role: role, isFocusedElement: visited == 1),
+                    depth: visited - 1,
+                    pass: pass,
+                    rangeEvidence: evidence.rangeEvidence,
+                    isSecure: false
+                ))
             }
 
             let parentRead = copyElement(element, kAXParentAttribute)
@@ -346,8 +367,10 @@ enum AXFocusSnapshotService {
             }
             element = parent
         }
-        if !selectionCandidates.contains(where: { $0.scope == .document }),
-           Date() < deadline {
+        // Only sweep the window when the focused chain gave nothing at all.
+        // When it did, the document has already been read on that chain and a
+        // second full walk would just spend the budget in front of the user.
+        if selectionCandidates.isEmpty, Date() < deadline {
             let documentResult = collectDocumentSelectionCandidates(
                 appElement: appElement,
                 deadline: deadline,
@@ -468,7 +491,9 @@ enum AXFocusSnapshotService {
         var visited = 0
         var sawWebArea = false
         var sawSecureDescendant = false
-        while let element = stack.popLast(), visited < 256, Date() < deadline {
+        while let element = stack.popLast(),
+              visited < Budget.maxDocumentSearchNodes,
+              Date() < deadline {
             visited += 1
             let subrole = copyString(element, kAXSubroleAttribute).value
             if subrole == "AXSecureTextField" {
@@ -485,11 +510,7 @@ enum AXFocusSnapshotService {
             }
         }
         var candidates: [VisionSelectionCandidate] = []
-        let completedTraversal = stack.isEmpty && Date() < deadline
-        if shouldReadDocumentSelection(
-            sawSecureDescendant: sawSecureDescendant,
-            completedTraversal: completedTraversal
-        ) {
+        if shouldReadDocumentSelection(sawSecureDescendant: sawSecureDescendant) {
             for document in documentElements where Date() < deadline {
                 let selectedTextRead = copyString(document.element, kAXSelectedTextAttribute)
                 if let text = normalizedSelectedText(selectedTextRead.value) {

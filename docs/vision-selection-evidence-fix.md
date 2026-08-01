@@ -146,22 +146,48 @@ AX／DOMを軽視するのではない。選択文字列が取れたときの意
 部分は、画像だけでは全文を回収できない。そこはAX・DOM等の取得経路が優れている。**しかしこれは
 取得精度の問題であり、AXをselectionの存在判定者にする理由にはならない。**
 
-## 4-c. AX探索側の死角（取得精度の課題、機能の前提ではない）
+## 4-c. AX探索側の死角（2026-08-01、実測で確定・修正済み）
 
-2026-08-01のread-only probeで、現在のAX探索そのものに取りこぼしがあることを確認した。これらは
-§4-bのモデル判定があれば機能は成立するため、**優先度は精度向上であって前提ではない**。
+read-only probeとGmailの実機診断（`[selection] status: none`／`visited_nodes: 1540`）で、
+**AXは選択を返していたのに製品が自分で捨てていた**ことが確定した。「webviewは公開AXに選択を
+出さない」という当初の断定は誤りである。
+
+真因は2つで、どちらも自前の探索条件だった。
+
+- **祖先walkが`AXWebArea`をスキップしていた。** Chromeはdocument（`AXWebArea`）自身をfocused
+  elementとして報告し、そこに選択全文を載せる。probe実測でfocused elementが679 unitsを公開して
+  いたのに、「web areaの本文はsecure検査後に読む」という設計のため1歩目で捨て、candidateは0件に
+  なっていた。
+- **逃した分を拾うはずのdocument走査が構造的に動かなかった。** 「window全体を256要素以内で
+  走査完了し、かつsecure descendantが無い」場合だけ読む条件だったが、Chrome Gmailは1,540要素超、
+  VS Codeは5,824要素あるため`completedTraversal`は決して成立しない。AXWebAreaを見つけても
+  選択文字列を一切読まなかった。
+
+修正内容:
+
+- 祖先walkでweb areaをスキップしない。secure保護は焦点チェーンの検査が担う（チェーン上に
+  secure fieldがあればsnapshot全体を中止する）。選択は1箇所にしか存在しないので、チェーンが
+  secureでなければ選択内容もsecureではない。
+- `selectionScope(role:isFocusedElement:)`を追加し、web areaはチェーン上のどこにあっても
+  document scopeとして扱う。位置ではなくroleで判定する。
+- `shouldReadDocumentSelection`から「完走必須」を外し、走査上限を256→4,000へ。走査中にsecure
+  fieldを見つけたら読まない規則は維持する。作業量を縛るのは1 pass 1秒のdeadlineであって、
+  ノード数の定数ではない。
+- 焦点チェーンでcandidateが取れたらdocument走査を丸ごと省く。
+
+結果（Chrome Gmail、修正後probe）: `ancestor[0] role=AXWebArea -> candidate 227 units
+scope=document`、**取得1ms、document走査スキップ**。修正前は同じ画面でcandidate 0件、AX収集に
+1,500msを費やしていた。document scopeが立つため`hasAuthoritativeSelection`が即座に成立し、
+bounded retryも1 passで止まる。
+
+残る死角（未修正・優先度低）:
 
 - **focused elementが取れないとdocument探索を一切しない。** `captureAttempt`は
-  `kAXFocusedUIElementAttribute`が無いとcandidateゼロで即returnする。マウスドラッグ選択で
-  Electron webviewがfocused elementを返すとは限らず、選択が存在しても取得経路全体が閉じる。
-- **256要素上限と「完走必須」条件。** document selectionは、window全走査が完了し、かつsecure
-  descendantが無い場合だけ読む。VS Codeのwindowは実測5,824要素あり、AXWebAreaは走査
-  754/757/763番目にある。256要素では`completedTraversal`が成立せず、途中でAXWebAreaを見つけても
-  選択文字列を一切読まない。secure fieldの検査はdocumentの子孫に限定すれば、window全走査を
-  要求せずに同じ安全性を保てる。
-- **実測でAXの挙動が不安定であること自体が、AXへ機能を依存させない根拠になる。** 同じVS Code
-  ウインドウで、選択中にfocused elementが49 unitsを返した観測と、180秒待ってもwindow全体で
-  選択を1件も公開しなかった観測の両方が出た。
+  `kAXFocusedUIElementAttribute`が無いとcandidateゼロで即returnする。ただし実測では、選択が
+  存在する時のfocused elementは取得できていた（選択が無い時に`no focused element`になる）。
+- **AXの挙動自体が不安定である。** 同じVS Codeウインドウで、選択中にfocused elementが49 unitsを
+  返した観測と、180秒待って選択を1件も公開しなかった観測の両方が出た。**これはAXへ機能を依存
+  させない根拠であり、§4-bのモデル判定を持つ理由でもある。**
 
 ## 5. 実装順序
 
