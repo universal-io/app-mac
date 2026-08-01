@@ -119,7 +119,7 @@ export type EffectiveConfig = {
    * catalog is the single knob — kept as a field so the UI can label it. */
   freeMonthlyLimit: { value: number | null; source: "plan" };
   /** Presence only — key values must never leave the server. */
-  apiKeys: { groq: boolean; openai: boolean; gemini: boolean; anthropic: boolean };
+  apiKeys: { groq: boolean; openai: boolean; gemini: boolean; anthropic: boolean; cerebras: boolean };
 };
 
 /** Reads the same routing object as the engines. Never includes secret values,
@@ -154,6 +154,7 @@ export async function effectiveConfig(): Promise<EffectiveConfig> {
       openai: Boolean(env.openaiApiKey),
       gemini: Boolean(env.geminiApiKey),
       anthropic: Boolean(env.anthropicApiKey),
+      cerebras: Boolean(env.cerebrasApiKey),
     },
   };
 }
