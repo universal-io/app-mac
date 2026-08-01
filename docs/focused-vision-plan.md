@@ -1008,7 +1008,7 @@ diagnostics、identityを含めて同一であることをmacOS testへ固定し
 加える構造へ一本化した。同時に文字を伴わない選択要素のextension欠落と、secure descendant確認前に
 document textを読み得る順序を修正した。macOS 41件、Web lint／TypeScript／production build、
 署名なしDebug buildが成功し、別endpoint、別model route、長期flag、短命probe、起動時clipboard／
-合成⌘Cの再混入は無い。`origin/main`と本番Gatewayはまだ`v0.2.1`のため、Gateway先行配備後の
+合成⌘Cの再混入は無い。後方互換Gatewayは2026-08-01にmacOS候補版より先に`main`／本番へ配備した。
 署名付き実機golden pathと、同一端末・同一対象でのwarm p50／p95比較は未実施であり、C6は未完了である。
 
 ## 14. 検証

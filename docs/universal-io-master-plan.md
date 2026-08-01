@@ -353,8 +353,8 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   selection以外の同一性、単一intent、全文scope、prompt injection、legacy adapter、secure descendant、
   capture外を回帰testへ追加し、起動先を同じVisionへ一本化した。macOS 41件、Gateway 14件、Web lint、
   TypeScript、production build、署名なしDebug buildが成功し、別endpoint、別model route、長期flag、
-  probe残骸、起動時clipboard／合成⌘Cの再混入が無いことを確認した。`origin/main`／本番Gatewayはまだ
-  `v0.2.1`なので、後方互換Gatewayの先行配備、署名付き候補版の実機golden path、同一端末でのwarm
+  probe残骸、起動時clipboard／合成⌘Cの再混入が無いことを確認した。後方互換Gatewayは2026-08-01に
+  macOS候補版より先に`main`／本番へ配備した。署名付き候補版の実機golden pathと、同一端末でのwarm
   p50／p95比較を残す。coldの2秒deadlineはコード・unit test上で維持している。
 
 受け入れ条件と詳細なcommit境界は[focused-vision-plan.md](focused-vision-plan.md)の

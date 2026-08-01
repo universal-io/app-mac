@@ -152,8 +152,8 @@ sandbox鍵で検証した。**本番鍵へ差し替えたら全項目を再実�
 
 ## R10 Selection Extension C6候補検証
 
-`feat/vision-selection-extension`の候補検証である。`origin/main`／本番Gatewayはまだ`v0.2.1`なので、
-以下の実機項目は後方互換Gatewayを先行配備してから署名付き候補版で行う。配備前の本番回答を
+`feat/vision-selection-extension`の候補検証である。後方互換Gatewayは2026-08-01にmacOS候補版より
+先に`main`／本番へ配備した。以下の実機項目は署名付き候補版で行い、旧Gatewayで得た回答を
 R10の合否に使わない。
 
 - [x] macOS 41 unit test、Gateway 14 test、Web lint／TypeScript／production build、署名なしDebug

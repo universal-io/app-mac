@@ -10,11 +10,10 @@ Focused Visionは`0.2.1` build `5`で正式採用した。
 2026-07-30にmain `6bc471a`を本番へdeployし、認証なしprobeで現行4 routeが共通JSON
 `UNAUTHENTICATED`を返し、旧`/api/ai/transform`が404であることを確認した。
 
-R10の`selection`契約は2026-08-01時点で`feat/vision-selection-extension`上の候補であり、
-`origin/main`／本番Gatewayには未配備である。macOS新クライアントの実機回答検証より先に、この
-後方互換Gatewayを本番へ配備する。旧`focus_target`／`visual_selection_hint`を同じ内部型へ正規化する
-ため、配備後も`v0.2.1`クライアントを壊さない。C6ローカル検証ではGateway 14件、lint、TypeScript、
-production buildと、通常requestから`selection`だけが増えるmacOS request比較が成功した。
+R10の`selection`契約は2026-08-01に`feat/vision-selection-extension`から`main`／本番Gatewayへ
+macOS候補版より先に配備した。旧`focus_target`／`visual_selection_hint`を同じ内部型へ正規化するため、
+`v0.2.1`クライアントも引き続き動作する。配備前検証ではGateway 14件、lint、TypeScript、production
+buildと、通常requestから`selection`だけが増えるmacOS request比較が成功した。
 
 ## 共通
 

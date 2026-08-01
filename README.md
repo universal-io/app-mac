@@ -173,8 +173,9 @@ C6のローカル自動検証では、通常Visionとの差分が`selection`だ�
 全文scope、prompt injection、legacy adapter、secure descendant、capture外、旧経路・privacy監査を固定し、
 macOS 41件、Gateway 14件、Web lint／TypeScript／production build、署名なしDebug buildが成功した。
 起動先enumもVisionへ一本化し、文字を伴わない選択要素をSelection Extensionへ保持する。
-ただし`origin/main`と本番Gatewayはまだ`v0.2.1`であり、新契約を解釈しない。C6完了にはGatewayの
-先行配備後、署名付き候補版で実機golden pathと同一端末の性能比較を行う必要がある。
+R10の後方互換Gateway契約は2026-08-01にmacOS候補版より先に`main`へ配備した。公開中の
+`v0.2.1`クライアントは旧fieldから同じ内部型へ合流するため互換性を維持する。C6完了には署名付き
+候補版で実機golden pathと同一端末の性能比較を行う必要がある。
 
 ### ゲストプレビュー（ログイン前に試せる体験）
 
