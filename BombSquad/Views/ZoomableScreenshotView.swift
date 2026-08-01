@@ -20,6 +20,9 @@ struct ZoomableScreenshotView: View {
     let highlight: CGRect?
     let highlightTint: Color
     let highlightLabel: String?
+    /// All capture-visible Selection Extension frames. These are drawn as
+    /// separate boxes and never collapsed into a single representative box.
+    let selectionHighlights: [CGRect]
 
     private static let maxZoom: CGFloat = 8
 
@@ -36,6 +39,8 @@ struct ZoomableScreenshotView: View {
     @State private var offset: CGSize = .zero
     /// Live drag translation while the hand tool is down.
     @State private var panTranslation: CGSize = .zero
+    /// Drives the grab cursor while the screenshot itself is being moved.
+    @State private var isPanning = false
     /// In-progress annotation rectangle (normalized) while the pen drags.
     @State private var draftRect: CGRect?
 
@@ -57,10 +62,15 @@ struct ZoomableScreenshotView: View {
                 }
 
                 annotationOverlay(layout: layout)
+                selectionHighlightOverlay(layout: layout)
                 highlightOverlay(layout: layout)
             }
             .frame(width: container.width, height: container.height)
             .clipped()
+            .overlay {
+                ScreenshotPanCursor(cursor: isPanning ? .closedHand : .openHand)
+                    .allowsHitTesting(false)
+            }
             .gesture(dragGesture(in: container))
             .simultaneousGesture(magnifyGesture(in: container))
             .onTapGesture(count: 2) {
@@ -82,10 +92,19 @@ struct ZoomableScreenshotView: View {
         }
         .accessibilityLabel("スクリーンショットプレビュー")
         .accessibilityValue(
-            highlight == nil
-                ? "ハイライトなし"
-                : "\(highlightLabel ?? "案内位置")を枠で表示"
+            accessibilityHighlightSummary
         )
+    }
+
+    private var accessibilityHighlightSummary: String {
+        var parts: [String] = []
+        if !selectionHighlights.isEmpty {
+            parts.append("選択範囲を\(selectionHighlights.count)か所に枠で表示")
+        }
+        if highlight != nil {
+            parts.append("\(highlightLabel ?? "案内位置")を枠で表示")
+        }
+        return parts.isEmpty ? "ハイライトなし" : parts.joined(separator: "、")
     }
 
     private func loadImage() {
@@ -157,6 +176,7 @@ struct ZoomableScreenshotView: View {
             .onChanged { value in
                 switch tool {
                 case .pan:
+                    isPanning = true
                     panTranslation = value.translation
                 case .annotate:
                     let layout = layout(in: container)
@@ -173,6 +193,7 @@ struct ZoomableScreenshotView: View {
             .onEnded { _ in
                 switch tool {
                 case .pan:
+                    isPanning = false
                     offset.width += panTranslation.width
                     offset.height += panTranslation.height
                     panTranslation = .zero
@@ -267,6 +288,46 @@ struct ZoomableScreenshotView: View {
     }
 
     @ViewBuilder
+    private func selectionHighlightOverlay(layout: Layout) -> some View {
+        ForEach(Array(selectionHighlights.enumerated()), id: \.offset) { index, highlight in
+            let target = viewRect(for: highlight, layout: layout)
+            let safeImageBounds = imageRect(for: layout).insetBy(dx: 7, dy: 7)
+            let rect = target
+                .insetBy(dx: -4, dy: -3)
+                .intersection(safeImageBounds)
+            if !rect.isNull, rect.width > 0, rect.height > 0 {
+                RoundedRectangle(cornerRadius: min(8, rect.height / 4))
+                    .strokeBorder(
+                        Color.accentColor,
+                        style: StrokeStyle(
+                            lineWidth: colorSchemeContrast == .increased ? 5 : 3,
+                            dash: [8, 4]
+                        )
+                    )
+                    .background(
+                        reduceTransparency ? Color.clear : Color.accentColor.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: min(8, rect.height / 4))
+                    )
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
+                    .allowsHitTesting(false)
+
+                if index == 0 {
+                    let label = selectionHighlights.count == 1
+                        ? "選択範囲"
+                        : "選択範囲（\(selectionHighlights.count)か所）"
+                    highlightCaption(
+                        label,
+                        rect: rect,
+                        safeImageBounds: safeImageBounds,
+                        tint: .accentColor
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private func highlightOverlay(layout: Layout) -> some View {
         if let highlight {
             let target = viewRect(for: highlight, layout: layout)
@@ -295,37 +356,129 @@ struct ZoomableScreenshotView: View {
                             : .opacity.combined(with: .scale(scale: 1.15))
                     )
                 if let highlightLabel {
-                    let labelX = min(
-                        max(rect.midX, safeImageBounds.minX + 40),
-                        safeImageBounds.maxX - 40
+                    highlightCaption(
+                        highlightLabel,
+                        rect: rect,
+                        safeImageBounds: safeImageBounds,
+                        tint: highlightTint
                     )
-                    let preferredY = rect.minY - 12
-                    let labelY = preferredY >= safeImageBounds.minY + 10
-                        ? preferredY
-                        : min(rect.maxY + 12, safeImageBounds.maxY - 10)
-                    Text(highlightLabel)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .fixedSize()
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            reduceTransparency
-                                ? Color(nsColor: .windowBackgroundColor)
-                                : Color(nsColor: .controlBackgroundColor),
-                            in: Capsule()
-                        )
-                        .overlay {
-                            Capsule()
-                                .strokeBorder(
-                                    highlightTint,
-                                    lineWidth: colorSchemeContrast == .increased ? 2 : 1
-                                )
-                        }
-                        .position(x: labelX, y: labelY)
-                        .allowsHitTesting(false)
                 }
             }
+        }
+    }
+
+    private func highlightCaption(
+        _ text: String,
+        rect: CGRect,
+        safeImageBounds: CGRect,
+        tint: Color
+    ) -> some View {
+        let labelX = min(
+            max(rect.midX, safeImageBounds.minX + 40),
+            safeImageBounds.maxX - 40
+        )
+        let preferredY = rect.minY - 12
+        let labelY = preferredY >= safeImageBounds.minY + 10
+            ? preferredY
+            : min(rect.maxY + 12, safeImageBounds.maxY - 10)
+        return Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.primary)
+            .fixedSize()
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                reduceTransparency
+                    ? Color(nsColor: .windowBackgroundColor)
+                    : Color(nsColor: .controlBackgroundColor),
+                in: Capsule()
+            )
+            .overlay {
+                Capsule()
+                    .strokeBorder(
+                        tint,
+                        lineWidth: colorSchemeContrast == .increased ? 2 : 1
+                    )
+            }
+            .position(x: labelX, y: labelY)
+            .allowsHitTesting(false)
+    }
+}
+
+/// Cursor rectangles are the reliable macOS way to advertise direct
+/// manipulation without adding a separate hand-tool control to the UI.
+private struct ScreenshotPanCursor: NSViewRepresentable {
+    let cursor: NSCursor
+
+    func makeNSView(context: Context) -> CursorView {
+        CursorView(cursor: cursor)
+    }
+
+    func updateNSView(_ nsView: CursorView, context: Context) {
+        nsView.cursor = cursor
+    }
+
+    final class CursorView: NSView {
+        private var previousWindowBackgroundDragging: Bool?
+
+        var cursor: NSCursor {
+            didSet {
+                guard oldValue != cursor else { return }
+                window?.invalidateCursorRects(for: self)
+            }
+        }
+
+        init(cursor: NSCursor) {
+            self.cursor = cursor
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(
+                rect: .zero,
+                options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited],
+                owner: self,
+                userInfo: nil
+            ))
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            super.mouseEntered(with: event)
+            guard previousWindowBackgroundDragging == nil, let window else { return }
+            previousWindowBackgroundDragging = window.isMovableByWindowBackground
+            // The borderless panel normally moves from empty background.
+            // While the pointer is over the screenshot, its drag gesture owns
+            // the same mouse event and must pan the image instead.
+            window.isMovableByWindowBackground = false
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            restoreWindowBackgroundDragging()
+            super.mouseExited(with: event)
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow !== window {
+                restoreWindowBackgroundDragging()
+            }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: cursor)
+        }
+
+        private func restoreWindowBackgroundDragging() {
+            guard let previousWindowBackgroundDragging else { return }
+            window?.isMovableByWindowBackground = previousWindowBackgroundDragging
+            self.previousWindowBackgroundDragging = nil
         }
     }
 }

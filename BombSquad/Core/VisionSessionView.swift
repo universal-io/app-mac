@@ -38,40 +38,20 @@ struct VisionRootView: View {
 struct VisionSessionView: View {
     @ObservedObject var session: VisionSession
     @State private var annotations: [ScreenshotAnnotation] = []
-    @State private var previewTool: ScreenshotPreviewTool = .pan
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var focusedField: Binding<FocusField?> {
         Binding(get: { session.focusedField }, set: { session.focusedField = $0 })
     }
 
-    private var axStatus: String {
-        guard let diagnostics = session.candidateDiagnostics else {
-            return session.candidatesReady ? "AX \(session.candidates.count)" : "AX …"
-        }
-        let completion = diagnostics.truncatedReason ?? "complete"
-        return "AX \(diagnostics.candidateCount) · \(diagnostics.elapsedMs)ms · \(diagnostics.collectionRoot) · \(completion)"
-    }
-
-    private var axStatusHelp: String {
-        guard let diagnostics = session.candidateDiagnostics else {
-            return "AX候補を取得しています"
-        }
-        let app = diagnostics.targetAppName ?? "対象アプリなし"
-        let window = diagnostics.targetWindowTitle ?? "focused windowなし"
-        return "収集対象: \(app) / \(window)\nAX root: \(diagnostics.collectionRoot)\nCapture: \(diagnostics.captureScope)\nPasses: \(diagnostics.collectionPasses) / WebArea: \(diagnostics.webAreaPresent ? "あり" : "なし")"
-    }
-
-    private var focusTargetHighlight: CGRect? {
-        session.focusTarget?.normalizedFrame(in: session.attachment)
-    }
-
     private var previewHighlight: CGRect? {
-        session.screenshotHighlight ?? focusTargetHighlight
+        session.screenshotHighlight
     }
 
-    private var isShowingFocusTargetHighlight: Bool {
-        session.screenshotHighlight == nil && focusTargetHighlight != nil
+    private var selectionPresentation: VisionSelectionPresentation? {
+        session.selection.map {
+            VisionSelectionPresentation(selection: $0, attachment: session.attachment)
+        }
     }
 
     var body: some View {
@@ -80,11 +60,11 @@ struct VisionSessionView: View {
             if let errorMessage = session.errorMessage {
                 ErrorBanner(message: errorMessage)
             }
-            HSplitView {
+            HStack(alignment: .top, spacing: 16) {
                 screenshotColumn
-                    .frame(minWidth: 300, idealWidth: 420)
+                    .frame(minWidth: 300, idealWidth: 420, maxWidth: .infinity)
                 conversationColumn
-                    .frame(minWidth: 360, idealWidth: 500)
+                    .frame(minWidth: 360, idealWidth: 500, maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -96,20 +76,16 @@ struct VisionSessionView: View {
         HStack(spacing: 10) {
             Label("画面を読む", systemImage: "eye")
                 .font(.headline)
-#if DEBUG
-            if let metadata = session.metadata {
-                Text("\(metadata.route) · \(metadata.modelID) · \(metadata.latencyMs) ms")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-#endif
             Spacer()
-            if let skillName = session.activeSkillName {
-                ActiveSkillLabel(
-                    skillName: skillName,
-                    help: "\(skillName) の知識を参照して画面を読みました"
-                )
+            PanelToolInfo(
+                toolName: session.activeSkillName,
+                toolHelp: session.activeSkillName.map {
+                    "\($0) の知識を参照して画面を読みました"
+                } ?? "検出されたツールはありません",
+                informationHelp: "処理情報を表示",
+                informationAccessibilityLabel: "Visionの処理情報"
+            ) {
+                VisionDiagnosticsPopover(report: diagnosticsReport)
             }
         }
         .background(WindowDragHandle())
@@ -117,74 +93,32 @@ struct VisionSessionView: View {
 
     private var screenshotColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("スクリーンショット", systemImage: "rectangle.dashed")
-                .font(.headline)
-            HStack {
-                Button {
-                    previewTool = .pan
-                } label: {
-                    Image(systemName: "hand.raised")
-                        .frame(width: 30, height: 24)
-                }
-                .buttonStyle(.borderless)
-                .help("画像を移動・拡大する")
-                .accessibilityLabel("画像を移動・拡大する")
-                Spacer()
-#if DEBUG
-                Text(axStatus)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .help(axStatusHelp)
-                Text(session.attachment.id.uuidString.prefix(8))
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-                    .help("固定capture ID")
-#endif
-            }
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.quaternary.opacity(0.25))
                 ZoomableScreenshotView(
                     url: session.attachment.url,
-                    tool: previewTool,
+                    tool: .pan,
                     annotationTint: .red,
                     annotations: $annotations,
                     highlight: previewHighlight,
-                    highlightTint: isShowingFocusTargetHighlight ? .accentColor : .red,
-                    highlightLabel: isShowingFocusTargetHighlight ? "選択対象" : "次の操作"
+                    highlightTint: .red,
+                    highlightLabel: "次の操作",
+                    selectionHighlights: selectionPresentation?.visibleFrames ?? []
                 )
                 .padding(4)
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-#if DEBUG
-            if let candidate = session.selectedCandidate {
-                Label(
-                    "\(session.metadata?.route ?? "unknown") · \(candidate.id) · \(candidate.label)",
-                    systemImage: "scope"
-                )
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .help("選択経路・candidate ID・AXラベル")
-            }
-#endif
         }
-        .padding()
     }
 
     private var conversationColumn: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let focusTarget = session.focusTarget {
-                VisionFocusTargetCard(
-                    target: focusTarget,
-                    locationAvailable: focusTargetHighlight != nil
-                )
-                .accessibilitySortPriority(4)
+            if let selectionPresentation {
+                VisionSelectionCard(presentation: selectionPresentation)
+                    .accessibilitySortPriority(4)
             }
-
-            Label("読み取り結果", systemImage: "doc.text.magnifyingglass")
-                .font(.headline)
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -246,7 +180,115 @@ struct VisionSessionView: View {
                 .accessibilitySortPriority(1)
             }
         }
-        .padding()
+    }
+
+    private var diagnosticsReport: String {
+        var lines = [
+            "Universal I/O Vision diagnostics",
+            "",
+            "[capture]",
+            "id: \(session.attachment.id.uuidString.lowercased())",
+            "created_at: \(Self.iso8601.string(from: session.attachment.createdAt))",
+            "scope: \(session.attachment.captureScope.rawValue)",
+            "pixel_size: \(optionalSize)",
+            "screen_rect: \(Self.describe(session.attachment.captureRect))",
+            "",
+            "[skill]",
+            "active: \(session.activeSkillName ?? "none")",
+            "",
+            "[gateway]",
+        ]
+
+        if let metadata = session.metadata {
+            lines += [
+                "model_vendor: \(metadata.modelVendor)",
+                "model_id: \(metadata.modelID)",
+                "route: \(metadata.route)",
+                "api: \(metadata.api)",
+                "image_detail: \(metadata.imageDetail)",
+                "reasoning_effort: \(metadata.reasoningEffort)",
+                "fallback_used: \(metadata.fallbackUsed)",
+                "latency_ms: \(metadata.latencyMs)",
+            ]
+        } else {
+            lines.append("status: waiting")
+        }
+
+        lines += ["", "[selection]"]
+        if let selection = session.selection {
+            let visibleFrameCount = selection.visibleNormalizedFrames(in: session.attachment).count
+            let wireTruncated = selection.wirePayload(for: session.attachment)?["wire_truncated"]
+                as? Bool ?? false
+            lines += [
+                "acquisition: \(selection.acquisition.rawValue)",
+                "structure_count: \(selection.structures.count)",
+                "frame_count: \(selection.frames.count)",
+                "visible_frame_count: \(visibleFrameCount)",
+                "acquisition_completeness: \(selection.acquisitionCompleteness.rawValue)",
+                "capture_visibility: \(selection.captureVisibility.rawValue)",
+                "wire_truncated: \(wireTruncated)",
+            ]
+        } else {
+            lines.append("status: none")
+        }
+
+        lines += ["", "[accessibility]"]
+        if let diagnostics = session.candidateDiagnostics {
+            lines += [
+                "status: \(diagnostics.truncatedReason ?? "complete")",
+                "elapsed_ms: \(diagnostics.elapsedMs)",
+                "visited_nodes: \(diagnostics.visitedNodes)",
+                "candidate_count: \(diagnostics.candidateCount)",
+                "collection_root: \(diagnostics.collectionRoot)",
+                "capture_scope: \(diagnostics.captureScope)",
+                "collection_passes: \(diagnostics.collectionPasses)",
+                "web_area_present: \(diagnostics.webAreaPresent)",
+                "target_app: \(diagnostics.targetAppName ?? "none")",
+                "target_bundle_id: \(diagnostics.targetBundleID ?? "none")",
+                "target_window: \(diagnostics.targetWindowTitle ?? "none")",
+            ]
+        } else {
+            lines.append("status: collecting")
+        }
+
+        lines += ["", "[selected_candidate]"]
+        if let candidate = session.selectedCandidate {
+            lines += [
+                "id: \(candidate.id)",
+                "source: \(candidate.source)",
+                "role: \(candidate.role ?? "none")",
+                "label: \(candidate.label)",
+                "parent_label: \(candidate.parentLabel ?? "none")",
+                "states: \(candidate.states.isEmpty ? "none" : candidate.states.joined(separator: ", "))",
+                "rect: \(Self.describe(candidate.rect))",
+            ]
+        } else {
+            lines.append("status: none")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private var optionalSize: String {
+        guard let width = session.attachment.pixelWidth,
+              let height = session.attachment.pixelHeight else {
+            return "unknown"
+        }
+        return "\(width)x\(height)"
+    }
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static func describe(_ rect: CGRect?) -> String {
+        guard let rect else { return "none" }
+        return String(
+            format: "x=%.4f y=%.4f width=%.4f height=%.4f",
+            rect.minX, rect.minY, rect.width, rect.height
+        )
     }
 
     @ViewBuilder
@@ -277,90 +319,112 @@ struct VisionSessionView: View {
     }
 }
 
-private struct VisionFocusTargetCard: View {
-    let target: VisionFocusTarget
-    let locationAvailable: Bool
+private struct VisionSelectionCard: View {
+    let presentation: VisionSelectionPresentation
 
     @State private var isExpanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     private var isLongText: Bool {
-        guard let text = target.text else { return false }
+        guard let text = presentation.bodyText else { return false }
         return text.count > 280 || text.filter(\.isNewline).count > 4
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(target.displayTitle, systemImage: "scope")
+            Label(presentation.title, systemImage: "scope")
                 .font(.headline)
-                .foregroundStyle(.primary)
 
-            if let label = target.label, !label.isEmpty {
-                Text(label)
-                    .font(.subheadline.weight(.medium))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if let text = target.text, !text.isEmpty {
+            if let text = presentation.bodyText, !text.isEmpty {
                 Group {
                     if isExpanded {
                         ScrollView {
-                            targetText(text)
+                            selectionText(text)
                         }
-                        .frame(maxHeight: 160)
+                        .frame(maxHeight: 180)
                     } else {
-                        targetText(text)
-                            .lineLimit(4)
+                        selectionText(text)
+                            .lineLimit(5)
                     }
                 }
 
                 if isLongText {
                     Button(isExpanded ? "折りたたむ" : "全文を表示") {
-                        isExpanded.toggle()
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                            isExpanded.toggle()
+                        }
                     }
                     .buttonStyle(.link)
+                    .accessibilityLabel(
+                        isExpanded ? "選択した内容を折りたたむ" : "選択した内容の全文を表示"
+                    )
                     .accessibilityHint(
                         isExpanded
-                            ? "選択テキストを短く表示します"
-                            : "選択テキスト全文をスクロール可能な領域に表示します"
+                            ? "選択した内容を短く表示します"
+                            : "選択した内容全文をスクロール可能な領域に表示します"
                     )
                 }
             }
 
-            Divider()
-
-            Label("取得元: \(target.sourceDescription)", systemImage: "arrow.down.to.line")
+            if let positionText = presentation.positionText {
+                Label(
+                    positionText,
+                    systemImage: presentation.visibleFrames.isEmpty ? "info.circle" : "viewfinder"
+                )
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            Label(
-                locationAvailable
-                    ? "スクリーンショット上の位置を表示中"
-                    : "スクリーンショット上の位置は取得できませんでした",
-                systemImage: locationAvailable ? "viewfinder" : "info.circle"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
         .overlay {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(
-                    Color.accentColor,
+                    colorSchemeContrast == .increased ? Color.primary : Color.accentColor,
                     lineWidth: colorSchemeContrast == .increased ? 2 : 1
                 )
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("現在の選択対象")
+        .accessibilityLabel(presentation.title)
     }
 
-    private func targetText(_ text: String) -> some View {
+    private func selectionText(_ text: String) -> some View {
         Text(text)
             .font(.body)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct VisionDiagnosticsPopover: View {
+    let report: String
+
+    var body: some View {
+        PanelInformationPopover(
+            title: "Visionの処理情報",
+            copyText: report,
+            note:
+                "開発とトラブルシューティング用です。画像・入力本文・回答本文は含みませんが、"
+                    + "ウィンドウ名や選択候補ラベルを含む場合があります。"
+        ) {
+            ScrollView([.vertical, .horizontal]) {
+                Text(report)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(width: 480, height: 360)
+            .background(
+                Color(nsColor: .textBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+        }
     }
 }
 

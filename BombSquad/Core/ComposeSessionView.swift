@@ -70,14 +70,9 @@ struct ComposeSessionView: View {
 
     private var draftPane: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let context = session.situationalContext, !session.isContextExcluded {
-                FoundationContextChip(
-                    context: context,
-                    skillName: session.activeSkillName,
-                    includesScreenshot: session.suggestionStatus == .preparing
-                        || session.suggestionStatus == .ready,
-                    onExclude: session.excludeContext
-                )
+            HStack {
+                Spacer()
+                composeToolInfo
             }
 
             SendableTextEditor(
@@ -116,16 +111,6 @@ struct ComposeSessionView: View {
                     }
                     .padding(12)
                 }
-
-                Button {
-                    AppCommandCenter.shared.requestScreenshotCapture()
-                } label: {
-                    Image(systemName: "camera.viewfinder")
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("ビジョン入力としてスクリーンショットを撮影します")
-                .accessibilityLabel("画面を撮影して読み取る")
 
                 if session.isRecording {
                     Image(systemName: "mic.fill").foregroundStyle(.red)
@@ -197,12 +182,6 @@ struct ComposeSessionView: View {
                     .help(isProactiveSuggestEnabled ? "自動返信モードをオフにする" : "自動返信モードをオンにする")
                     .accessibilityLabel("自動返信モード")
                 Spacer()
-                if let skillName = session.activeSkillName {
-                    ActiveSkillLabel(
-                        skillName: skillName,
-                        help: "\(skillName) の知識を参照して文案を作成しました"
-                    )
-                }
             }
             .background(WindowDragHandle())
             .onChange(of: isProactiveSuggestEnabled) { _, enabled in
@@ -401,6 +380,30 @@ struct ComposeSessionView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)です")
     }
+
+    private var composeToolName: String? {
+        session.activeSkillName ?? session.situationalContext?.detectedProductName
+    }
+
+    private var composeToolInfo: some View {
+        PanelToolInfo(
+            toolName: composeToolName,
+            toolHelp: composeToolName.map {
+                "\($0) を検出し、文案作成の参考にしています"
+            } ?? "検出されたツールはありません",
+            informationHelp: "参照情報を表示",
+            informationAccessibilityLabel: "Composeの参照情報"
+        ) {
+            ComposeContextPopover(
+                context: session.situationalContext,
+                skillName: session.activeSkillName,
+                includesScreenshot: session.suggestionStatus == .preparing
+                    || session.suggestionStatus == .ready,
+                isContextExcluded: session.isContextExcluded,
+                onExclude: session.excludeContext
+            )
+        }
+    }
 }
 
 /// The one thing the app may ask about the user in a session, asked in place
@@ -463,44 +466,59 @@ private struct FactQuestionRow: View {
     }
 }
 
-struct FoundationContextChip: View {
-    let context: SituationalContext
+private struct ComposeContextPopover: View {
+    let context: SituationalContext?
     var skillName: String? = nil
     var includesScreenshot = false
+    let isContextExcluded: Bool
     let onExclude: () -> Void
-    @State private var showDetail = false
 
     private var productName: String? {
-        skillName ?? context.detectedProductName
+        skillName ?? context?.detectedProductName
     }
 
-    private var sourceLabel: String {
-        let source = includesScreenshot ? "画面＋周辺テキスト" : "周辺テキスト"
-        if let productName {
-            return "参照中：\(productName) · \(source)"
+    private var surroundingTextStatus: String {
+        if isContextExcluded { return "使用しません" }
+        return context?.hasConversation == true ? "使用中" : "取得されていません"
+    }
+
+    private var copyText: String {
+        var lines = [
+            "Universal I/O Compose context",
+            "",
+            "detected_tool: \(productName ?? "none")",
+            "screen_image: \(includesScreenshot ? "used" : "not_used")",
+            "surrounding_text: \(surroundingTextStatus)",
+            "retention: session_only",
+        ]
+        if let context {
+            lines += [
+                "source: \(context.detectionSource)",
+                "app: \(context.appName)",
+                "bundle_id: \(context.bundleID ?? "none")",
+                "window: \(context.windowTitle ?? "none")",
+                "captured_at: \(context.capturedAt.formatted(.iso8601))",
+                "",
+                "[surrounding_text]",
+                context.conversationExcerpt ?? "none",
+            ]
         }
-        return "参照中：\(source)"
+        return lines.joined(separator: "\n")
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Button {
-                showDetail.toggle()
-            } label: {
-                Label(sourceLabel, systemImage: "paperclip")
-                    .font(.caption)
-                    .lineLimit(1)
-            }
-            .buttonStyle(.plain)
-            .help("参照している情報を確認")
-            .popover(isPresented: $showDetail, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("参照している情報").font(.headline)
-                    if let productName {
-                        detailRow("適用スキル", productName)
-                    }
-                    detailRow("画面画像", includesScreenshot ? "自動返信の生成に使用" : "使用していません")
-                    detailRow("周辺テキスト", "アクセシビリティから取得・使用")
+        PanelInformationPopover(
+            title: "Composeの参照情報",
+            copyText: copyText,
+            note: "参照情報は、このセッションの文案作成とレビューのためだけに使用され、保存されません。"
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let productName {
+                    detailRow("検出ツール", productName)
+                }
+                detailRow("画面", includesScreenshot ? "自動返信の生成に使用" : "使用していません")
+                detailRow("周辺テキスト", surroundingTextStatus)
+                if let context {
                     detailRow("検出元", context.detectionSource)
                     detailRow("保存", "このセッションのみ")
                     if let excerpt = context.conversationExcerpt, !excerpt.isEmpty {
@@ -513,24 +531,18 @@ struct FoundationContextChip: View {
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .frame(width: 380, height: 220)
+                        .frame(width: 420, height: 220)
                     }
-                    Text("周辺テキストは自動返信、レビュー、受信内容の整理にだけ使われ、保存されません。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                 }
-                .padding(12)
-            }
 
-            Button(action: onExclude) {
-                Label("周辺テキストを使わない", systemImage: "xmark.circle.fill")
-                    .font(.caption)
+                if !isContextExcluded, context?.hasConversation == true {
+                    Button(action: onExclude) {
+                        Label("このセッションでは周辺テキストを使わない", systemImage: "xmark.circle")
+                    }
+                    .controlSize(.small)
+                    .help("アクセシビリティから取得した周辺テキストをこのセッションから除外します")
+                }
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("このセッションではアクセシビリティから取得した周辺テキストを使いません")
-            .accessibilityLabel("周辺テキストを使わない")
-            Spacer()
         }
     }
 

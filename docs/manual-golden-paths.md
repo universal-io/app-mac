@@ -168,8 +168,13 @@ R10の合否に使わない。
   順序をtestで固定した（2026-08-01）。
 - [ ] Chrome Gmailで件名＋複数node本文を選び、カードと回答が全文を扱い、件名と選択状態の報告だけで
   終わらない。
-- [ ] 何も選択していない画面（GA4サイドバー項目クリック直後を含む）で、選択カード・選択用prompt・
-  選択への言及が一切現れない（R10.5最重要受け入れ条件）。
+- [x] 何も選択していない画面で、選択カード・選択用prompt・選択への言及が一切現れない
+      （R10.5最重要受け入れ条件。2026-08-01、Apple Development署名のDebug buildで確認）。
+- [x] Chrome Gmailの本文選択でselectionが成立する（`ax_selected_text` / `complete` /
+      structure 4件 / 2 pass / 960ms。2026-08-01）。retry再設計後も取得できている。
+- [ ] VS Codeのエディタ本文（`AXTextArea`）の選択が取得できる。拡張webview
+      （Claude Codeパネル）は公開AXが選択textを出さないため通常Visionとなる（2026-08-01確認済み、
+      R10.5の退行ではない）。エディタでも取れない場合はElectron全般の課題として切り出す。
 - [ ] `AXSelected`な編集可能フィールドからはComposeが開く（R10.5の起動先変更の検証）。
 - [ ] Safari Gmailで公開AX本文が取れない時、選択カード・選択用promptの無い完全な通常Visionになる
       （`visualOnly`はR10.5で撤回。質問すればモデルは画像のハイライトから答えられる）。

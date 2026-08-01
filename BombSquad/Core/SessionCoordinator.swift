@@ -269,12 +269,6 @@ final class SessionCoordinator {
         capture: CaptureCompletion
     ) {
         switch AXFocusLaunchDecision.destination(for: snapshot) {
-        case .focusedVision:
-            handleVisionCaptureCompletion(
-                capture,
-                composeSession: nil,
-                focusTarget: VisionFocusTarget.from(snapshot: snapshot)
-            )
         case .compose:
             visionIdentityTask?.cancel()
             visionIdentityTask = nil
@@ -292,8 +286,7 @@ final class SessionCoordinator {
             handleVisionCaptureCompletion(
                 capture,
                 composeSession: nil,
-                visualSelectionHint: AXFocusLaunchDecision
-                    .shouldLookForVisualSelection(in: snapshot)
+                selection: AXFocusLaunchDecision.selectionExtension(for: snapshot)
             )
         }
     }
@@ -806,8 +799,7 @@ final class SessionCoordinator {
     private func handleVisionCaptureCompletion(
         _ completion: CaptureCompletion,
         composeSession: ComposeSession?,
-        focusTarget: VisionFocusTarget? = nil,
-        visualSelectionHint: Bool = false
+        selection: VisionSelectionContext? = nil
     ) {
         // Any entry into a VisionSession retires the pending compose suggestion.
         suggestionTask?.cancel()
@@ -818,6 +810,7 @@ final class SessionCoordinator {
 
         switch completion {
         case .attachment(let attachment):
+            let resolvedSelection = selection?.resolvingCaptureVisibility(for: attachment)
             let candidateCaptureTask = VisionObservationCaptureService.captureTask(
                 preferredPID: summonTargetApp?.processIdentifier,
                 attachment: attachment
@@ -831,8 +824,7 @@ final class SessionCoordinator {
                 preferredTargetPID: summonTargetApp?.processIdentifier,
                 candidateCaptureTask: candidateCaptureTask,
                 identityTask: identityTask,
-                focusTarget: focusTarget,
-                visualSelectionHint: visualSelectionHint,
+                selection: resolvedSelection,
                 onRequestModeTransition: { [weak self] target, reason in
                     self?.transitionVision(to: target, reason: reason) ?? false
                 },

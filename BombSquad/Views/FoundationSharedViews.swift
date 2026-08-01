@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// One consistent send affordance across every transient panel surface.
@@ -34,6 +35,77 @@ struct ActiveSkillLabel: View {
             .foregroundStyle(.secondary)
             .help(help)
             .accessibilityLabel("適用中のスキル: \(skillName)")
+    }
+}
+
+/// Keeps the detected tool and its supporting information in the same trailing
+/// position across Compose, Vision, and other transient panel surfaces.
+struct PanelToolInfo<PopoverContent: View>: View {
+    let toolName: String?
+    let toolHelp: String
+    let informationHelp: String
+    let informationAccessibilityLabel: String
+    @ViewBuilder let popoverContent: () -> PopoverContent
+
+    @State private var isShowingInformation = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let toolName {
+                ActiveSkillLabel(skillName: toolName, help: toolHelp)
+            }
+
+            Button {
+                isShowingInformation.toggle()
+            } label: {
+                Image(systemName: "info.circle")
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help(informationHelp)
+            .accessibilityLabel(informationAccessibilityLabel)
+            .popover(isPresented: $isShowingInformation, arrowEdge: .bottom) {
+                popoverContent()
+            }
+        }
+    }
+}
+
+/// Shared popover chrome for selectable, optionally copyable panel details.
+struct PanelInformationPopover<Content: View>: View {
+    let title: String
+    let copyText: String?
+    let note: String?
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                if let copyText {
+                    Button {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(copyText, forType: .string)
+                    } label: {
+                        Label("コピー", systemImage: "doc.on.doc")
+                    }
+                    .controlSize(.small)
+                    .help("表示情報をすべてコピー")
+                }
+            }
+
+            if let note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            content()
+        }
+        .padding(14)
     }
 }
 

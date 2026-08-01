@@ -175,14 +175,39 @@ test("legacy and current selected text produce the same internal prompt", () => 
   );
 });
 
-test("an unselected screen mentions no selection anywhere in the request", () => {
+test("without acquired text the model still decides from the image", () => {
+  const intent = resolveVisionIntent(baseInput);
+
+  // Accessibility failing to hand over a string never means the user selected
+  // nothing. Only the model sees the pixels, so only the model can judge.
+  assert.match(intent, /visibly selected/);
+  assert.match(intent, /explain or summarize its content/);
+  assert.match(intent, /initial screen observation/);
+});
+
+test("the model's selection judgement never reaches the user", () => {
+  const intent = resolveVisionIntent(baseInput);
+
+  // The original bug was a screen with nothing selected being told to hunt for
+  // a highlight, which produced "no selection is visible" as an answer.
+  assert.match(intent, /never mention selection, highlighting, their absence/);
+  assert.match(intent, /as if the question had never come up/);
+});
+
+test("acquired text replaces the image judgement rather than joining it", () => {
+  const intent = resolveVisionIntent({ ...baseInput, selection: textSelection });
+
+  // One task per turn: with a real selection there is nothing left to judge.
+  assert.match(intent, /Explain the entire user-selected text first/);
+  assert.doesNotMatch(intent, /visibly selected/);
+  assert.doesNotMatch(intent, /initial screen observation/);
+});
+
+test("an unselected request carries no selection data", () => {
   const prompt = buildVisionPromptText(baseInput);
 
-  // The overwhelmingly common case. Nothing on this side observed a selection,
-  // so nothing may hint at one — otherwise the model reports its absence.
-  assert.doesNotMatch(prompt, /select/i);
-  assert.doesNotMatch(prompt, /highlight/i);
-  assert.match(resolveVisionIntent(baseInput), /initial screen observation/);
+  assert.doesNotMatch(prompt, /User-selected text/);
+  assert.doesNotMatch(prompt, /Supporting selection structure/);
 });
 
 test("kinds that carry no selected text are accepted and ignored", () => {

@@ -77,16 +77,51 @@ struct GatewayVisionClient {
         candidates: [VisionObservation.Candidate] = [],
         candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
         identity: VisionObservationCaptureService.TargetIdentity? = nil,
-        focusTarget: VisionFocusTarget? = nil,
-        visualSelectionHint: Bool = false,
+        selection: VisionSelectionContext? = nil,
         guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> VisionResponse {
         let encoded = try Self.encodedImage(at: attachment.url)
+        let input = Self.requestInput(
+            attachment: attachment,
+            imageBase64: encoded.data.base64EncodedString(),
+            mediaType: encoded.mediaType,
+            question: question,
+            turns: turns,
+            candidates: candidates,
+            candidateDiagnostics: candidateDiagnostics,
+            identity: identity,
+            selection: selection,
+            guidanceContext: guidanceContext
+        )
+
+        let body = GatewayClient.envelope(
+            operation: "vision",
+            input: input,
+            language: language
+        )
+        let data = try await client.postJSON("ai/vision", body: body)
+        return try Self.decode(data, expectedCaptureID: attachment.id)
+    }
+
+    /// Builds the one Vision Core input shape. Keeping this pure lets the C6
+    /// contract test prove that Selection Extension changes only `selection`.
+    static func requestInput(
+        attachment: ScreenshotAttachment,
+        imageBase64: String,
+        mediaType: String,
+        question: String?,
+        turns: [VisionTurn],
+        candidates: [VisionObservation.Candidate] = [],
+        candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
+        identity: VisionObservationCaptureService.TargetIdentity? = nil,
+        selection: VisionSelectionContext? = nil,
+        guidanceContext: ScreenGuidanceContext? = nil
+    ) -> [String: Any] {
         var input: [String: Any] = [
             "capture_id": attachment.id.uuidString,
-            "image_base64": encoded.data.base64EncodedString(),
-            "media_type": encoded.mediaType,
+            "image_base64": imageBase64,
+            "media_type": mediaType,
             "turns": turns.map { ["role": $0.role.rawValue, "text": $0.text] },
             "candidates": candidates.map(\.wirePayload),
         ]
@@ -100,12 +135,9 @@ struct GatewayVisionClient {
         if let identity {
             input["context"] = identity.wirePayload
         }
-        if let focusTarget,
-           let payload = focusTarget.wirePayload(for: attachment) {
-            input["focus_target"] = payload
-        }
-        if visualSelectionHint, focusTarget == nil {
-            input["visual_selection_hint"] = true
+        if let selection,
+           let payload = selection.wirePayload(for: attachment) {
+            input["selection"] = payload
         }
         if let guidanceContext {
             input["guidance"] = guidanceContext.wirePayload
@@ -114,14 +146,7 @@ struct GatewayVisionClient {
            !question.isEmpty {
             input["question"] = question
         }
-
-        let body = GatewayClient.envelope(
-            operation: "vision",
-            input: input,
-            language: language
-        )
-        let data = try await client.postJSON("ai/vision", body: body)
-        return try Self.decode(data, expectedCaptureID: attachment.id)
+        return input
     }
 
     private static func encodedImage(at url: URL) throws -> (data: Data, mediaType: String) {

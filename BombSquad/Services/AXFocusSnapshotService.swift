@@ -17,25 +17,23 @@ struct AXFocusSnapshot: Equatable {
         case invalidatedElement
     }
 
-    let selectedText: String?
+    let selection: VisionSelectionContext?
     let role: String?
     let label: String?
     let frame: CGRect?
     let isEditable: Bool
     let isSecureField: Bool
-    let isElementSelected: Bool
     let status: CaptureStatus
     let collectionPasses: Int
 
     static func unavailable(_ status: CaptureStatus, collectionPasses: Int = 0) -> Self {
         Self(
-            selectedText: nil,
+            selection: nil,
             role: nil,
             label: nil,
             frame: nil,
             isEditable: false,
             isSecureField: false,
-            isElementSelected: false,
             status: status,
             collectionPasses: collectionPasses
         )
@@ -46,49 +44,31 @@ struct AXFocusSnapshot: Equatable {
 /// exhaustively tested and the production summon path observes one focus state.
 enum AXFocusLaunchDecision {
     enum Destination: Equatable {
-        case focusedVision
         case compose
         case vision
     }
 
     static func destination(for snapshot: AXFocusSnapshot) -> Destination {
         guard !snapshot.isSecureField else { return .vision }
-        let hasSelectedText = snapshot.selectedText?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .isEmpty == false
-        if hasSelectedText || isMeaningfulSelectedElement(snapshot) {
-            return .focusedVision
-        }
+        if snapshot.selection != nil { return .vision }
         return snapshot.isEditable ? .compose : .vision
     }
 
-    /// When a non-secure AX read produced no target, Vision may inspect the
-    /// capture for a visible selection highlight. The prompt remains
-    /// best-effort and falls back to ordinary full-screen reading.
-    static func shouldLookForVisualSelection(in snapshot: AXFocusSnapshot) -> Bool {
-        guard destination(for: snapshot) == .vision, !snapshot.isSecureField else {
-            return false
-        }
-        switch snapshot.status {
-        case .permissionDenied, .invalidTarget:
-            return false
-        case .complete, .noFocusedElement, .timedOut, .invalidatedElement:
-            return true
-        }
-    }
-
-    private static func isMeaningfulSelectedElement(_ snapshot: AXFocusSnapshot) -> Bool {
-        guard snapshot.isElementSelected, let role = snapshot.role else { return false }
-        return ![
-            "AXApplication", "AXWindow", "AXSheet", "AXGroup", "AXScrollArea",
-            "AXSplitterGroup", "AXWebArea", "AXUnknown",
-        ].contains(role)
+    /// Adds selection detail to the same Vision destination. Only text the user
+    /// actually selected qualifies. A failed read, a timeout, a focused
+    /// element, and an `AXSelected` current item are not evidence that the user
+    /// chose anything: those summons are ordinary Vision, which is the complete
+    /// surface rather than a degraded one.
+    static func selectionExtension(for snapshot: AXFocusSnapshot) -> VisionSelectionContext? {
+        guard !snapshot.isSecureField else { return nil }
+        return snapshot.selection
     }
 }
 
-/// The bounded-retry rule is also pure. It mirrors the existing Vision identity
-/// collection: cold/growing web trees get another pass, while native trees stop
-/// as soon as their node count stabilizes.
+/// The bounded-retry rule is also pure. Waiting is justified only by a positive
+/// sign that selection evidence can still appear, never by the mere absence of
+/// a selection: the summon blocks on this read, and most summons happen on a
+/// screen where the user selected nothing at all.
 enum AXFocusSnapshotRetryPolicy {
     static func shouldRetry(
         pass: Int,
@@ -97,15 +77,21 @@ enum AXFocusSnapshotRetryPolicy {
         hasSelection: Bool,
         hasFocusedElement: Bool,
         sawWebArea: Bool,
+        hasPartialSelectionEvidence: Bool,
         visitedNodes: Int,
         previousVisitedNodes: Int
     ) -> Bool {
         guard pass < maxPasses, beforeExpiry, !hasSelection else { return false }
-        if !hasFocusedElement {
-            return true
-        }
-        let stillGrowing = Double(visitedNodes) > Double(previousVisitedNodes) * 1.25
-        return sawWebArea || stillGrowing
+        // Focus itself is still missing, so nothing has been observed yet.
+        if !hasFocusedElement { return true }
+        // The tree is still being built, so more of it is about to exist.
+        if Double(visitedNodes) > Double(previousVisitedNodes) * 1.25 { return true }
+        // Fragments are visible but the document-wide selection has not settled.
+        if hasPartialSelectionEvidence { return true }
+        // A web area alone only buys one extra pass for a tree that may still be
+        // cold. A settled page with no sign of a selection stops here instead of
+        // spending the rest of the budget in front of the user.
+        return sawWebArea && pass < 2
     }
 }
 
@@ -123,8 +109,16 @@ enum AXFocusSnapshotService {
         static let perPassDeadline: TimeInterval = 1.0
     }
 
+    static func shouldReadDocumentSelection(
+        sawSecureDescendant: Bool,
+        completedTraversal: Bool
+    ) -> Bool {
+        completedTraversal && !sawSecureDescendant
+    }
+
     private struct Attempt {
         let snapshot: AXFocusSnapshot
+        let selectionCandidates: [VisionSelectionCandidate]
         let hasFocusedElement: Bool
         let sawWebArea: Bool
         let visitedNodes: Int
@@ -164,6 +158,7 @@ enum AXFocusSnapshotService {
         var pass = 0
         var previousVisitedNodes = 0
         var best = AXFocusSnapshot.unavailable(.noFocusedElement)
+        var selectionCandidates: [VisionSelectionCandidate] = []
 
         while pass < Budget.maxPasses, !Task.isCancelled {
             pass += 1
@@ -172,12 +167,15 @@ enum AXFocusSnapshotService {
                 deadline: min(expiry, Date().addingTimeInterval(Budget.perPassDeadline)),
                 pass: pass
             )
+            selectionCandidates.append(contentsOf: attempt.selectionCandidates)
             if snapshotQuality(attempt.snapshot) >= snapshotQuality(best) {
                 best = attempt.snapshot
             }
 
-            let hasSelection = attempt.snapshot.selectedText != nil
-                || attempt.snapshot.isElementSelected
+            let hasSelection = hasAuthoritativeSelection(
+                candidates: attempt.selectionCandidates,
+                sawWebArea: attempt.sawWebArea
+            )
             let retry = AXFocusSnapshotRetryPolicy.shouldRetry(
                 pass: pass,
                 maxPasses: Budget.maxPasses,
@@ -185,6 +183,10 @@ enum AXFocusSnapshotService {
                 hasSelection: hasSelection,
                 hasFocusedElement: attempt.hasFocusedElement,
                 sawWebArea: attempt.sawWebArea,
+                hasPartialSelectionEvidence: hasPartialSelectionEvidence(
+                    candidates: attempt.selectionCandidates,
+                    sawWebArea: attempt.sawWebArea
+                ),
                 visitedNodes: attempt.visitedNodes,
                 previousVisitedNodes: previousVisitedNodes
             )
@@ -194,16 +196,39 @@ enum AXFocusSnapshotService {
         }
 
         return AXFocusSnapshot(
-            selectedText: best.selectedText,
+            selection: VisionSelectionResolver.resolve(candidates: selectionCandidates),
             role: best.role,
             label: best.label,
             frame: best.frame,
             isEditable: best.isEditable,
             isSecureField: best.isSecureField,
-            isElementSelected: best.isElementSelected,
             status: best.status,
             collectionPasses: pass
         )
+    }
+
+    /// A short inner fragment is not authoritative while a web document is
+    /// still loading. Keep using the existing bounded retry window so a later
+    /// pass can expose the document-wide selection. Native controls can settle
+    /// on their direct text immediately.
+    static func hasAuthoritativeSelection(
+        candidates: [VisionSelectionCandidate],
+        sawWebArea: Bool
+    ) -> Bool {
+        if candidates.contains(where: { $0.scope == .document }) { return true }
+        return !sawWebArea && !candidates.isEmpty
+    }
+
+    /// Fragments are visible but the document-wide selection has not appeared.
+    /// This is the only unsettled state where waiting can still change the
+    /// answer, so it is the only one that keeps spending the budget.
+    static func hasPartialSelectionEvidence(
+        candidates: [VisionSelectionCandidate],
+        sawWebArea: Bool
+    ) -> Bool {
+        sawWebArea
+            && !candidates.isEmpty
+            && !candidates.contains { $0.scope == .document }
     }
 
     private static func captureAttempt(
@@ -217,6 +242,7 @@ enum AXFocusSnapshotService {
             let probe = probeTree(appElement: appElement)
             return Attempt(
                 snapshot: .unavailable(status, collectionPasses: pass),
+                selectionCandidates: [],
                 hasFocusedElement: false,
                 sawWebArea: probe.sawWebArea,
                 visitedNodes: probe.visitedNodes
@@ -229,16 +255,16 @@ enum AXFocusSnapshotService {
             // field. Its presence only forces a safe normal-Vision fallback.
             return Attempt(
                 snapshot: AXFocusSnapshot(
-                    selectedText: nil,
+                    selection: nil,
                     role: nil,
                     label: nil,
                     frame: nil,
                     isEditable: false,
                     isSecureField: true,
-                    isElementSelected: false,
                     status: .complete,
                     collectionPasses: pass
                 ),
+                selectionCandidates: [],
                 hasFocusedElement: true,
                 sawWebArea: false,
                 visitedNodes: 1
@@ -248,16 +274,12 @@ enum AXFocusSnapshotService {
         let focusedRole = copyString(focused, kAXRoleAttribute).value
         let focusedLabel = label(for: focused)
         let focusedFrame = copyFrame(focused).value
-        let focusedSelected = copyBool(focused, kAXSelectedAttribute).value ?? false
         let editable = isEditable(focused, role: focusedRole, subrole: focusedSubrole)
 
         var element = focused
         var visited = 0
         var sawWebArea = focusedRole == "AXWebArea"
-        var selectedText: String?
-        var selectionRole: String?
-        var selectionLabel: String?
-        var selectionFrame: CGRect?
+        var selectionCandidates: [VisionSelectionCandidate] = []
         var status: AXFocusSnapshot.CaptureStatus = .complete
 
         while visited < Budget.maxAncestorLevels, Date() < deadline {
@@ -266,16 +288,16 @@ enum AXFocusSnapshotService {
             if subrole == "AXSecureTextField" {
                 return Attempt(
                     snapshot: AXFocusSnapshot(
-                        selectedText: nil,
+                        selection: nil,
                         role: nil,
                         label: nil,
                         frame: nil,
                         isEditable: false,
                         isSecureField: true,
-                        isElementSelected: false,
-                        status: .complete,
+                            status: .complete,
                         collectionPasses: pass
                     ),
+                    selectionCandidates: [],
                     hasFocusedElement: true,
                     sawWebArea: sawWebArea,
                     visitedNodes: visited
@@ -284,21 +306,33 @@ enum AXFocusSnapshotService {
             let role = copyString(element, kAXRoleAttribute).value
             sawWebArea = sawWebArea || role == "AXWebArea"
 
-            let selectedTextRead = copyString(element, kAXSelectedTextAttribute)
-            if selectedTextRead.error == .cannotComplete {
-                status = .timedOut
-                break
-            }
-            if selectedTextRead.error == .invalidUIElement {
-                status = .invalidatedElement
-                break
-            }
-            if let text = normalizedSelectedText(selectedTextRead.value) {
-                selectedText = text
-                selectionRole = role
-                selectionLabel = label(for: element)
-                selectionFrame = selectedTextFrame(element) ?? copyFrame(element).value
-                break
+            // Document text is read only after its descendants have been
+            // checked for secure fields in collectDocumentSelectionCandidates.
+            if role != "AXWebArea" {
+                let selectedTextRead = copyString(element, kAXSelectedTextAttribute)
+                if selectedTextRead.error == .cannotComplete {
+                    status = .timedOut
+                    break
+                }
+                if selectedTextRead.error == .invalidUIElement {
+                    status = .invalidatedElement
+                    break
+                }
+                if let text = normalizedSelectedText(selectedTextRead.value) {
+                    let evidence = selectedTextEvidence(element, directText: text)
+                    selectionCandidates.append(VisionSelectionCandidate(
+                        directText: text,
+                        role: role,
+                        label: label(for: element),
+                        containerFrame: copyFrame(element).value,
+                        selectionFrames: evidence.frame.map { [$0] } ?? [],
+                        scope: visited == 1 ? .focusedElement : .ancestor,
+                        depth: visited - 1,
+                        pass: pass,
+                        rangeEvidence: evidence.rangeEvidence,
+                        isSecure: false
+                    ))
+                }
             }
 
             let parentRead = copyElement(element, kAXParentAttribute)
@@ -312,23 +346,35 @@ enum AXFocusSnapshotService {
             }
             element = parent
         }
-        if Date() >= deadline, selectedText == nil {
+        if !selectionCandidates.contains(where: { $0.scope == .document }),
+           Date() < deadline {
+            let documentResult = collectDocumentSelectionCandidates(
+                appElement: appElement,
+                deadline: deadline,
+                pass: pass,
+                startingDepth: visited
+            )
+            selectionCandidates.append(contentsOf: documentResult.candidates)
+            visited += documentResult.visitedNodes
+            sawWebArea = sawWebArea || documentResult.sawWebArea
+        }
+        if Date() >= deadline, selectionCandidates.isEmpty {
             status = .timedOut
         }
 
         let probe = probeTree(appElement: appElement)
         return Attempt(
             snapshot: AXFocusSnapshot(
-                selectedText: selectedText,
-                role: selectionRole ?? focusedRole,
-                label: selectionLabel ?? focusedLabel,
-                frame: selectionFrame ?? focusedFrame,
+                selection: VisionSelectionResolver.resolve(candidates: selectionCandidates),
+                role: focusedRole,
+                label: focusedLabel,
+                frame: focusedFrame,
                 isEditable: editable,
                 isSecureField: false,
-                isElementSelected: focusedSelected,
                 status: status,
                 collectionPasses: pass
             ),
+            selectionCandidates: selectionCandidates,
             hasFocusedElement: true,
             sawWebArea: sawWebArea || probe.sawWebArea,
             visitedNodes: max(visited, probe.visitedNodes)
@@ -343,7 +389,7 @@ enum AXFocusSnapshotService {
     }
 
     private static func snapshotQuality(_ snapshot: AXFocusSnapshot) -> Int {
-        if snapshot.selectedText != nil { return 4 }
+        if snapshot.selection?.kind == .text { return 4 }
         if snapshot.isSecureField { return 3 }
         if snapshot.role != nil { return 2 }
         return snapshot.status == .noFocusedElement ? 0 : 1
@@ -397,34 +443,130 @@ enum AXFocusSnapshotService {
         return value.map { CFGetTypeID($0) == CFStringGetTypeID() } ?? false
     }
 
-    private static func selectedTextFrame(_ element: AXUIElement) -> CGRect? {
+    private struct SelectedTextEvidence {
+        let rangeEvidence: VisionSelectionCandidate.RangeEvidence
+        let frame: CGRect?
+    }
+
+    private struct DocumentSelectionResult {
+        let candidates: [VisionSelectionCandidate]
+        let visitedNodes: Int
+        let sawWebArea: Bool
+    }
+
+    private static func collectDocumentSelectionCandidates(
+        appElement: AXUIElement,
+        deadline: Date,
+        pass: Int,
+        startingDepth: Int
+    ) -> DocumentSelectionResult {
+        guard let window = copyElement(appElement, kAXFocusedWindowAttribute).value else {
+            return DocumentSelectionResult(candidates: [], visitedNodes: 0, sawWebArea: false)
+        }
+        var documentElements: [(element: AXUIElement, depth: Int)] = []
+        var stack: [AXUIElement] = [window]
+        var visited = 0
+        var sawWebArea = false
+        var sawSecureDescendant = false
+        while let element = stack.popLast(), visited < 256, Date() < deadline {
+            visited += 1
+            let subrole = copyString(element, kAXSubroleAttribute).value
+            if subrole == "AXSecureTextField" {
+                sawSecureDescendant = true
+                continue
+            }
+            let role = copyString(element, kAXRoleAttribute).value
+            if role == "AXWebArea" {
+                sawWebArea = true
+                documentElements.append((element, startingDepth + visited))
+            }
+            if let children = copyChildren(element) {
+                stack.append(contentsOf: children.reversed())
+            }
+        }
+        var candidates: [VisionSelectionCandidate] = []
+        let completedTraversal = stack.isEmpty && Date() < deadline
+        if shouldReadDocumentSelection(
+            sawSecureDescendant: sawSecureDescendant,
+            completedTraversal: completedTraversal
+        ) {
+            for document in documentElements where Date() < deadline {
+                let selectedTextRead = copyString(document.element, kAXSelectedTextAttribute)
+                if let text = normalizedSelectedText(selectedTextRead.value) {
+                    let evidence = selectedTextEvidence(document.element, directText: text)
+                    candidates.append(VisionSelectionCandidate(
+                        directText: text,
+                        role: "AXWebArea",
+                        label: label(for: document.element),
+                        containerFrame: copyFrame(document.element).value,
+                        selectionFrames: evidence.frame.map { [$0] } ?? [],
+                        scope: .document,
+                        depth: document.depth,
+                        pass: pass,
+                        rangeEvidence: evidence.rangeEvidence,
+                        isSecure: false
+                    ))
+                }
+            }
+        }
+        return DocumentSelectionResult(
+            candidates: candidates,
+            visitedNodes: visited,
+            sawWebArea: sawWebArea
+        )
+    }
+
+    private static func selectedTextEvidence(
+        _ element: AXUIElement,
+        directText: String
+    ) -> SelectedTextEvidence {
         let rangeRead = copyValue(element, kAXSelectedTextRangeAttribute)
         guard let rangeValue = rangeRead.value,
               CFGetTypeID(rangeValue) == AXValueGetTypeID() else {
-            return nil
+            return SelectedTextEvidence(rangeEvidence: .unavailable, frame: nil)
         }
         var range = CFRange()
         guard AXValueGetValue(rangeValue as! AXValue, .cfRange, &range), range.length > 0 else {
-            return nil
+            return SelectedTextEvidence(rangeEvidence: .unavailable, frame: nil)
+        }
+
+        var rangeStringValue: CFTypeRef?
+        let rangeStringError = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXStringForRangeParameterizedAttribute as CFString,
+            rangeValue,
+            &rangeStringValue
+        )
+        let rangeString = rangeStringError == .success
+            ? normalizedSelectedText(rangeStringValue as? String)
+            : nil
+        let rangeEvidence: VisionSelectionCandidate.RangeEvidence
+        if let rangeString {
+            rangeEvidence = rangeString == directText ? .matching : .mismatching
+        } else {
+            rangeEvidence = .unavailable
         }
 
         var boundsValue: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(
+        let boundsError = AXUIElementCopyParameterizedAttributeValue(
             element,
             kAXBoundsForRangeParameterizedAttribute as CFString,
             rangeValue,
             &boundsValue
-        ) == .success,
-        let boundsValue,
-        CFGetTypeID(boundsValue) == AXValueGetTypeID() else {
-            return nil
-        }
+        )
         var bounds = CGRect.zero
-        guard AXValueGetValue(boundsValue as! AXValue, .cgRect, &bounds),
-              bounds.width > 0, bounds.height > 0 else {
-            return nil
+        let frame: CGRect?
+        if boundsError == .success,
+           let boundsValue,
+           CFGetTypeID(boundsValue) == AXValueGetTypeID(),
+           AXValueGetValue(boundsValue as! AXValue, .cgRect, &bounds),
+           bounds.width > 0,
+           bounds.height > 0 {
+            frame = bounds
+        } else {
+            frame = nil
         }
-        return bounds
+        return SelectedTextEvidence(rangeEvidence: rangeEvidence, frame: frame)
     }
 
     private struct Read<Value> {
@@ -451,17 +593,6 @@ enum AXFocusSnapshotService {
         return Read(value: read.value as? String, error: read.error)
     }
 
-    private static func copyBool(_ element: AXUIElement, _ attribute: String) -> Read<Bool> {
-        let read = copyValue(element, attribute)
-        if let value = read.value as? Bool {
-            return Read(value: value, error: read.error)
-        }
-        if let value = read.value as? NSNumber {
-            return Read(value: value.boolValue, error: read.error)
-        }
-        return Read(value: nil, error: read.error)
-    }
-
     private static func copyFrame(_ element: AXUIElement) -> Read<CGRect> {
         let positionRead = copyValue(element, kAXPositionAttribute)
         let sizeRead = copyValue(element, kAXSizeAttribute)
@@ -479,5 +610,14 @@ enum AXFocusSnapshotService {
             return Read(value: nil, error: .failure)
         }
         return Read(value: CGRect(origin: position, size: size), error: .success)
+    }
+
+    private static func copyChildren(_ element: AXUIElement) -> [AXUIElement]? {
+        let read = copyValue(element, kAXChildrenAttribute)
+        guard let array = read.value as? [AnyObject] else { return nil }
+        return array.compactMap { child in
+            guard CFGetTypeID(child) == AXUIElementGetTypeID() else { return nil }
+            return (child as! AXUIElement)
+        }
     }
 }
