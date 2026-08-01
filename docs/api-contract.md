@@ -15,6 +15,12 @@ macOS候補版より先に配備した。旧`focus_target`／`visual_selection_h
 `v0.2.1`クライアントも引き続き動作する。配備前検証ではGateway 14件、lint、TypeScript、production
 buildと、通常requestから`selection`だけが増えるmacOS request比較が成功した。
 
+同日のC6実機テストで、選択していない画面にも選択用promptが常に付く不具合を確認した（R10.5）。
+selectionは積極的に取得できた選択テキストからのみ成立し、`visual_only`／`accessibility_element`／
+`visual_selection_hint`はGatewayが**受理した上で無視**する（400にはしない — validationは正規化より
+先に走るため、拒否すると現行クライアントのVisionセッションごと失敗する）。詳細は
+[vision-selection-evidence-fix.md](vision-selection-evidence-fix.md)を正とする。
+
 ## 共通
 
 - Base URL: `https://api.universal-io.com/api`
@@ -126,8 +132,12 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
   `ax_selected_text` / `ax_element` / `user_region`。`text`は最大12,000文字、`role`は128文字、
   `label`は512文字で、禁止制御文字を含めない。`frame`はAXグローバル座標ではなくcapture左上を
   原点とするピクセル座標で、capture外は切り詰める。`truncated`でtext切り詰めを明示する。
-- `input.visual_selection_hint`: 公開済み`v0.2.1`向けの後方互換入力。AXで対象を確定できないが画像上に選択ハイライトが
-  あり得る場合だけtrueとし、`focus_target`とは排他。画像から特定できなければ通常Visionへ退化する。
+  R10.5以降、Gatewayがselectionへ正規化するのは`selected_text`だけで、`accessibility_element` /
+  `region`は**200で受理した上で無視**し、通常Visionとして扱う（`AXSelected`は「現在表示中の項目」で
+  あり選択意図の証拠にならないため。判定記録はvision-selection-evidence-fix.md §7-1）。
+- `input.visual_selection_hint`: 公開済み`v0.2.1`向けの後方互換入力。boolean受理は恒久維持するが、
+  R10.5以降Gatewayは**受理した上で無視**し、通常Visionとして扱う（画像上のハイライト有無を
+  クライアントは観測できず、この値は常に推測だったため）。`focus_target`とは排他。
 - `input.context`: 任意（`app_name` / `bundle_id` / `window_title` / `host`、各1,024文字まで）。
   Skill判定と画面の出所提示のためだけの参照データで保存しない。判定規則はsuggestと同じで、
   `host`が一次シグナル、ネイティブアプリは`bundle_id`。`candidate_diagnostics`には
@@ -183,8 +193,11 @@ Selection Extension取得済み情報のために追加walkしない。
 12,000 UTF-16 unitsで、上限超過時は省略量markerを中央へ置き、marker分を除いたbudgetを頭尾へ
 半分ずつ割り当てる。grapheme clusterを途中で壊さない。`acquisition_completeness`はローカル取得状態、
 `wire_truncated`は送信削減なので直交し、`complete`と`wire_truncated: true`は両立する。
-`kind: text`かつ`acquisition_completeness != visualOnly`では非空`text`を必須とし、structures、frames、
-labelだけでtext selectionを代用しない。
+`kind`の有効値は`text`のみで、非空`text`を必須とし、structures、frames、
+labelだけでtext selectionを代用しない。旧enum値`visual_only` / `accessibility_element`は
+wire互換のため当面validationを通すが、Gatewayは正規化で捨てて通常Visionとして扱い、
+正規化前のraw wire種別だけをusageへ記録して移行完了を観測してからenumを撤去する
+（vision-selection-evidence-fix.md §5-2／§5-5）。
 segment fallbackはC1で必要性が確認されなかったため、R10契約へ追加しない。frameは複数を保持し、
 `capture_visibility`が`off_capture` / `unknown`なら画像上にselectionが見えると指示しない。
 

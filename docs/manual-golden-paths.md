@@ -40,8 +40,10 @@ R9 A7は自動検証とユーザーによる署名付き機能確認を完了し
 
 ## Vision / Copilot
 
-- [ ] 他アプリで文章または意味のある要素を選択して右Shift 2回すると、同じVisionパネルに
+- [ ] 他アプリで文章を選択して右Shift 2回すると、同じVisionパネルに
   対象カード、capture上の枠、対象を優先した初期説明が表示される。
+- [ ] 何も選択せずに右Shift 2回すると、選択カード、選択用prompt、選択の不在・不確実性への言及が
+  一切現れない（R10.5最重要。GA4等のサイドバー項目をクリックした直後の画面で必ず確認する）。
 - [ ] 編集可能欄に選択が無い時はCompose、それ以外は通常Visionへ進む。
 - [ ] AXで選択を取得できない時も合成⌘Cへfallbackせず、通常VisionまたはComposeへ退化する。
 - [ ] 右Shift起動前後で標準clipboardのchangeCountと全flavorが変化しない。
@@ -166,7 +168,11 @@ R10の合否に使わない。
   順序をtestで固定した（2026-08-01）。
 - [ ] Chrome Gmailで件名＋複数node本文を選び、カードと回答が全文を扱い、件名と選択状態の報告だけで
   終わらない。
-- [ ] Safari Gmailで公開AX本文が取れない時、同じVisionが`visualOnly`へ安全に退化する。
+- [ ] 何も選択していない画面（GA4サイドバー項目クリック直後を含む）で、選択カード・選択用prompt・
+  選択への言及が一切現れない（R10.5最重要受け入れ条件）。
+- [ ] `AXSelected`な編集可能フィールドからはComposeが開く（R10.5の起動先変更の検証）。
+- [ ] Safari Gmailで公開AX本文が取れない時、選択カード・選択用promptの無い完全な通常Visionになる
+      （`visualOnly`はR10.5で撤回。質問すればモデルは画像のハイライトから答えられる）。
 - [ ] TextEdit、Apple Mail、Chrome Slack、Electron SlackまたはVS Codeで、単一／複数node、
   編集欄、順方向／逆方向、viewport内／画面外の選択取得または安全な退化を確認する。
 - [ ] VoiceOver、Full Keyboard Access、Increase Contrast、Reduce Transparency、Reduce Motionで
@@ -177,3 +183,5 @@ R10の合否に使わない。
   Copilotの前後でchangeCountと全flavorが変わらないことを確認する。
 - [ ] 同一端末・同一対象の`v0.2.1`と候補版で右ShiftからGateway dispatchまでを計測し、warm時
   p50 +50ms以内、p95 +150ms以内を確認する。cold Chromiumは既存2秒deadlineを超えない。
+  計測対象に**選択なしブラウザ画面**（最頻の利用場面。retry再設計の効果確認）と
+  複数node Gmail選択の両方を含める（R10.5）。
