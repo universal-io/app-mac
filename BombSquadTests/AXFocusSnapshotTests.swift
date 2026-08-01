@@ -277,22 +277,32 @@ final class AXFocusSnapshotTests: XCTestCase {
 
     func testSecureDescendantPreventsDocumentSelectionRead() {
         XCTAssertFalse(
-            AXFocusSnapshotService.shouldReadDocumentSelection(
-                sawSecureDescendant: true,
-                completedTraversal: true
-            )
+            AXFocusSnapshotService.shouldReadDocumentSelection(sawSecureDescendant: true)
         )
         XCTAssertTrue(
-            AXFocusSnapshotService.shouldReadDocumentSelection(
-                sawSecureDescendant: false,
-                completedTraversal: true
-            )
+            AXFocusSnapshotService.shouldReadDocumentSelection(sawSecureDescendant: false)
         )
-        XCTAssertFalse(
-            AXFocusSnapshotService.shouldReadDocumentSelection(
-                sawSecureDescendant: false,
-                completedTraversal: false
-            )
+    }
+
+    /// Chrome makes the document itself the focused element and exposes the
+    /// selection there. Treating a web area as an ordinary ancestor — or
+    /// skipping it — threw away a selection AX had already handed over.
+    func testWebAreaIsAlwaysDocumentScopeWhereverItAppears() {
+        XCTAssertEqual(
+            AXFocusSnapshotService.selectionScope(role: "AXWebArea", isFocusedElement: true),
+            .document
+        )
+        XCTAssertEqual(
+            AXFocusSnapshotService.selectionScope(role: "AXWebArea", isFocusedElement: false),
+            .document
+        )
+        XCTAssertEqual(
+            AXFocusSnapshotService.selectionScope(role: "AXTextArea", isFocusedElement: true),
+            .focusedElement
+        )
+        XCTAssertEqual(
+            AXFocusSnapshotService.selectionScope(role: "AXGroup", isFocusedElement: false),
+            .ancestor
         )
     }
 

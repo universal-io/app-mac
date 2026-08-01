@@ -175,8 +175,15 @@ R10の合否に使わない。
 - [x] VS Codeの拡張webview（Claude Codeパネル）で文章を選択して右Shift×2すると、選択した内容
       そのものが回答対象になる（2026-08-01。AXは文字列を返さないが、モデルが画像上の選択を
       主対象として読む経路で成立）。
-- [ ] AXが選択文字列を返す画面（Chrome Gmail等）で、prompt変更後も従来どおり全文が扱われる
-      回帰確認。`selection` wireがある時は画像判定を行わず、mode命令が1つのままであること。
+- [x] AXが選択文字列を返す画面（Chrome Gmail）で`selection`が成立する。2026-08-01の実機で
+      `acquisition: ax_document_selection` / `acquisition_completeness: complete`を確認した。
+      修正前は同じ画面が`status: none`で、AXは選択を返していたのに祖先walkのweb areaスキップと
+      document走査の完走必須条件で捨てていた。
+      なお`frame_count: 0`はC1で実測済みのChrome公開boundsの0サイズ問題で、選択位置の枠は出ない
+      （カードには全文が出る）。
+- [ ] VS Codeの拡張webviewで、再ビルド後にAX経由の取得へ変わるか（画像判定でも回答は成立するが、
+      AXが取れれば画面外・スクロール外の全文まで扱える）。
+- [ ] 何も選択していない画面での再発チェック（クライアント修正後）。
 - [ ] 画像判定の限界の確認：画面外へ続く長い選択、スクロールで隠れた部分、極小文字、低コントラスト
       選択色。ここはAX／DOM取得が優れる領域で、§4-cのAX探索改善の価値を測る材料になる。
 - [ ] `AXSelected`な編集可能フィールドからはComposeが開く（R10.5の起動先変更の検証）。

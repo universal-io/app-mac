@@ -1052,6 +1052,12 @@ R10.5実機確認（2026-08-01、Apple Development署名のDebug build）:
   探索側の死角（focused element欠落時にdocument探索をしない、256要素上限と完走必須条件）と、
   AX挙動の不安定さである。詳細は
   [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md) §4-c。
+- **その後の実測で、AX取得の失敗そのものが自前の探索条件によるものだと判明した。** Chrome Gmailの
+  実機診断も`[selection] status: none`で、AXは選択を返しているのに製品が捨てていた。祖先walkが
+  `AXWebArea`をスキップし（Chromeはdocument自身をfocused elementにする）、それを拾うはずの
+  document走査は「window全体を256要素以内で走査完了」を要求して決して成立しなかった。修正後は
+  同じ画面で1ms・227 unitsを取得し、document走査もスキップされる。詳細は
+  [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md) §4-c。
 - **より本質的な誤りは、AX取得の失敗をユーザー意図の不在として扱ったことである。** 選択内容は
   回答対象を決めるsemantic authorityであり、AXはそれを運ぶacquisition channelの一つにすぎない。
   R10.5当初の「AXが返したtextだけがselection」という不変条件はこの2つを混同していた。同日、
