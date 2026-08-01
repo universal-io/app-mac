@@ -209,11 +209,21 @@ retry規則は下記のとおり再設計した。macOS 40件、署名なしDebu
 
 ### 5. 移行完了を計測してから wire を撤去
 
-「移行期間」は推測せず観測する。§5-2で追加したraw wire種別の記録で、`visual_only`／新wire
+「移行期間」は推測せず観測する。§5-2で追加した`selection_wire_kind`の記録で、`visual_only`／新wire
 `accessibility_element`の受信がゼロで安定したことを確認してから、wire validationのenumと型を
-別コミットで削除する。§9のデータモデル収縮（`kind`定数化、`acquisitionCompleteness`定数化、
-`captureVisibility`のframes導出化）もこの撤去コミットに同梱し、ブロッカー修正のdiffを
-不変条件の貫徹だけに保つ。
+別コミットで削除する。
+
+このコミットへ回した残りの収縮（ブロッカー修正のdiffを不変条件の貫徹だけに保つため）:
+
+- **Gateway内部型の非対称の解消。** `kind`はmacOS／Gatewayとも`text`単一へ収縮したが、Gatewayの
+  `VisionSelection`は`acquisitionCompleteness`に`visual_only`、`acquisition`に`ax_element`／
+  `visual_highlight`をwire由来のまま残している。macOS側は2値／2値へ収縮済みなので、wire撤去と
+  同時に揃える。現行では実害が無い（wire validationが`kind: text`と`completeness: visual_only`の
+  同居を拒否し、公開・現行クライアントとも矛盾する`acquisition`を送らない）が、`text`があるのに
+  「画像から取得した」と申告するwireを内部型が表現できてしまう状態は残っている。
+- `acquisition`の2値化（document / element-local）とモデルへの寄与の検証。
+- `captureVisibility`は`frames`とcapture矩形から導出できる冗長fieldなので導出へ寄せる。
+- `kind`フィールド自体の削除（定数を送る意味が無い）。
 
 `visual_selection_hint`と`focus_target`はこの対象外で、受理を**恒久的に**維持する
 （`v0.2.1`ユーザーは更新しないため）。段階撤去が必要なのは厳密なenumに入っている
