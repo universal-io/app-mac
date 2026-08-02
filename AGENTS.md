@@ -1,5 +1,30 @@
 # Agent Rules (app-mac)
 
+## 隣にもう1つリポジトリがある（毎セッション必読）
+
+`/Users/kaya.matsumoto/projects/universal-io/` の下に**独立した2つのgitリポジトリ**がある。
+
+| パス | 中身 | `main` へのpushが意味すること |
+|---|---|---|
+| `app-mac` | macOSアプリ ＋ Gateway（`web/`） | `api.universal-io.com` の本番デプロイ |
+| `web-product` | 製品サイト（別リポジトリ） | `universal-io.com` の本番デプロイ |
+
+**エージェントのシェルは作業ごとに `app-mac` へ戻る。** `cd` した直後でも、次の
+コマンドでは `app-mac` にいる。したがって裸の `git add -A && git commit` は、
+どこで作業していたつもりでも `app-mac` にコミットされる。
+
+実際に2026-08-02〜03のセッションで、`web-product` 向けのコミットが2回
+`app-mac` に入り、そのたびに `README.md` の無関係な変更が別物のコミットメッセージで
+記録された（どちらも `git reset --soft` で取り消し済み）。
+
+規則:
+
+- **gitは必ず `git -C <絶対パス>` を使う。** `cd` してから裸の `git` を打たない。
+- npmも同様に `npm --prefix <絶対パス>`、またはそのコマンド内で `cd` を完結させる。
+- コミット前に `git -C <パス> status --short` で、想定したファイルだけが載っているか確認する。
+- 取り違えに気づいたら `git -C <誤ったパス> reset --soft HEAD~1` で戻し、
+  巻き込んだファイルを `restore --staged` してから正しいリポジトリへ入れ直す。
+
 ## Session Start Protocol（必読・毎セッション）
 
 1. コードやドキュメントに触る前に **[docs/README.md](docs/README.md)（ドキュメント索引）を読む**。
