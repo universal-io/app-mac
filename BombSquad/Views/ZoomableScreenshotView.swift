@@ -8,10 +8,16 @@ import SwiftUI
 /// origin); the view only converts to screen points at draw time, so
 /// annotations and highlights stay glued to the pixels they mark at any zoom.
 struct ZoomableScreenshotView: View {
-    /// The screenshot file. Loaded once per URL — the URL (not the NSImage
-    /// instance) is the image's identity, so parent re-renders never reset
-    /// the viewport mid-interaction or mid-highlight.
-    let url: URL
+    /// The already-resolved screenshot. This view renders pixels; it does not
+    /// fetch them. Reading the file from `.onAppear` made the panel's contents
+    /// depend on an appearance callback, and on 2026-08-03 that callback did
+    /// not arrive: the panel opened with no image and no explanation
+    /// (docs/reliability-hardening-plan.md D3).
+    let image: NSImage?
+    /// Identity of the capture being shown — `nil` while none is resolved.
+    /// Viewport state resets when this changes, never when the parent merely
+    /// re-renders, so a zoom survives mid-interaction and mid-highlight.
+    let imageID: UUID?
     let tool: ScreenshotPreviewTool
     let annotationTint: ScreenshotAnnotation.Tint
     @Binding var annotations: [ScreenshotAnnotation]
@@ -30,7 +36,6 @@ struct ZoomableScreenshotView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
-    @State private var image: NSImage?
     /// Committed zoom relative to aspect-fit (1 = whole image visible).
     @State private var zoom: CGFloat = 1
     /// Live pinch factor, applied on top of `zoom` during the gesture.
@@ -84,11 +89,7 @@ struct ZoomableScreenshotView: View {
                     zoomTo(box, in: container)
                 }
             }
-            .onAppear { loadImage() }
-            .onChange(of: url) { _, _ in
-                loadImage()
-                resetViewport()
-            }
+            .onChange(of: imageID) { _, _ in resetViewport() }
         }
         .accessibilityLabel("スクリーンショットプレビュー")
         .accessibilityValue(
@@ -105,10 +106,6 @@ struct ZoomableScreenshotView: View {
             parts.append("\(highlightLabel ?? "案内位置")を枠で表示")
         }
         return parts.isEmpty ? "ハイライトなし" : parts.joined(separator: "、")
-    }
-
-    private func loadImage() {
-        image = NSImage(contentsOf: url)
     }
 
     // MARK: - Geometry

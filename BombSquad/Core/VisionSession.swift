@@ -14,6 +14,20 @@ enum CopilotState: Equatable {
     case stepLimit
 }
 
+/// Where the panel's screenshot stands. Three states rather than an optional,
+/// because "not yet" and "never" must look different to the user: an empty box
+/// with no explanation is the symptom this project exists to remove.
+enum ScreenshotImageState {
+    case loading
+    case ready(NSImage)
+    case failed
+
+    var image: NSImage? {
+        if case .ready(let image) = self { return image }
+        return nil
+    }
+}
+
 struct VisionDisplayTurn: Identifiable, Equatable {
     let id = UUID()
     let role: VisionTurn.Role
@@ -25,6 +39,10 @@ struct VisionDisplayTurn: Identifiable, Equatable {
 @MainActor
 final class VisionSession: ObservableObject {
     @Published private(set) var attachment: ScreenshotAttachment
+    /// The screenshot as pixels, resolved by this session rather than by the
+    /// view that draws it. `.failed` is a state the panel can explain; an image
+    /// that silently never arrives is not (docs/reliability-hardening-plan.md D3).
+    @Published private(set) var screenshotImage: ScreenshotImageState = .loading
     @Published private(set) var turns: [VisionDisplayTurn] = []
     @Published private(set) var isLoading = false
     @Published private(set) var metadata: VisionMetadata?
@@ -70,6 +88,7 @@ final class VisionSession: ObservableObject {
     private var copilotClickMonitor: Any?
     private var copilotStepCount = 0
     private var hasStarted = false
+    private var screenshotImageTask: Task<Void, Never>?
 
     init(
         attachment: ScreenshotAttachment,
@@ -106,6 +125,30 @@ final class VisionSession: ObservableObject {
         self.outputLanguage = AppSettings.outputLanguage()
         self.onRequestModeTransition = onRequestModeTransition
         self.onRequestPanelClose = onRequestPanelClose
+        // Starts here, in the coordinator-owned initializer, so the decode
+        // overlaps the transition and the panel setup instead of waiting for
+        // the view to appear and then blocking the main thread on a 2560x1600
+        // PNG.
+        resolveScreenshotImage()
+    }
+
+    /// Reads the capture into memory. The only trigger is this session's own
+    /// lifecycle: creation, and adopting a new capture during copilot.
+    private func resolveScreenshotImage() {
+        let expected = attachment.id
+        let url = attachment.url
+        screenshotImageTask?.cancel()
+        screenshotImage = .loading
+        screenshotImageTask = Task { [weak self] in
+            let image = await Task.detached(priority: .userInitiated) {
+                NSImage(contentsOf: url)
+            }.value
+            guard let self, !Task.isCancelled, self.attachment.id == expected else { return }
+            self.screenshotImage = image.map { .ready($0) } ?? .failed
+            if image == nil {
+                Diagnostics.record("vision.screenshotUnreadable")
+            }
+        }
     }
 
     var canSend: Bool {
@@ -225,6 +268,8 @@ final class VisionSession: ObservableObject {
         requestTask = nil
         copilotProgressTask?.cancel()
         copilotProgressTask = nil
+        screenshotImageTask?.cancel()
+        screenshotImageTask = nil
         removeCopilotClickMonitor()
         HighlightOverlayPresenter.shared.hide()
         try? FileManager.default.removeItem(at: attachment.url)
@@ -499,6 +544,7 @@ final class VisionSession: ObservableObject {
                 }
             }
             attachment = newAttachment
+            resolveScreenshotImage()
             candidates = snapshot.axCandidates
             candidateDiagnostics = snapshot.diagnostics
             candidatesReady = true
@@ -535,6 +581,7 @@ final class VisionSession: ObservableObject {
         } catch {
             if attachment.id == newAttachment.id {
                 attachment = previousAttachment
+                resolveScreenshotImage()
                 candidates = previousCandidates
                 candidateDiagnostics = previousDiagnostics
             }

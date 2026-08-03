@@ -96,7 +96,8 @@ struct VisionSessionView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.quaternary.opacity(0.25))
                 ZoomableScreenshotView(
-                    url: session.attachment.url,
+                    image: session.screenshotImage.image,
+                    imageID: session.screenshotImage.image == nil ? nil : session.attachment.id,
                     tool: .pan,
                     annotationTint: .red,
                     annotations: $annotations,
@@ -106,6 +107,18 @@ struct VisionSessionView: View {
                     selectionHighlights: selectionPresentation?.visibleFrames ?? []
                 )
                 .padding(4)
+                // An empty frame is what the user saw on 2026-08-03 and it told
+                // them nothing. Say which of the two it is.
+                if case .failed = session.screenshotImage {
+                    Text("画面画像を読み込めませんでした。回答は画面の内容をもとに続けています。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                        .multilineTextAlignment(.center)
+                } else if session.screenshotImage.image == nil {
+                    ProgressView()
+                        .controlSize(.small)
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
