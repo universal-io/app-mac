@@ -21,6 +21,7 @@
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
 | [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9、Selection Extension改修（R10）、将来のAX直接入力研究の正本 |
 | [reliability-hardening-plan.md](reliability-hardening-plan.md) | 起動確実性と公開品質（R11）。長時間稼働での無音停止の原因分析と技術的負債の棚卸し |
+| [guidance-accuracy-plan.md](guidance-accuracy-plan.md) | 案内の正確さ（R12）。動いているのに内容が誤る欠陥の原因分析とマイルストーン |
 
 ## 参照資料
 
