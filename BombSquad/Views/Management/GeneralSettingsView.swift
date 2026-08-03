@@ -1,6 +1,9 @@
+import AppKit
 import SwiftUI
 
 struct GeneralSettingsView: View {
+    @State private var recentEntries: [DiagnosticEntry] = []
+    @State private var didCopyDiagnostics = false
     @AppStorage(AppSettings.isHistoryEnabledKey) private var isHistoryEnabled = true
     @AppStorage(AppSettings.isContextCaptureEnabledKey) private var isContextCaptureEnabled = true
     @AppStorage(AppSettings.isProactiveSuggestEnabledKey) private var isProactiveSuggestEnabled = true
@@ -53,9 +56,69 @@ struct GeneralSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            diagnosticsSection
         }
         .formStyle(.grouped)
         .navigationTitle("設定")
+    }
+
+    /// The動作記録 the user can hand over when something stalls.
+    ///
+    /// A device log the user cannot reach is a log only we can read, and asking
+    /// a customer for a sysdiagnose is not a support flow. The same entries are
+    /// therefore shown here and copied with one button. They are displayed, not
+    /// just copied, because sending something you cannot read is not consent.
+    private var diagnosticsSection: some View {
+        Section("動作記録") {
+            Text("操作の開始・送信・完了・失敗を、経過時間と結果コードだけで記録します。入力内容、AIの回答、画面画像、ウインドウのタイトル、開いているサイト名は含みません。うまく動かない時にこの記録を送っていただけると原因が特定できます。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if recentEntries.isEmpty {
+                Text("まだ記録がありません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    Text(recentEntries.map(\.line).joined(separator: "\n"))
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: 140)
+            }
+
+            HStack {
+                Button("動作記録をコピー") { copyDiagnostics() }
+                if didCopyDiagnostics {
+                    Text("コピーしました")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .transition(.opacity)
+                }
+                Spacer()
+                Button("更新") { refreshDiagnostics() }
+                    .buttonStyle(.borderless)
+            }
+        }
+        .onAppear(perform: refreshDiagnostics)
+    }
+
+    private func refreshDiagnostics() {
+        recentEntries = Diagnostics.recent(40)
+    }
+
+    private func copyDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(Diagnostics.exportText(), forType: .string)
+        refreshDiagnostics()
+        withAnimation { didCopyDiagnostics = true }
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation { didCopyDiagnostics = false }
+        }
     }
 
     @ViewBuilder

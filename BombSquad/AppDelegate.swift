@@ -13,7 +13,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let recorder = AudioRecorder()
     private var coreCoordinator: SessionCoordinator?
 
-    private func trace(_ name: String, details: [String: CustomStringConvertible?] = [:]) {
+    private func trace(
+        _ name: StaticString,
+        details: [(StaticString, DiagnosticValue)] = []
+    ) {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in
                 self?.trace(name, details: details)
@@ -21,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         MainActor.assumeIsolated {
-            CoreTrace.event(
+            Diagnostics.record(
                 name,
                 mode: coreCoordinator?.stateMachine.mode ?? .idle,
                 details: details
@@ -120,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Browser and Mail are part of the login flow. Keep the visible auth
         // gate alive until their callback returns to this app.
         guard authClient.currentSession() != nil else {
-            trace("app.resignActive.skip", details: ["reason": "auth"])
+            trace("app.resignActive.skip", details: [("reason", .literal("auth"))])
             return
         }
 

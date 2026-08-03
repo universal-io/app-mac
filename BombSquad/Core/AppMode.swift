@@ -75,6 +75,31 @@ enum AppMode: Equatable, CustomStringConvertible {
     }
 }
 
+/// Why a transition was attempted.
+///
+/// A closed vocabulary rather than a free string, because every one of these
+/// reaches the device log and the diagnostics trail the user can copy out.
+/// A `String` here would make it possible to log something read off the screen.
+enum TransitionReason: String {
+    case captureCancelled
+    case captureCompleted
+    case captureFailed
+    case captureTransitionFailed
+    case closeRequested
+    case composeDeploy
+    case composePreCaptureVision
+    case copilotStarted
+    case doubleTapDuringCapture
+    case doubleTapOnVision
+    case emptyComposeCapture
+    case idleAXFocusSummon
+    case menuPanelToggle
+    case resignActive
+    case summon
+    case visionGuideReady
+    case visionRequestedClose
+}
+
 /// Owns the current `AppMode` and enforces the transition table.
 /// All mutations go through `transition(to:reason:)` — there is deliberately
 /// no other setter, so a grep for `transition(` shows every state change.
@@ -83,51 +108,31 @@ final class AppStateMachine: ObservableObject {
     @Published private(set) var mode: AppMode = .idle
 
     /// Called after every successful transition (old, new, reason).
-    var onTransition: ((AppMode, AppMode, String) -> Void)?
+    var onTransition: ((AppMode, AppMode, TransitionReason) -> Void)?
 
     /// Attempts a transition. Illegal transitions are refused and logged;
     /// in DEBUG they also assert so they surface during development.
-    @discardableResult
-    func transition(to next: AppMode, reason: String) -> Bool {
+    ///
+    /// The result is deliberately NOT `@discardableResult`. A caller that
+    /// ignores a refusal keeps running as if the mode had changed — which is
+    /// how `close()` could tear a session down while the panel stayed up
+    /// (docs/reliability-hardening-plan.md D6). Ignoring it must be written out.
+    func transition(to next: AppMode, reason: TransitionReason) -> Bool {
         let current = mode
         guard current.canTransition(to: next) else {
-            CoreTrace.event("state.transition.refused", mode: current, details: [
-                "to": next.description,
-                "reason": reason
+            Diagnostics.record("state.transition.refused", mode: current, details: [
+                ("to", .code(next)),
+                ("reason", .code(reason))
             ])
             assertionFailure("Illegal AppMode transition \(current) → \(next) (\(reason))")
             return false
         }
         mode = next
-        CoreTrace.event("state.transition", mode: next, details: [
-            "from": current.description,
-            "reason": reason
+        Diagnostics.record("state.transition", mode: next, details: [
+            ("from", .code(current)),
+            ("reason", .code(reason))
         ])
         onTransition?(current, next, reason)
         return true
-    }
-}
-
-/// Debug trace for lifecycle and state-machine evidence in Console.app.
-enum CoreTrace {
-    static func event(
-        _ name: String,
-        mode: AppMode,
-        details: [String: CustomStringConvertible?] = [:]
-    ) {
-        #if DEBUG
-        let detailText = details
-            .compactMap { key, value -> String? in
-                guard let value else { return nil }
-                return "\(key)=\(value)"
-            }
-            .sorted()
-            .joined(separator: " ")
-        if detailText.isEmpty {
-            NSLog("[CoreTrace] %@ mode=%@", name, mode.description)
-        } else {
-            NSLog("[CoreTrace] %@ mode=%@ %@", name, mode.description, detailText)
-        }
-        #endif
     }
 }

@@ -64,7 +64,7 @@ final class VisionSession: ObservableObject {
     private var identityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>
     private var targetIdentity: VisionObservationCaptureService.TargetIdentity?
     private let onRequestPanelClose: () -> Void
-    private let onRequestModeTransition: (AppMode, String) -> Bool
+    private let onRequestModeTransition: (AppMode, TransitionReason) -> Bool
     private var requestTask: Task<Void, Never>?
     private var copilotProgressTask: Task<Void, Never>?
     private var copilotClickMonitor: Any?
@@ -78,7 +78,7 @@ final class VisionSession: ObservableObject {
         identityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>? = nil,
         selection: VisionSelectionContext? = nil,
         client: GatewayVisionClient? = GatewayVisionClient.make(),
-        onRequestModeTransition: @escaping (AppMode, String) -> Bool = { _, _ in true },
+        onRequestModeTransition: @escaping (AppMode, TransitionReason) -> Bool = { _, _ in true },
         onRequestPanelClose: @escaping () -> Void = {}
     ) {
         self.attachment = attachment
@@ -139,6 +139,7 @@ final class VisionSession: ObservableObject {
     func startIfNeeded() {
         guard !hasStarted else { return }
         hasStarted = true
+        Diagnostics.record("vision.start")
         let expectedCaptureID = attachment.id
         Task { [weak self] in
             guard let self else { return }
@@ -187,7 +188,7 @@ final class VisionSession: ObservableObject {
         copilotState = .idle
         copilotSawNoChange = false
         focusedField = nil
-        guard onRequestModeTransition(.copilot, "copilotStarted") else {
+        guard onRequestModeTransition(.copilot, .copilotStarted) else {
             // Roll back so a refused transition cannot leave the strip UI
             // stranded inside the centered panel with a live click monitor.
             isCopilotActive = false
@@ -267,6 +268,7 @@ final class VisionSession: ObservableObject {
     }
 
     private func run(question: String?, priorTurns: [VisionTurn]) {
+        let turnKind: VisionTurnKind = question == nil ? .first : .question
         requestTask?.cancel()
         OperationalNoticeCenter.shared.beginOperation()
         guard let client else {
@@ -314,6 +316,16 @@ final class VisionSession: ObservableObject {
                 let identity = await self.resolvedIdentity()
                 identityMs = Self.elapsedMs(since: identityStarted)
                 let requestStarted = Date()
+                // Recorded BEFORE the call, not after. The 2026-08-03 stall had
+                // no request trace and no failure trace, and only a record taken
+                // at this point can tell "never asked" from "asked, never
+                // answered" — the one distinction the log could not make.
+                Diagnostics.record("vision.request", details: [
+                    ("turn", .code(turnKind)),
+                    ("candidatesWait", .ms(candidatesMs)),
+                    ("identity", .ms(identityMs)),
+                    ("candidates", .count(fixedCandidates.count)),
+                ])
                 let response = try await client.understand(
                     attachment: self.attachment,
                     question: question,
@@ -324,13 +336,11 @@ final class VisionSession: ObservableObject {
                     selection: self.selection,
                     language: self.outputLanguage
                 )
-                VisionTrace.log(
-                    "turn=\(question == nil ? "first" : "question") "
-                    + "candidatesWait=\(candidatesMs)ms identity=\(identityMs)ms "
-                    + "gatewayRoundTrip=\(Self.elapsedMs(since: requestStarted))ms "
-                    + "total=\(Self.elapsedMs(since: started))ms "
-                    + "candidates=\(fixedCandidates.count)"
-                )
+                Diagnostics.record("vision.turn", details: [
+                    ("turn", .code(turnKind)),
+                    ("gatewayRoundTrip", .ms(Self.elapsedMs(since: requestStarted))),
+                    ("total", .ms(Self.elapsedMs(since: started))),
+                ])
                 try Task.checkCancellation()
                 guard response.captureID == expectedCaptureID,
                       self.attachment.id == expectedCaptureID else {
@@ -340,10 +350,11 @@ final class VisionSession: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
-                VisionTrace.log(
-                    "failed after candidatesWait=\(candidatesMs)ms identity=\(identityMs)ms "
-                    + "total=\(Self.elapsedMs(since: started))ms"
-                )
+                Diagnostics.record("vision.failed", details: [
+                    ("turn", .code(turnKind)),
+                    ("total", .ms(Self.elapsedMs(since: started))),
+                    ("error", .code(DiagnosticErrorClass(error))),
+                ])
 #if DEBUG
                 self.errorMessage =
                     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -595,15 +606,12 @@ final class VisionSession: ObservableObject {
     }
 }
 
-/// Debug-only phase timing for vision. The gateway's `latency_ms` covers its
-/// model call and nothing else, so everything this side spends — waiting for the
-/// AX candidate walk, resolving which product is on screen, the round trip
-/// itself — was unmeasured. "Vision feels slow" needs these numbers to be
-/// answerable; without them the only available answer is a guess.
-enum VisionTrace {
-    static func log(_ message: String) {
-        #if DEBUG
-        NSLog("[Vision] %@", message)
-        #endif
-    }
+/// Which turn a vision request belongs to. A named type rather than a string so
+/// it can be recorded through `DiagnosticCode` (docs/reliability-hardening-plan.md D1).
+enum VisionTurnKind: String, DiagnosticCode {
+    case first
+    case question
+    case copilot
+
+    var diagnosticCode: String { rawValue }
 }

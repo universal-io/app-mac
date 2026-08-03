@@ -89,7 +89,7 @@ final class SessionCoordinator {
         stateMachine.onTransition = { [weak self] _, next, _ in
             self?.applyPanel(for: next)
         }
-        CoreTrace.event("coordinator.started", mode: stateMachine.mode)
+        Diagnostics.record("coordinator.started", mode: stateMachine.mode)
     }
 
     func setProactiveSuggestionEnabled(_ isEnabled: Bool) {
@@ -127,7 +127,7 @@ final class SessionCoordinator {
     /// Single entry point for all input events.
     func handle(_ event: AppEvent) {
         let mode = stateMachine.mode
-        CoreTrace.event("coordinator.event", mode: mode, details: ["event": event.description])
+        Diagnostics.record("coordinator.event", mode: mode, details: [("event", .code(event))])
         switch event {
         case .doubleTap:
             handleDoubleTap(in: mode)
@@ -135,16 +135,16 @@ final class SessionCoordinator {
             if mode == .idle {
                 summonCompose()
             } else {
-                close(reason: "menuPanelToggle")
+                close(reason: .menuPanelToggle)
             }
         case .screenshotCaptureRequested:
             guard mode == .compose else { return }
             beginVisionCaptureFromCompose()
         case .closeRequested:
-            close(reason: "closeRequested")
+            close(reason: .closeRequested)
         case .appResignedActive:
             guard let spec = PanelSpec.forMode(mode), spec.closesOnResignActive else { return }
-            close(reason: "resignActive")
+            close(reason: .resignActive)
         case .singleTap:
             guard mode == .compose else { return }
             composeSession?.toggleFocusedField()
@@ -165,7 +165,7 @@ final class SessionCoordinator {
         case .idle:
             summonSelectionAware()
         case .vision, .navigator, .copilot:
-            close(reason: "doubleTapOnVision")
+            close(reason: .doubleTapOnVision)
         case .compose:
             // The cycle is 閉 → コンポーズ → Vision → 閉: a double-tap always
             // advances compose to Vision. Review is an explicit button, never
@@ -178,7 +178,7 @@ final class SessionCoordinator {
         case .capturing(let returnTo):
             // Abandon the capture session entirely: back to standby.
             _ = returnTo
-            close(reason: "doubleTapDuringCapture")
+            close(reason: .doubleTapDuringCapture)
         }
     }
 
@@ -203,7 +203,7 @@ final class SessionCoordinator {
         )
         guard stateMachine.transition(
             to: .capturing(returnTo: .idle),
-            reason: "idleAXFocusSummon"
+            reason: .idleAXFocusSummon
         )
         else { return }
 
@@ -247,16 +247,14 @@ final class SessionCoordinator {
                 }
                 self.captureTask = nil
                 self.focusSnapshotTask = nil
-                CoreTrace.event(
+                Diagnostics.record(
                     "coordinator.axFocusResolved",
                     mode: self.stateMachine.mode,
                     details: [
-                        "elapsedMs": Int(Date().timeIntervalSince(startedAt) * 1_000),
-                        "passes": snapshot.collectionPasses,
-                        "status": String(describing: snapshot.status),
-                        "destination": String(
-                            describing: AXFocusLaunchDecision.destination(for: snapshot)
-                        ),
+                        ("elapsed", .ms(Int(Date().timeIntervalSince(startedAt) * 1_000))),
+                        ("passes", .count(snapshot.collectionPasses)),
+                        ("status", .code(snapshot.status)),
+                        ("destination", .code(AXFocusLaunchDecision.destination(for: snapshot))),
                     ]
                 )
                 self.completeIdleSummon(snapshot: snapshot, capture: completion)
@@ -317,7 +315,7 @@ final class SessionCoordinator {
         } ?? false
         let rootContextTask = SituationalContextService.captureTask()
         let deployer = PasteDeployer(targetApp: target) { [weak self] in
-            self?.close(reason: "composeDeploy")
+            self?.close(reason: .composeDeploy)
         }
         let session = ComposeSession(
             deployer: deployer,
@@ -326,7 +324,7 @@ final class SessionCoordinator {
         visionSession?.tearDown()
         visionSession = nil
         composeSession = session
-        guard stateMachine.transition(to: .compose, reason: "summon") else {
+        guard stateMachine.transition(to: .compose, reason: .summon) else {
             session.tearDown()
             composeSession = nil
             summonTargetApp = nil
@@ -355,7 +353,7 @@ final class SessionCoordinator {
         }
     }
 
-    private func close(reason: String) {
+    private func close(reason: TransitionReason) {
         guard stateMachine.mode != .idle else { return }
         // Explicit dismissal should put the user back where the panel was
         // summoned from. Without this, Universal I/O can remain the frontmost
@@ -365,13 +363,25 @@ final class SessionCoordinator {
         // when the panel closed because the user activated another app, and let
         // PasteDeployer own the timed activation used by an actual send.
         let appToRestore: NSRunningApplication? =
-            reason == "resignActive" || reason == "composeDeploy"
+            reason == .resignActive || reason == .composeDeploy
             ? nil
             : summonTargetApp
+        // Teardown may not outrun the state machine. When a transition is
+        // refused the app is still in its previous mode, and cancelling the
+        // requests plus deleting the capture would leave the panel on screen
+        // with nothing behind it — the hollow panel this project exists to
+        // prevent (docs/reliability-hardening-plan.md D6).
+        guard stateMachine.transition(to: .idle, reason: reason) else {
+            Diagnostics.record(
+                "coordinator.closeRefused",
+                mode: stateMachine.mode,
+                details: [("reason", .code(reason))]
+            )
+            return
+        }
         stopActiveWork()
         discardComposePreCapture()
         visionIdentityTask = nil
-        stateMachine.transition(to: .idle, reason: reason)
         screenshotSelection.cancel()
         composeSession?.tearDown()
         composeSession = nil
@@ -734,7 +744,7 @@ final class SessionCoordinator {
         composePreCapture = nil
         composePreCaptureTask?.cancel()
         composePreCaptureTask = nil
-        guard stateMachine.transition(to: .capturing(returnTo: .compose), reason: "composePreCaptureVision")
+        guard stateMachine.transition(to: .capturing(returnTo: .compose), reason: .composePreCaptureVision)
         else {
             try? FileManager.default.removeItem(at: attachment.url)
             return false
@@ -763,7 +773,7 @@ final class SessionCoordinator {
             composeSession.errorMessage = "スクリーンショットには画面収録の許可が必要です。"
             return
         }
-        guard stateMachine.transition(to: .capturing(returnTo: .compose), reason: "emptyComposeCapture")
+        guard stateMachine.transition(to: .capturing(returnTo: .compose), reason: .emptyComposeCapture)
         else {
             return
         }
@@ -829,22 +839,22 @@ final class SessionCoordinator {
                     self?.transitionVision(to: target, reason: reason) ?? false
                 },
                 onRequestPanelClose: { [weak self] in
-                    self?.close(reason: "visionRequestedClose")
+                    self?.close(reason: .visionRequestedClose)
                 }
             )
             visionSession?.tearDown()
             visionSession = session
-            guard stateMachine.transition(to: .vision, reason: "captureCompleted") else {
+            guard stateMachine.transition(to: .vision, reason: .captureCompleted) else {
                 session.tearDown()
                 visionSession = nil
-                _ = stateMachine.transition(to: returnTo, reason: "captureTransitionFailed")
+                _ = stateMachine.transition(to: returnTo, reason: .captureTransitionFailed)
                 return
             }
         case .cancelled:
-            _ = stateMachine.transition(to: returnTo, reason: "captureCancelled")
+            _ = stateMachine.transition(to: returnTo, reason: .captureCancelled)
         case .failed(let message):
             composeSession?.errorMessage = message
-            _ = stateMachine.transition(to: returnTo, reason: "captureFailed")
+            _ = stateMachine.transition(to: returnTo, reason: .captureFailed)
         }
     }
 
@@ -872,10 +882,10 @@ final class SessionCoordinator {
         )
     }
 
-    private func transitionVision(to target: AppMode, reason: String) -> Bool {
+    private func transitionVision(to target: AppMode, reason: TransitionReason) -> Bool {
         guard visionSession != nil else { return false }
         if target == .copilot, stateMachine.mode == .vision {
-            guard stateMachine.transition(to: .navigator, reason: "visionGuideReady") else {
+            guard stateMachine.transition(to: .navigator, reason: .visionGuideReady) else {
                 return false
             }
         }
