@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-最終更新: 2026-08-01 ／ ステータス: 現行
+最終更新: 2026-08-03 ／ ステータス: 現行
 
 このファイルがドキュメントの唯一の入口です。実装の正は現行コード、製品計画の正は
 `universal-io-master-plan.md`、APIの正は `api-contract.md` です。
@@ -20,6 +20,7 @@
 | [admin-dashboard-plan.md](admin-dashboard-plan.md) | 本番Admin Console |
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
 | [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9、Selection Extension改修（R10）、将来のAX直接入力研究の正本 |
+| [reliability-hardening-plan.md](reliability-hardening-plan.md) | 起動確実性と公開品質（R11）。長時間稼働での無音停止の原因分析と技術的負債の棚卸し |
 
 ## 参照資料
 

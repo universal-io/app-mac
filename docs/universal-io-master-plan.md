@@ -387,11 +387,58 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
 プロジェクトCを正とする。R10はR9のclipboard安全化やTransform撤去を巻き戻さず、選択理解の
 データモデルとprompt合成だけを正す。
 
+### R11 — 起動確実性と公開品質（`0.2.2`公開の前提、計画確定・未着手）
+
+2026-08-03、約38時間連続稼働したアプリでVisionが「スピナーも出ない・画面画像も出ない・
+エラーも出ない」空のパネルになり、再起動で回復した。同一プロセス・同一ビルド・同一画面で
+24分前は正常に完走しており、実測ログではリクエストが1件も発行されていない。プロバイダ側は
+同時刻に実画面サイズで一次985ms／二次3006msで応答しており、Gateway・モデル・ネットワークは
+原因ではない。
+
+原因は、Visionの初回リクエスト（`VisionSessionView.swift:34`の`.task`）と画面画像の読み込み
+（`ZoomableScreenshotView.swift:87`の`.onAppear`）がSwiftUIのappearance callback 1点だけを
+引き金にしていることである。召喚ごとに`PanelController.swift:69`が
+`contentViewController`を差し替え、Visionは必ずウインドウを`orderOut`した状態で差し込むため、
+この経路が成立しない状態が長時間稼働後に起きた。Composeは同じ形をしておらず、AI処理は
+コーディネーターが所有している。**正しい形はすでにリポジトリの中にある。**
+
+R11では次を不変条件とする。
+
+```text
+セッションが開始したかどうかは、UIの描画都合に依存してはならない。
+どの操作も無音で終わらない — 有限時間で結果か原因を述べるエラーへ到達する。
+```
+
+**「再起動してください」を顧客へ案内する状態を公開品質と認めない。** `0.2.2` build `6`は
+versionを上げただけで未公開のため、R10／R10.5の成果を先に出すのではなく、R11の完了を
+`0.2.2`公開の前提条件とする。
+
+- **D0（計画確定）** 原因分析、目標構造、D1〜D7の受け入れ条件、技術的負債13項目の棚卸しを
+  [reliability-hardening-plan.md](reliability-hardening-plan.md)へ固定した。
+- **D1（未着手）** 診断を`#if DEBUG`のNSLogから`os_log`へ移し、release buildでも開始・発行・
+  完了・失敗を記録する。本文・回答・画像・タイトル・ホスト名は載せない。
+- **D2（未着手）** Visionの開始をコーディネーターが所有する。`.task`を外しても初回リクエストが
+  出ることをunit testで固定する。
+- **D3（未着手）** 画面画像の読み込みをappearance callbackから切り離す。
+- **D4（未着手）** 召喚ごとのホスティングコントローラー差し替えをやめ、パネル寿命に対して1つとし、
+  root viewがコーディネーターの状態を観測する構成にする。
+- **D5（未着手）** クライアント・Gateway双方へ期限を入れる（現状`timeoutInterval`／
+  `maxDuration`ともに0件）。一次が無応答でも二次へ落ちるようにし、`accessToken()`の無期限awaitと
+  リクエスト未発行のウォッチドッグを解消する。
+- **D6（未着手）** 無音失敗の撤去。`CancellationError`の一括無音returnと、遷移拒否時にも走る
+  `close()`のteardownを分離する。
+- **D7（未着手）** 24時間以上連続稼働後のgolden pathを[manual-golden-paths.md](manual-golden-paths.md)へ
+  追加し、リリース前チェックとして実施する。
+
+詳細と技術的負債の一覧は[reliability-hardening-plan.md](reliability-hardening-plan.md)を正とする。
+
 ## リリース判定
 
 以下をすべて満たした時だけ公開する。
 
 - R2〜R4が完了している。
+- R11が完了している（`0.2.2`以降）。長時間稼働後もセッションが確実に開始し、失敗が無音で
+  終わらないこと。「再起動してください」を回避策として案内しない。
 - 主要4 AI endpointに旧・代替endpointが存在せず、各routeのモデル指定が共通SSOTだけにある。
 - 重大度Highの既知不具合が0件。
 - Composeのレビュー後フォーカス、自動返信、音声入力、Vision初回応答が実機で再現可能。
