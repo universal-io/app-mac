@@ -397,10 +397,14 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
 
 原因は、Visionの初回リクエスト（`VisionSessionView.swift:34`の`.task`）と画面画像の読み込み
 （`ZoomableScreenshotView.swift:87`の`.onAppear`）がSwiftUIのappearance callback 1点だけを
-引き金にしていることである。召喚ごとに`PanelController.swift:69`が
-`contentViewController`を差し替え、Visionは必ずウインドウを`orderOut`した状態で差し込むため、
-この経路が成立しない状態が長時間稼働後に起きた。Composeは同じ形をしておらず、AI処理は
+引き金にしていることである。パネルのヘッダーとキャレットは描画されていたので、body評価は
+生きており、壊れたのはappearance通知だけだった。Composeは同じ形をしておらず、AI処理は
 コーディネーターが所有している。**正しい形はすでにリポジトリの中にある。**
+
+障害の召喚は`from=idle`であり、直前の`resignActive`で`PanelController.close()`まで到達して
+いるため、**新品のNSWindowと新品のNSHostingControllerで失敗している**。当初「劣化源として
+最有力」としたホスティングコントローラーの差し替え蓄積は、この実測で否定された。劣化は
+ウインドウ単位ではなくプロセス単位で起きており、パネルを作り直す自動復旧も期待できない。
 
 R11では次を不変条件とする。
 
@@ -413,22 +417,36 @@ R11では次を不変条件とする。
 versionを上げただけで未公開のため、R10／R10.5の成果を先に出すのではなく、R11の完了を
 `0.2.2`公開の前提条件とする。
 
-- **D0（計画確定）** 原因分析、目標構造、D1〜D7の受け入れ条件、技術的負債13項目の棚卸しを
-  [reliability-hardening-plan.md](reliability-hardening-plan.md)へ固定した。
+実施順は D1 → D2 → D3 → D6 → D5 → D8 → D9 → D7。復帰点はタグ`r11-start`、作業ブランチは
+`r11-reliability`。
+
+- **D0（完了）** 原因分析、目標構造、受け入れ条件、技術的負債15項目の棚卸しを
+  [reliability-hardening-plan.md](reliability-hardening-plan.md)へ固定した。実測により
+  旧D4の前提を反証し、実施順と範囲を改訂した。
 - **D1（未着手）** 診断を`#if DEBUG`のNSLogから`os_log`へ移し、release buildでも開始・発行・
-  完了・失敗を記録する。本文・回答・画像・タイトル・ホスト名は載せない。
+  完了・失敗を記録する。本文・回答・画像・タイトル・ホスト名は載せない。同じ記録を
+  リングバッファへ持ち、管理画面からコピーできるようにする（顧客のログはsysdiagnoseなしでは
+  届かないため）。
 - **D2（未着手）** Visionの開始をコーディネーターが所有する。`.task`を外しても初回リクエストが
   出ることをunit testで固定する。
-- **D3（未着手）** 画面画像の読み込みをappearance callbackから切り離す。
-- **D4（未着手）** 召喚ごとのホスティングコントローラー差し替えをやめ、パネル寿命に対して1つとし、
-  root viewがコーディネーターの状態を観測する構成にする。
-- **D5（未着手）** クライアント・Gateway双方へ期限を入れる（現状`timeoutInterval`／
-  `maxDuration`ともに0件）。一次が無応答でも二次へ落ちるようにし、`accessToken()`の無期限awaitと
-  リクエスト未発行のウォッチドッグを解消する。
+- **D3（未着手）** 画面画像の読み込みをappearance callbackから切り離す。sessionが表示用画像を
+  値として持ち、ビュー側の読み込みという概念を無くす。
+- **D5（未着手）** ユーザーに見える操作を、期限・トレース・終端状態を必ず伴う単一のランナー
+  経由でしか実行できない形にする（現状`timeoutInterval`／`maxDuration`ともに0件）。
+  `accessToken()`の無期限await、Gateway側`fetch`、リクエスト未発行のウォッチドッグを含む。
+  一次ハング時のfallbackはtimeoutが例外へ変換することで成立し、fallback機構は改造しない。
 - **D6（未着手）** 無音失敗の撤去。`CancellationError`の一括無音returnと、遷移拒否時にも走る
-  `close()`のteardownを分離する。
+  `close()`のteardownを分離する。`transition`の`@discardableResult`を外し、戻り値を捨てている
+  箇所をコンパイラに列挙させる。
+- **D8（未着手）** 最後の回復手段をメニューバーへ置く（「Universal I/Oを再起動」）。パネルが
+  応答しない状況の回復手段をパネル内に置かない。自動再起動はしない。
+- **D9（未着手）** リポジトリ全体の`.task`／`.onAppear`を監査し、フォーカス・アニメーション・
+  表示状態以外の副作用が0件であることを確認する。
 - **D7（未着手）** 24時間以上連続稼働後のgolden pathを[manual-golden-paths.md](manual-golden-paths.md)へ
   追加し、リリース前チェックとして実施する。
+
+旧D4（パネル表示の作り直し）は`0.2.2`のゲートから外す。障害は新品のウインドウで起きており、
+ホスティングコントローラーの寿命を延ばしても防げない。衛生改善として公開後に扱う。
 
 詳細と技術的負債の一覧は[reliability-hardening-plan.md](reliability-hardening-plan.md)を正とする。
 
