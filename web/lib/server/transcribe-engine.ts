@@ -9,6 +9,7 @@ import {
   type AIModelTarget,
 } from "@/lib/server/ai-routing";
 import type { OperationalNotice } from "@/lib/server/operational-notice";
+import { fetchProvider } from "@/lib/server/provider-timeout";
 
 export type TranscriptionOutput = {
   text: string;
@@ -63,12 +64,16 @@ async function transcribeWith(
   if (language) form.append("language", language);
   form.append("file", audio, audio.name || "audio.m4a");
 
-  const response = await fetch(endpointFor(target), {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKeyFor(target)}` },
-    body: form,
-    signal: AbortSignal.timeout(target.vendor === "groq" ? 15_000 : 60_000),
-  });
+  const response = await fetchProvider(
+    target.vendor === "groq" ? "transcribeGroq" : "transcribeOpenAI",
+    `${target.vendor}/${target.modelId}`,
+    endpointFor(target),
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKeyFor(target)}` },
+      body: form,
+    },
+  );
 
   if (!response.ok) {
     throw new ProviderCallError(`Provider HTTP ${response.status}.`, {

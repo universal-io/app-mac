@@ -127,16 +127,24 @@ struct GatewayClient {
     // MARK: - Plain requests
 
     /// GET; returns the raw body after transport/status/error mapping.
-    func get(_ path: String) async throws -> Data {
-        let request = try await api.authorizedRequest(path, method: "GET")
+    func get(
+        _ path: String,
+        timeout: TimeInterval = OperationDeadline.accountRequest
+    ) async throws -> Data {
+        let request = try await api.authorizedRequest(path, method: "GET", timeout: timeout)
         let data = try await send(request)
         await captureOperationalNotice(from: data)
         return data
     }
 
     /// JSON-body request; returns the raw body after transport/status/error mapping.
-    func postJSON(_ path: String, method: String = "POST", body: [String: Any]) async throws -> Data {
-        var request = try await api.authorizedRequest(path, method: method)
+    func postJSON(
+        _ path: String,
+        method: String = "POST",
+        body: [String: Any],
+        timeout: TimeInterval = OperationDeadline.accountRequest
+    ) async throws -> Data {
+        var request = try await api.authorizedRequest(path, method: method, timeout: timeout)
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let data = try await send(request)
@@ -145,8 +153,13 @@ struct GatewayClient {
     }
 
     /// Pre-encoded JSON body for `Codable` payloads.
-    func sendJSONData(_ path: String, method: String = "POST", body: Data) async throws -> Data {
-        var request = try await api.authorizedRequest(path, method: method)
+    func sendJSONData(
+        _ path: String,
+        method: String = "POST",
+        body: Data,
+        timeout: TimeInterval = OperationDeadline.accountRequest
+    ) async throws -> Data {
+        var request = try await api.authorizedRequest(path, method: method, timeout: timeout)
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.httpBody = body
         let data = try await send(request)
@@ -155,8 +168,13 @@ struct GatewayClient {
     }
 
     /// Multipart form body (ASR uploads).
-    func postMultipart(_ path: String, boundary: String, body: Data) async throws -> Data {
-        var request = try await api.authorizedRequest(path)
+    func postMultipart(
+        _ path: String,
+        boundary: String,
+        body: Data,
+        timeout: TimeInterval = OperationDeadline.accountRequest
+    ) async throws -> Data {
+        var request = try await api.authorizedRequest(path, timeout: timeout)
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
         let data = try await send(request)
@@ -207,8 +225,12 @@ struct GatewayClient {
     /// AsyncLineSequence may swallow). `error` events become thrown errors;
     /// non-JSON data lines are skipped. Error responses before the stream
     /// starts are plain JSON; a bounded amount is read for the message.
-    func postSSE(_ path: String, body: [String: Any]) async throws -> AsyncThrowingStream<GatewaySSEEvent, Error> {
-        var request = try await api.authorizedRequest(path)
+    func postSSE(
+        _ path: String,
+        body: [String: Any],
+        timeout: TimeInterval = OperationDeadline.accountRequest
+    ) async throws -> AsyncThrowingStream<GatewaySSEEvent, Error> {
+        var request = try await api.authorizedRequest(path, timeout: timeout)
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue("text/event-stream", forHTTPHeaderField: "accept")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

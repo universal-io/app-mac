@@ -35,7 +35,8 @@ struct GatewayReviewClient: ReviewProvider {
 
         let data = try await client.postJSON(
             "ai/review",
-            body: requestBody(draft: trimmed, language: language, context: context)
+            body: requestBody(draft: trimmed, language: language, context: context),
+            timeout: OperationDeadline.reviewRequest
         )
         return try decodeResult(from: data)
     }
@@ -53,7 +54,11 @@ struct GatewayReviewClient: ReviewProvider {
 
         var body = requestBody(draft: trimmed, language: language, context: context)
         body["stream"] = true
-        let events = try await client.postSSE("ai/review", body: body)
+        let events = try await client.postSSE(
+            "ai/review",
+            body: body,
+            timeout: OperationDeadline.reviewRequest
+        )
 
         return AsyncThrowingStream { continuation in
             let task = Task {

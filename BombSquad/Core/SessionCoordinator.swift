@@ -76,6 +76,7 @@ final class SessionCoordinator {
     /// added. Handed to the VisionSession, which owns it from then on.
     private var visionIdentityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>?
     private var suggestionTask: Task<Void, Never>?
+    private var visionStartWatchdog: Task<Void, Never>?
     private var composeGeneration = 0
     /// Whether an editable field was focused in the source app at the moment
     /// compose was summoned — captured synchronously before our panel steals
@@ -546,8 +547,31 @@ final class SessionCoordinator {
         }
     }
 
+    /// Watches for the one failure this project exists to eliminate: the app
+    /// entered vision, and no request ever left. The session start is now
+    /// synchronous and coordinator-owned (D2), so this should never fire — but
+    /// "should never" is exactly what was believed about the appearance
+    /// callback. A retry costs one duplicate request; a missed start costs the
+    /// whole session and tells the user nothing.
+    private func superviseVisionStart(_ session: VisionSession) {
+        visionStartWatchdog?.cancel()
+        visionStartWatchdog = Task { [weak self, weak session] in
+            try? await Task.sleep(for: .seconds(OperationDeadline.visionStartWatchdog))
+            guard !Task.isCancelled,
+                  let session,
+                  self?.visionSession === session,
+                  session.restartIfNoRequestIssued() else { return }
+
+            try? await Task.sleep(for: .seconds(OperationDeadline.visionStartWatchdog))
+            guard !Task.isCancelled, self?.visionSession === session else { return }
+            session.reportStartFailure()
+        }
+    }
+
     private func stopActiveWork() {
         captureGeneration += 1
+        visionStartWatchdog?.cancel()
+        visionStartWatchdog = nil
         captureTask?.cancel()
         captureTask = nil
         focusSnapshotTask?.cancel()
@@ -857,6 +881,7 @@ final class SessionCoordinator {
             // 2026-08-03 stall (docs/reliability-hardening-plan.md §2). Compose
             // has always been shaped this way; Vision was the exception.
             session.startIfNeeded()
+            superviseVisionStart(session)
         case .cancelled:
             _ = stateMachine.transition(to: returnTo, reason: .captureCancelled)
         case .failed(let message):

@@ -31,7 +31,8 @@ struct GatewayTranscriber: Transcriber {
                 boundary: boundary,
                 audioData: audioData,
                 fileExtension: fileURL.pathExtension.lowercased()
-            )
+            ),
+            timeout: OperationDeadline.transcribeRequest
         )
 
         let root = try GatewayClient.rootObject(data)

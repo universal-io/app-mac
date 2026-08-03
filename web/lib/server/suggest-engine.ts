@@ -14,6 +14,7 @@ import {
   normalizeFactValue,
   type FactSlot,
 } from "@/lib/server/skills/types";
+import { fetchProvider } from "@/lib/server/provider-timeout";
 
 // The proactive compose suggestion reads the same immutable screenshot Vision
 // uses, but its job is the opposite of Vision's: instead of only interpreting
@@ -152,14 +153,19 @@ async function callSuggestModel(
     throw new ProviderCallError(`Suggestion cannot use API "${target.api}".`);
   }
 
-  const response = await fetch(endpointFor(target), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKeyFor(target)}`,
-      "content-type": "application/json",
+  const response = await fetchProvider(
+    "suggest",
+    `${target.vendor}/${target.modelId}`,
+    endpointFor(target),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKeyFor(target)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(requestBody(input, target)),
     },
-    body: JSON.stringify(requestBody(input, target)),
-  });
+  );
 
   if (!response.ok) {
     throw new ProviderCallError(

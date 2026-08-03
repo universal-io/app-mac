@@ -55,7 +55,11 @@ struct GatewaySuggestClient {
             input: inputPayload,
             language: language
         )
-        let data = try await client.postJSON("ai/suggest", body: body)
+        let data = try await client.postJSON(
+            "ai/suggest",
+            body: body,
+            timeout: OperationDeadline.suggestRequest
+        )
         return try Self.decode(data, expectedCaptureID: attachment.id)
     }
 

@@ -88,9 +88,15 @@ final class VisionSession: ObservableObject {
     private var copilotClickMonitor: Any?
     private var copilotStepCount = 0
     private var hasStarted = false
+    /// Whether a gateway request has actually left for this session. The
+    /// coordinator supervises this: "the session object exists" and "the user's
+    /// question was asked" are different facts, and on 2026-08-03 only the
+    /// first was true.
+    private(set) var hasIssuedRequest = false
     private var screenshotImageTask: Task<Void, Never>?
     private var requestCancellation: CancellationLedger?
     private var copilotCancellation: CancellationLedger?
+    private var visionTurnDeadline: Task<Void, Never>?
 
     init(
         attachment: ScreenshotAttachment,
@@ -274,6 +280,8 @@ final class VisionSession: ObservableObject {
         copilotProgressTask = nil
         screenshotImageTask?.cancel()
         screenshotImageTask = nil
+        visionTurnDeadline?.cancel()
+        visionTurnDeadline = nil
         removeCopilotClickMonitor()
         HighlightOverlayPresenter.shared.hide()
         try? FileManager.default.removeItem(at: attachment.url)
@@ -331,9 +339,24 @@ final class VisionSession: ObservableObject {
         let expectedCaptureID = attachment.id
         let ledger = CancellationLedger()
         requestCancellation = ledger
+        // A turn is more than its HTTP request: the AX candidate walk and the
+        // product identity resolution are awaited on this side, and no
+        // `timeoutInterval` covers them. This is the ceiling for the whole
+        // thing, so every turn ends in an answer or in a sentence saying why
+        // (docs/reliability-hardening-plan.md D5).
+        visionTurnDeadline?.cancel()
+        visionTurnDeadline = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(OperationDeadline.visionTurn))
+            guard !Task.isCancelled else { return }
+            self?.failTurnOnDeadline(ledger: ledger, turn: turnKind)
+        }
         requestTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.isLoading = false }
+            defer {
+                self.isLoading = false
+                self.visionTurnDeadline?.cancel()
+                self.visionTurnDeadline = nil
+            }
             // Phase timing: the gateway records only its own model call, so the
             // waits on this side — the AX candidate walk and the product
             // identity resolution, both of which run extra passes on Chromium —
@@ -372,6 +395,7 @@ final class VisionSession: ObservableObject {
                 // no request trace and no failure trace, and only a record taken
                 // at this point can tell "never asked" from "asked, never
                 // answered" — the one distinction the log could not make.
+                self.hasIssuedRequest = true
                 Diagnostics.record("vision.request", details: [
                     ("turn", .code(turnKind)),
                     ("candidatesWait", .ms(candidatesMs)),
@@ -426,6 +450,42 @@ final class VisionSession: ObservableObject {
 #endif
             }
         }
+    }
+
+    /// Second chance, driven by the coordinator's watchdog. Returns whether a
+    /// restart was needed — `false` means the request had already left and
+    /// nothing should be re-sent. Restarting cancels the stalled attempt first,
+    /// so this cannot bill two requests.
+    func restartIfNoRequestIssued() -> Bool {
+        guard hasStarted, !hasIssuedRequest else { return false }
+        Diagnostics.record("vision.restartedByWatchdog")
+        run(question: nil, priorTurns: [])
+        return true
+    }
+
+    /// Last stop for a session that never managed to ask anything. The user
+    /// gets a sentence instead of a panel that waits forever.
+    func reportStartFailure() {
+        guard !hasIssuedRequest else { return }
+        requestCancellation?.cause = .deadlineExceeded
+        requestTask?.cancel()
+        isLoading = false
+        errorMessage = "画面の読み取りを開始できませんでした。もう一度お試しください。"
+        Diagnostics.record("vision.startFailed")
+    }
+
+    /// The budget ran out. Ends the turn where the user can see it, rather
+    /// than leaving a spinner that nothing will ever stop.
+    private func failTurnOnDeadline(ledger: CancellationLedger, turn: VisionTurnKind) {
+        guard isLoading, ledger.cause == nil else { return }
+        ledger.cause = .deadlineExceeded
+        requestTask?.cancel()
+        isLoading = false
+        errorMessage = "画面の読み取りが時間内に完了しませんでした。もう一度お試しください。"
+        Diagnostics.record("vision.deadlineExceeded", details: [
+            ("turn", .code(turn)),
+            ("budget", .ms(Int(OperationDeadline.visionTurn * 1000))),
+        ])
     }
 
     private static func elapsedMs(since start: Date) -> Int {
@@ -688,6 +748,9 @@ final class CancellationLedger {
         case supersededByNewerRequest
         /// The user closed the panel. There is nobody left to tell.
         case sessionTornDown
+        /// The turn ran past its budget. The watchdog that cancelled it owns
+        /// the message, so the request path stays quiet.
+        case deadlineExceeded
     }
 
     var cause: Cause?

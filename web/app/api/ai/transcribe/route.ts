@@ -20,6 +20,14 @@ import { runTranscription } from "@/lib/server/transcribe-engine";
 // Recordings are short hold-to-talk clips; anything bigger is a client bug.
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
+/**
+ * Two models run in series here, so the request needs a budget that clears
+ * both. Without one the platform's default decides when a hung provider ends,
+ * which is how a stalled call could outlive the user's patience with nothing
+ * to show for it. Budgets: lib/server/provider-timeout.ts.
+ */
+export const maxDuration = 60;
+
 export const GET = warmAIRequest;
 
 export async function POST(request: Request): Promise<Response> {

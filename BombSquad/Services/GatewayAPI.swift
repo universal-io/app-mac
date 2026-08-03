@@ -55,10 +55,25 @@ struct GatewayAPI {
         return baseURL.appendingPathComponent(full)
     }
 
-    func authorizedRequest(_ path: String, method: String = "POST") async throws -> URLRequest {
-        let token = try await BombSquadAuthClient.shared.accessToken()
+    /// The single point every gateway request passes through, which makes it
+    /// the single place a request can be given a deadline. Both waits here were
+    /// unbounded before R11: the session read could hang before any request
+    /// existed (leaving no network trace at all), and the request itself had no
+    /// `timeoutInterval`, so a connection that never answered never returned.
+    func authorizedRequest(
+        _ path: String,
+        method: String = "POST",
+        timeout: TimeInterval = OperationDeadline.accountRequest
+    ) async throws -> URLRequest {
+        let token = try await withDeadline(
+            seconds: OperationDeadline.accessToken,
+            operation: "auth.accessToken"
+        ) {
+            try await BombSquadAuthClient.shared.accessToken()
+        }
         var request = URLRequest(url: endpoint(path))
         request.httpMethod = method
+        request.timeoutInterval = timeout
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return request
     }

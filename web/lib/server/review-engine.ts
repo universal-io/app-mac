@@ -13,6 +13,7 @@ import {
   type OutputLanguageCode,
   type SituationalContextPayload,
 } from "@/lib/server/prompts";
+import { fetchProvider } from "@/lib/server/provider-timeout";
 
 export type ReviewIssue = {
   category: "typo" | "impoliteness" | "unclear";
@@ -153,7 +154,7 @@ function callProvider(
   apiKey: string,
   body: Record<string, unknown>,
 ): Promise<Response> {
-  return fetch(endpoint, {
+  return fetchProvider("review", "review model", endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,

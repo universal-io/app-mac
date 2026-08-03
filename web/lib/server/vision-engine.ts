@@ -10,6 +10,7 @@ import { visionSkill } from "@/lib/server/skills/registry";
 import type { ActiveSkill, AppSignals } from "@/lib/server/skills/types";
 import { buildVisionPromptText } from "@/lib/server/vision-prompt";
 import type { VisionSelection } from "@/lib/server/vision-selection";
+import { fetchProvider } from "@/lib/server/provider-timeout";
 
 export const VISION_REASONING_EFFORT = "none";
 export const VISION_IMAGE_DETAIL = "original";
@@ -108,14 +109,19 @@ async function callResponsesVision(
   skill: ActiveSkill | null,
   target: AIModelTarget,
 ): Promise<{ result: VisionResult; inputTokens: number; outputTokens: number }> {
-  const response = await fetch(endpointFor(target), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKeyFor(target)}`,
-      "content-type": "application/json",
+  const response = await fetchProvider(
+    "vision",
+    `${target.vendor}/${target.modelId}`,
+    endpointFor(target),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKeyFor(target)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(responsesRequestBody(input, skill, target)),
     },
-    body: JSON.stringify(responsesRequestBody(input, skill, target)),
-  });
+  );
 
   if (!response.ok) {
     throw new ProviderCallError(
@@ -162,14 +168,19 @@ async function callChatCompletionsVision(
   skill: ActiveSkill | null,
   target: AIModelTarget,
 ): Promise<{ result: VisionResult; inputTokens: number; outputTokens: number }> {
-  const response = await fetch(endpointFor(target), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKeyFor(target)}`,
-      "content-type": "application/json",
+  const response = await fetchProvider(
+    "vision",
+    `${target.vendor}/${target.modelId}`,
+    endpointFor(target),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKeyFor(target)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(chatCompletionsRequestBody(input, skill, target)),
     },
-    body: JSON.stringify(chatCompletionsRequestBody(input, skill, target)),
-  });
+  );
 
   if (!response.ok) {
     throw new ProviderCallError(

@@ -100,7 +100,11 @@ struct GatewayVisionClient {
             input: input,
             language: language
         )
-        let data = try await client.postJSON("ai/vision", body: body)
+        let data = try await client.postJSON(
+            "ai/vision",
+            body: body,
+            timeout: OperationDeadline.visionRequest
+        )
         return try Self.decode(data, expectedCaptureID: attachment.id)
     }
 
