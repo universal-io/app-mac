@@ -850,6 +850,13 @@ final class SessionCoordinator {
                 _ = stateMachine.transition(to: returnTo, reason: .captureTransitionFailed)
                 return
             }
+            // The panel appearing is a CONSEQUENCE of the transition above, not
+            // a precondition for asking. Vision used to start from the SwiftUI
+            // `.task`, so a summon whose appearance callback never fired issued
+            // no request, showed no spinner, and reported no error — the
+            // 2026-08-03 stall (docs/reliability-hardening-plan.md §2). Compose
+            // has always been shaped this way; Vision was the exception.
+            session.startIfNeeded()
         case .cancelled:
             _ = stateMachine.transition(to: returnTo, reason: .captureCancelled)
         case .failed(let message):

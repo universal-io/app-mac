@@ -31,7 +31,6 @@ struct VisionRootView: View {
             }
         }
         .panelChrome()
-        .task { session.startIfNeeded() }
     }
 }
 
