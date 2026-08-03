@@ -387,7 +387,7 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
 プロジェクトCを正とする。R10はR9のclipboard安全化やTransform撤去を巻き戻さず、選択理解の
 データモデルとprompt合成だけを正す。
 
-### R11 — 起動確実性と公開品質（`0.2.2`公開の前提、計画確定・未着手）
+### R11 — 起動確実性と公開品質（`0.2.2`公開の前提、実装完了・実機検証待ち）
 
 2026-08-03、約38時間連続稼働したアプリでVisionが「スピナーも出ない・画面画像も出ない・
 エラーも出ない」空のパネルになり、再起動で回復した。同一プロセス・同一ビルド・同一画面で
@@ -423,27 +423,31 @@ versionを上げただけで未公開のため、R10／R10.5の成果を先に�
 - **D0（完了）** 原因分析、目標構造、受け入れ条件、技術的負債15項目の棚卸しを
   [reliability-hardening-plan.md](reliability-hardening-plan.md)へ固定した。実測により
   旧D4の前提を反証し、実施順と範囲を改訂した。
-- **D1（未着手）** 診断を`#if DEBUG`のNSLogから`os_log`へ移し、release buildでも開始・発行・
+- **D1（完了）** 診断を`#if DEBUG`のNSLogから`os_log`へ移し、release buildでも開始・発行・
   完了・失敗を記録する。本文・回答・画像・タイトル・ホスト名は載せない。同じ記録を
   リングバッファへ持ち、管理画面からコピーできるようにする（顧客のログはsysdiagnoseなしでは
   届かないため）。
-- **D2（未着手）** Visionの開始をコーディネーターが所有する。`.task`を外しても初回リクエストが
+- **D2（完了）** Visionの開始をコーディネーターが所有する。`.task`を外しても初回リクエストが
   出ることをunit testで固定する。
-- **D3（未着手）** 画面画像の読み込みをappearance callbackから切り離す。sessionが表示用画像を
+- **D3（完了）** 画面画像の読み込みをappearance callbackから切り離す。sessionが表示用画像を
   値として持ち、ビュー側の読み込みという概念を無くす。
-- **D5（未着手）** ユーザーに見える操作を、期限・トレース・終端状態を必ず伴う単一のランナー
+- **D5（完了）** ユーザーに見える操作を、期限・トレース・終端状態を必ず伴う単一のランナー
   経由でしか実行できない形にする（現状`timeoutInterval`／`maxDuration`ともに0件）。
   `accessToken()`の無期限await、Gateway側`fetch`、リクエスト未発行のウォッチドッグを含む。
   一次ハング時のfallbackはtimeoutが例外へ変換することで成立し、fallback機構は改造しない。
-- **D6（未着手）** 無音失敗の撤去。`CancellationError`の一括無音returnと、遷移拒否時にも走る
+- **D6（完了）** 無音失敗の撤去。`CancellationError`の一括無音returnと、遷移拒否時にも走る
   `close()`のteardownを分離する。`transition`の`@discardableResult`を外し、戻り値を捨てている
   箇所をコンパイラに列挙させる。
-- **D8（未着手）** 最後の回復手段をメニューバーへ置く（「Universal I/Oを再起動」）。パネルが
+- **D8（完了）** 最後の回復手段をメニューバーへ置く（「Universal I/Oを再起動」）。パネルが
   応答しない状況の回復手段をパネル内に置かない。自動再起動はしない。
-- **D9（未着手）** リポジトリ全体の`.task`／`.onAppear`を監査し、フォーカス・アニメーション・
+- **D9（完了）** リポジトリ全体の`.task`／`.onAppear`を監査し、フォーカス・アニメーション・
   表示状態以外の副作用が0件であることを確認する。
-- **D7（未着手）** 24時間以上連続稼働後のgolden pathを[manual-golden-paths.md](manual-golden-paths.md)へ
+- **D7（項目追加は完了、実施は未了）** 24時間以上連続稼働後のgolden pathを[manual-golden-paths.md](manual-golden-paths.md)へ
   追加し、リリース前チェックとして実施する。
+
+macOS unit testは41件から61件へ増えた。webのlint／型検査／production buildも成功している。
+残るのは実機検証で、D7の長時間稼働試験、署名付き候補版でのGolden Paths、Gateway側変更の
+本番デプロイ（`main`へのpush）が未了である。
 
 旧D4（パネル表示の作り直し）は`0.2.2`のゲートから外す。障害は新品のウインドウで起きており、
 ホスティングコントローラーの寿命を延ばしても防げない。衛生改善として公開後に扱う。
