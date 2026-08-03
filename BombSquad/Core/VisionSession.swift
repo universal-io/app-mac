@@ -89,6 +89,8 @@ final class VisionSession: ObservableObject {
     private var copilotStepCount = 0
     private var hasStarted = false
     private var screenshotImageTask: Task<Void, Never>?
+    private var requestCancellation: CancellationLedger?
+    private var copilotCancellation: CancellationLedger?
 
     init(
         attachment: ScreenshotAttachment,
@@ -264,8 +266,10 @@ final class VisionSession: ObservableObject {
     }
 
     func tearDown() {
+        requestCancellation?.cause = .sessionTornDown
         requestTask?.cancel()
         requestTask = nil
+        copilotCancellation?.cause = .sessionTornDown
         copilotProgressTask?.cancel()
         copilotProgressTask = nil
         screenshotImageTask?.cancel()
@@ -314,6 +318,7 @@ final class VisionSession: ObservableObject {
 
     private func run(question: String?, priorTurns: [VisionTurn]) {
         let turnKind: VisionTurnKind = question == nil ? .first : .question
+        requestCancellation?.cause = .supersededByNewerRequest
         requestTask?.cancel()
         OperationalNoticeCenter.shared.beginOperation()
         guard let client else {
@@ -324,6 +329,8 @@ final class VisionSession: ObservableObject {
         isLoading = true
         errorMessage = nil
         let expectedCaptureID = attachment.id
+        let ledger = CancellationLedger()
+        requestCancellation = ledger
         requestTask = Task { [weak self] in
             guard let self else { return }
             defer { self.isLoading = false }
@@ -393,7 +400,18 @@ final class VisionSession: ObservableObject {
                 }
                 try self.apply(response, candidates: fixedCandidates)
             } catch is CancellationError {
-                return
+                // A cancellation this session asked for needs no explanation:
+                // a newer request will produce the outcome, and a torn-down
+                // session has no panel to explain anything to. Any OTHER
+                // cancellation dropped a completed request on the floor without
+                // a word, which is the failure mode this project exists to
+                // remove (docs/reliability-hardening-plan.md D6).
+                guard ledger.cause == nil else { return }
+                Diagnostics.record("vision.cancelledUnexplained", details: [
+                    ("turn", .code(turnKind)),
+                    ("total", .ms(Self.elapsedMs(since: started))),
+                ])
+                self.errorMessage = "画面の読み取りが中断されました。もう一度お試しください。"
             } catch {
                 Diagnostics.record("vision.failed", details: [
                     ("turn", .code(turnKind)),
@@ -435,6 +453,7 @@ final class VisionSession: ObservableObject {
         guard isCopilotActive, !isCopilotChecking,
               copilotState != .complete, copilotState != .stepLimit else { return }
         OperationalNoticeCenter.shared.beginOperation()
+        copilotCancellation?.cause = .supersededByNewerRequest
         copilotProgressTask?.cancel()
         isCopilotChecking = true
         copilotState = .waitingForChange
@@ -444,6 +463,8 @@ final class VisionSession: ObservableObject {
         let baseline = attachment
         let goal = copilotGoal
         let previousInstruction = latestInstruction
+        let ledger = CancellationLedger()
+        copilotCancellation = ledger
         copilotProgressTask = Task { [weak self] in
             guard let self, let goal else { return }
             defer {
@@ -477,7 +498,10 @@ final class VisionSession: ObservableObject {
                     previousInstruction: previousInstruction
                 )
             } catch is CancellationError {
-                return
+                guard ledger.cause == nil else { return }
+                Diagnostics.record("copilot.cancelledUnexplained")
+                self.copilotState = .timedOut
+                self.errorMessage = "画面の確認が中断されました。「再確認」を押してください。"
             } catch {
                 self.copilotState = .timedOut
 #if DEBUG
@@ -651,6 +675,22 @@ final class VisionSession: ObservableObject {
               !app.isActive else { return }
         app.activate()
     }
+}
+
+/// Why an in-flight request was cancelled, recorded by whoever cancelled it.
+///
+/// A reference type so the answer travels with the request it belongs to: the
+/// session can have a superseded request and a live one at the same moment, and
+/// a single field on the session would give the wrong answer to one of them.
+final class CancellationLedger {
+    enum Cause {
+        /// A newer request replaced this one; that request owns the outcome.
+        case supersededByNewerRequest
+        /// The user closed the panel. There is nobody left to tell.
+        case sessionTornDown
+    }
+
+    var cause: Cause?
 }
 
 /// Which turn a vision request belongs to. A named type rather than a string so

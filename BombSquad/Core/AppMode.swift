@@ -124,7 +124,13 @@ final class AppStateMachine: ObservableObject {
                 ("to", .code(next)),
                 ("reason", .code(reason))
             ])
-            assertionFailure("Illegal AppMode transition \(current) → \(next) (\(reason))")
+            // The assert exists to surface a programming error while developing.
+            // A test that deliberately drives the refusal path is not that, and
+            // refusal handling is precisely what needs covering: it is the case
+            // that used to leave a panel with no session behind it.
+            if !AppRuntime.isRunningUnitTests {
+                assertionFailure("Illegal AppMode transition \(current) → \(next) (\(reason))")
+            }
             return false
         }
         mode = next
