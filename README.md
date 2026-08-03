@@ -17,18 +17,20 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 下の表はあくまで現時点のスナップショットで、食い違った場合は常に`ai-routing.ts`が正しく、
 READMEの方を直します。モデル名を判断材料にする作業では、この表ではなくコードを読んでください。
 
-現時点（2026-08-02）の構成:
+現時点（2026-08-04）の構成:
 
 | 機能 | 一次モデル | 二次モデル |
 |---|---|---|
 | Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
-| Vision / Copilot | Cerebras `gemma-4-31b`（トライアル中） | OpenAI `gpt-5.4-mini` |
+| Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 先回り文案 | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
 
-Vision / Copilotの一次は`gpt-5.6-luna`からCerebras `gemma-4-31b`へ試験的に差し替えています。
-画面理解の精度が不足する場合はOpenAIへ戻す前提で、二次モデルは変更していません
-（`CEREBRAS_API_KEY`が未設定でも二次へ落ちて動作します）。
+Vision / CopilotのCerebras `gemma-4-31b`トライアルは2026-08-04に終了し、`gpt-5.6-luna`へ
+戻しました。実機で開いたプルダウンの中身を読めず、案内が成立しなかったためです。GA4や
+管理ツールの多くは目的の項目がメニューの中にあるので、開いたメニューを読めないことは
+一部の画面の問題ではなく、案内機能そのものが使えないことを意味します。判断の記録は
+[guidance-accuracy-plan.md](docs/guidance-accuracy-plan.md)。
 
 共通規則:
 

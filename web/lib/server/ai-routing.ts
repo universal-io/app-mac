@@ -36,10 +36,16 @@ export const AI_MODEL_ROUTES: Readonly<Record<AIFeature, AIModelRoute>> = {
   },
   vision: {
     label: "Vision / Copilot",
-    // Trial: Cerebras gemma-4-31b in place of gpt-5.6-luna, to compare
-    // latency/quality on real screenshots. Falls back to the unchanged
-    // secondary if Cerebras errors or CEREBRAS_API_KEY is unset.
-    primary: { vendor: "cerebras", modelId: "gemma-4-31b", api: "chat_completions" },
+    // The Cerebras gemma-4-31b trial ended on 2026-08-04: it could not read the
+    // contents of an opened pulldown on a real screen. That is not a corner
+    // case — GA4, Kinsta, and most admin tools put the destination BEHIND a
+    // menu, so a guide that cannot read an open menu cannot guide.
+    //
+    // The two paths are not even asking for the same thing: the responses path
+    // sends `detail: VISION_IMAGE_DETAIL` ("original"), while chat_completions
+    // sends the image with no detail request at all and takes whatever the
+    // vendor's default downscaling gives. See docs/guidance-accuracy-plan.md.
+    primary: { vendor: "openai", modelId: "gpt-5.6-luna", api: "responses" },
     secondary: { vendor: "openai", modelId: "gpt-5.4-mini", api: "responses" },
   },
   suggest: {
