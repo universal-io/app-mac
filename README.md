@@ -12,12 +12,23 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 [`web/lib/server/ai-routing.ts`](web/lib/server/ai-routing.ts) が唯一の正本です。
 個別のengine、macOSクライアント、環境変数へモデル名を分散させません。
 
+**どのモデルを使うかは流動的です。** 新モデルの精度・遅延・単価を実画面で比較するため、
+機能ごとの一次モデルはセッション単位で入れ替わることがあります（トライアル中の差し替えを含む）。
+下の表はあくまで現時点のスナップショットで、食い違った場合は常に`ai-routing.ts`が正しく、
+READMEの方を直します。モデル名を判断材料にする作業では、この表ではなくコードを読んでください。
+
+現時点（2026-08-02）の構成:
+
 | 機能 | 一次モデル | 二次モデル |
 |---|---|---|
 | Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
-| Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
+| Vision / Copilot | Cerebras `gemma-4-31b`（トライアル中） | OpenAI `gpt-5.4-mini` |
 | 先回り文案 | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
+
+Vision / Copilotの一次は`gpt-5.6-luna`からCerebras `gemma-4-31b`へ試験的に差し替えています。
+画面理解の精度が不足する場合はOpenAIへ戻す前提で、二次モデルは変更していません
+（`CEREBRAS_API_KEY`が未設定でも二次へ落ちて動作します）。
 
 共通規則:
 
