@@ -1,6 +1,6 @@
 # 起動確実性と公開品質（R11）
 
-最終更新: 2026-08-03 ／ ステータス: 計画確定・実装中
+最終更新: 2026-08-03 ／ ステータス: D1〜D9実装完了・実機検証待ち
 
 進捗と受け入れ条件の正本は[マスタープラン R11](universal-io-master-plan.md)、
 本書は原因分析・目標構造・マイルストーンの正本とする。
@@ -131,7 +131,7 @@ R11では次を不変条件とする。
   受け入れ条件: 原因分析が実測ログとコード位置で裏付けられ、各マイルストーンの受け入れ条件が
   検証可能な文で書かれている。**完了**（1-bの実測でD4の前提を反証し、順序と範囲を改訂した）。
 
-- **D1（診断の常設化）** 現在の`CoreTrace`／`VisionTrace`は`#if DEBUG`のNSLogだけで、
+- **D1（診断の常設化）完了。** 現在の`CoreTrace`／`VisionTrace`は`#if DEBUG`のNSLogだけで、
   公開版では何も残らない。`os_log`のsubsystemへ移し、release buildでも
   「セッション開始・リクエスト発行直前・完了・失敗」を必ず記録する。
   記録するのは機能名、経過ミリ秒、成否、理由コードだけとし、本文・回答・画像・
@@ -144,13 +144,13 @@ R11では次を不変条件とする。
   その記録をコピーして送れる。コピーされた文字列に本文・タイトル・ホスト名が含まれないことを
   testで固定する。
 
-- **D2（開始をコーディネーターが所有）** `handleVisionCaptureCompletion`でセッションを
+- **D2（開始をコーディネーターが所有）完了。** `handleVisionCaptureCompletion`でセッションを
   生成した直後に開始する。`startIfNeeded()`は`hasStarted`で冪等なので、ビュー側の`.task`は
   残っていても二重送信にならない。
   受け入れ条件: `.task`を取り除いた状態でも初回リクエストが発行されることを、
   ビューを介さないunit testで固定する。
 
-- **D3（画像読み込みの非依存化）** スクリーンショット表示を`.onAppear`から切り離す。
+- **D3（画像読み込みの非依存化）完了。** スクリーンショット表示を`.onAppear`から切り離す。
   `ZoomableScreenshotView`はURLを受け取って自分でディスクから読み直しているが、captureは
   すでに画像を持っている。表示用の画像をsessionが値として保持すれば、`loadImage()`という
   概念ごと無くなる。「appearance callbackから切り離す」のではなく「読み込みが存在しない」に
@@ -159,7 +159,7 @@ R11では次を不変条件とする。
   Visionパネル内でユーザーが見る情報のうち、appearance callbackだけを引き金にするものを
   ゼロにする。
 
-- **D6（無音失敗の撤去）** `BombSquad/Core/VisionSession.swift:340` の
+- **D6（無音失敗の撤去）完了。** `BombSquad/Core/VisionSession.swift` の
   `catch is CancellationError { return }` は、ユーザーが閉じた場合と内部都合で
   取り消された場合を区別せず結果を捨てる。両者を分け、後者は理由を表示する。
   `SessionCoordinator.close()` は`stateMachine.transition(to: .idle)`の戻り値を捨てており、
@@ -170,7 +170,7 @@ R11では次を不変条件とする。
   受け入れ条件: 遷移拒否時にセッションが生存していることをtestで固定する。
   `transition`の戻り値を暗黙に捨てているコードがビルド時に0件である。
 
-- **D5（操作の一元実行機構）** 現状タイムアウトはクライアント・サーバのどちらにも存在しない
+- **D5（操作の一元実行機構）完了。** 現状タイムアウトはクライアント・サーバのどちらにも存在しない
   （`timeoutInterval`／`maxDuration`ともに0件）。個別に配って回るのではなく、ユーザーに
   見える操作（Visionの1ターン、レビュー、transcribe、suggest）は**期限・トレース・終端状態を
   必ず伴う単一のランナー経由でしか実行できない**形にする。sessionが素の`Task {}`を張って
@@ -178,8 +178,10 @@ R11では次を不変条件とする。
   - Vision 1ターンの全体期限。超過で「画面の読み取りが時間内に完了しませんでした」を表示する。
   - `BombSquadAuthClient.accessToken()`（`client.auth.session`）の期限。ここは現在無期限に
     awaitし、失敗するとネットワークログさえ残らない唯一の箇所である。
-  - Gateway側の`fetch`2箇所（`web/lib/server/vision-engine.ts:111`、`:165`）へ
-    `AbortSignal.timeout`、routeへ`maxDuration`。
+  - Gateway側のprovider呼び出しを`fetchProvider`へ集約して`AbortSignal.timeout`を必ず通す。
+    実装時の再確認で、transcribeにだけ既に期限があった（vision／review／suggestには無い）。
+    4 routeへ`maxDuration = 60`を入れ、whisperのfallbackを60秒から35秒へ下げて
+    `15 + 35 < 60`が成り立つようにした。現行プランでだけ通る予算は、いちばん困る時に破れる。
   - `mode=vision`へ遷移してから一定時間内にリクエストが発行されなければ、
     コーディネーターが開始を再試行し、それでも駄目なら可視エラーにする。
   受け入れ条件: 一次モデルが「エラーを返さず無応答」の場合に二次モデルへ落ちること。
@@ -188,7 +190,7 @@ R11では次を不変条件とする。
   `maxDuration ≧ 一次timeout + 二次timeout + overhead`を満たすこと。
   一次timeoutの値はD1で得た実測分布から決め、正常応答を切らない。
 
-- **D8（最後の回復手段をアプリ内に持つ）** 1-bのとおり、パネル再生成では回復しない。
+- **D8（最後の回復手段をアプリ内に持つ）完了。** 1-bのとおり、パネル再生成では回復しない。
   プロセスの再起動が唯一確実な手段である以上、それを口頭の案内ではなくメニューバーの
   1操作として提供する（「Universal I/Oを再起動」）。回復操作をパネル内に置かない。
   パネルの描画が壊れている状況を前提とした回復手段が、そのパネルの中にあっては意味がない。
@@ -218,7 +220,7 @@ R11では次を不変条件とする。
   課金状態のように古い値が危険なものには、前面化時の引き金がすでに別途ある。
   Visionの欠陥はこれと種類が違い、ユーザーが頼んだ操作そのものが失われていた。
 
-- **D7（長時間稼働の受け入れ試験）** 24時間以上連続稼働させた後にCompose、Vision、Copilot、
+- **D7（項目追加は完了、実施は未了）** 24時間以上連続稼働させた後にCompose、Vision、Copilot、
   音声入力のgolden pathを通す項目を[manual-golden-paths.md](manual-golden-paths.md)へ追加する。
   受け入れ条件: リリース前チェックとして実施され、結果が記録される。これが
   「再起動してください」を顧客へ案内しないための最後の防波堤である。
@@ -244,19 +246,19 @@ D0時点の実測に基づく。「扱い」がD番号のものは本プロジ�
 |---|---|---|---|---|
 | 1 | セッション開始が`.task`単点依存 | `VisionSessionView.swift:34` | 今回の障害の直接原因 | D2 |
 | 2 | 画像読み込みが`.onAppear`依存 | `ZoomableScreenshotView.swift:87` | 画面が空になる | D3 |
-| 3 | タイムアウトが皆無 | クライアント全体・`vision-engine.ts` | 止まったのか遅いのか区別できない | D5 |
-| 4 | `accessToken()`が無期限await | `BombSquadAuthClient.swift:197` | 痕跡ゼロで永久停止し得る | D5 |
-| 5 | fallbackが例外時のみ | `ai-routing.ts:101` | 一次ハング時に二次へ落ちない | D5のtimeoutが例外化して解消。機構は改造しない |
-| 6 | `maxDuration`未設定 | `web/app/api/ai/*` | 直列2コールに予算が無い | D5 |
-| 7 | 診断がDEBUG限定 | `VisionSession.swift:603`、`CoreTrace` | 公開版で原因が分からない | D1 |
-| 8 | `close()`が遷移結果を無視 | `SessionCoordinator.swift:374` | 抜け殻パネルを作り得る | D6 |
-| 9 | CancellationErrorの無音return | `VisionSession.swift:340` | 完了した回答を黙って捨てる | D6 |
+| 3 | タイムアウトが皆無 | クライアント全体・vision／review／suggest engine | 止まったのか遅いのか区別できない | D5で解消 |
+| 4 | `accessToken()`が無期限await | `GatewayAPI.authorizedRequest` | 痕跡ゼロで永久停止し得る | D5で解消（10秒） |
+| 5 | fallbackが例外時のみ | `ai-routing.ts:101` | 一次ハング時に二次へ落ちない | D5のtimeoutが例外化して解消。機構は無改造 |
+| 6 | `maxDuration`未設定 | `web/app/api/ai/*` | 直列2コールに予算が無い | D5で解消（60秒） |
+| 7 | 診断がDEBUG限定 | `VisionTrace`／`CoreTrace` | 公開版で原因が分からない | D1で解消（`Diagnostics`へ統合） |
+| 8 | `close()`が遷移結果を無視 | `SessionCoordinator.close()` | 抜け殻パネルを作り得る | D1で解消（`@discardableResult`除去） |
+| 9 | CancellationErrorの無音return | `VisionSession` | 完了した回答を黙って捨てる | D6で解消 |
 | 10 | ホスティングコントローラー毎回差し替え | `PanelController.swift:69` | 劣化源との推定は1-bで**反証**。衛生改善 | `0.2.2`後（旧D4） |
-| 11 | ライフサイクルのtestがゼロ | `BombSquadTests/`（41件） | パネル・セッション寿命が未検証 | D2・D3・D6で追加 |
-| 12 | 3MB超画像のJPEG再圧縮が1回のみ | `GatewayVisionClient.swift:152` | 高解像度で4.5MB制限を超え得る | D5で実測して判断 |
-| 13 | AX messaging timeoutの実効範囲が未検証 | `VisionObservationCaptureService.swift:285` | 子要素へ継承されるか未確認 | D5で実測 |
-| 14 | 診断をユーザーが取り出せない | 管理画面 | 顧客のログはsysdiagnoseなしでは届かない | D1 |
-| 15 | 最終回復手段が口頭案内 | — | 「再起動してください」を案内するしかない | D8 |
+| 11 | ライフサイクルのtestがゼロ | `BombSquadTests/`（41件） | パネル・セッション寿命が未検証 | 61件へ。D1・D2・D3・D5・D6で追加 |
+| 12 | 3MB超画像のJPEG再圧縮が1回のみ | `GatewayVisionClient.swift:152` | 高解像度で4.5MB制限を超え得る | **未対応**。D7の実機計測へ持ち越す |
+| 13 | AX messaging timeoutの実効範囲が未検証 | `VisionObservationCaptureService.swift:285` | 子要素へ継承されるか未確認 | **未対応**。D7の実機計測へ持ち越す |
+| 14 | 診断をユーザーが取り出せない | 管理画面 | 顧客のログはsysdiagnoseなしでは届かない | D1で解消 |
+| 15 | 最終回復手段が口頭案内 | — | 「再起動してください」を案内するしかない | D8で解消 |
 
 ## 6. 検証
 
@@ -280,3 +282,18 @@ D0時点の実測に基づく。「扱い」がD番号のものは本プロジ�
 ## 8. 復帰点
 
 タグ`r11-start`（`3ca936e`）が着手直前の`main`である。作業ブランチは`r11-reliability`。
+
+## 9. 現在の状態
+
+D1〜D6、D8、D9をブランチ上で実装した。macOS unit test 61件（41→61）、署名なしDebug build、
+webのlint／TypeScript型検査／production buildが成功している。
+
+残っているのは**実機での確認**である。ここまでの検証はいずれも自動テストとビルドで、
+署名付きアプリを長時間動かした確認は行っていない。具体的には次が未了である。
+
+- D7の長時間稼働試験（24時間以上）。項目は[manual-golden-paths.md](manual-golden-paths.md)へ
+  追加済みで、実施はこれから。
+- 署名付き候補版でのGolden Paths全体（R10／R10.5分を含む）。
+- 負債#12（3MB超画像の再圧縮）と#13（AX messaging timeoutの継承）の実測。
+- Gateway側変更（`maxDuration`とprovider timeout）は`main`へpushするまで本番へ届かない。
+  現在は作業ブランチ上にあり、**本番Gatewayはまだ期限を持っていない**。
