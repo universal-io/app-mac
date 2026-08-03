@@ -48,7 +48,9 @@ struct PermissionsSetupView: View {
         }
         .padding(24)
         .frame(width: 470)
-        .onAppear { coordinator.startMonitoring() }
+        // Monitoring is started by whoever opened this window (AppDelegate);
+        // stopping it when the view goes away is display-lifetime cleanup, and a
+        // missed stop costs a timer rather than the user's action.
         .onDisappear { coordinator.stopMonitoring() }
     }
 }

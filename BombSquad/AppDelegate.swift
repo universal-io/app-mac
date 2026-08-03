@@ -215,6 +215,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         centerOnActiveScreen(window)
 
         permissionsWindow = window
+        // Owned here, not by the view's `.onAppear`. This window's entire job is
+        // to notice the moment the user grants a permission in System Settings;
+        // if the polling start rode on an appearance callback that never fired,
+        // the user would grant access and watch nothing happen — the same shape
+        // as the vision stall (docs/reliability-hardening-plan.md D9).
+        MainActor.assumeIsolated { permissions.startMonitoring() }
         bringToFront(window)
     }
 

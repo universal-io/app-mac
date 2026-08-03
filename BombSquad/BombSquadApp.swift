@@ -42,6 +42,9 @@ struct BombSquadApp: App {
             Button("料金プラン…") { openManagement(.pricing) }
             Divider()
 
+            // Recovery lives here, not in the panel: the panel is what may be
+            // unresponsive when this is needed (D8).
+            Button("Universal I/Oを再起動…") { AppRestart.confirmAndRestart() }
             Button("終了") { NSApplication.shared.terminate(nil) }
         } label: {
             // Monochrome I//O glyph (template image; design principle 3.5).
