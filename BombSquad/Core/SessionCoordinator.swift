@@ -82,6 +82,11 @@ final class SessionCoordinator {
     /// compose was summoned — captured synchronously before our panel steals
     /// focus, so the proactive suggestion gate is reliable.
     private var composeFocusEditable = false
+    /// Reset by every gesture that starts a surface, and read by everything
+    /// downstream. Without a shared origin the trail holds several stopwatches
+    /// that overlap and cannot be added, and none of them covers the gap the
+    /// user notices first: gesture to panel.
+    private var summonClock = SummonClock()
 
     init() {
         panelController.onCloseRequested = { [weak self] in
@@ -190,6 +195,7 @@ final class SessionCoordinator {
     /// touches the user's clipboard.
     private func summonSelectionAware() {
         guard stateMachine.mode == .idle else { return }
+        summonClock = SummonClock()
         let targetApp = NSWorkspace.shared.frontmostApplication
         summonTargetApp = targetApp
         // Resolve the working screen while that app is still frontmost; once our
@@ -252,6 +258,7 @@ final class SessionCoordinator {
                     "coordinator.axFocusResolved",
                     mode: self.stateMachine.mode,
                     details: [
+                        ("sinceSummon", .ms(self.summonClock.elapsedMs)),
                         ("elapsed", .ms(Int(Date().timeIntervalSince(startedAt) * 1_000))),
                         ("passes", .count(snapshot.collectionPasses)),
                         ("status", .code(snapshot.status)),
@@ -294,6 +301,7 @@ final class SessionCoordinator {
     /// (menu-bar command, hold-to-talk bootstrap) always open compose.
     private func summonCompose() {
         guard stateMachine.mode == .idle else { return }
+        summonClock = SummonClock()
         presentComposeSession()
     }
 
@@ -765,6 +773,9 @@ final class SessionCoordinator {
     /// Returns false when no pre-capture is ready (caller falls back).
     private func enterVisionReusingPreCapture() -> Bool {
         guard let composeSession, let attachment = composePreCapture else { return false }
+        // The double-tap just happened and the shot is already in hand, so
+        // everything from here is the app's wait.
+        summonClock = SummonClock()
         composePreCapture = nil
         composePreCaptureTask?.cancel()
         composePreCaptureTask = nil
@@ -825,6 +836,10 @@ final class SessionCoordinator {
             await MainActor.run {
                 guard self.captureGeneration == generation else { return }
                 self.captureTask = nil
+                // This route puts a selection overlay up and waits for the user
+                // to drag a region. That is their time, not ours, so the
+                // measured wait starts where the app takes over again.
+                self.summonClock = SummonClock()
                 self.handleVisionCaptureCompletion(completion, composeSession: composeSession)
             }
         }
@@ -859,6 +874,7 @@ final class SessionCoordinator {
                 candidateCaptureTask: candidateCaptureTask,
                 identityTask: identityTask,
                 selection: resolvedSelection,
+                askClock: summonClock,
                 onRequestModeTransition: { [weak self] target, reason in
                     self?.transitionVision(to: target, reason: reason) ?? false
                 },
@@ -963,6 +979,15 @@ final class SessionCoordinator {
 
     private func applyPanel(for mode: AppMode) {
         if mode.hasPanel {
+            // The first thing the user sees. Recorded before `present` returns
+            // rather than after, because what follows is view construction the
+            // user is already watching happen, and because a panel that never
+            // finishes appearing must still leave the attempt in the trail.
+            if !panelController.isVisible {
+                Diagnostics.record("coordinator.panelShown", mode: mode, details: [
+                    ("sinceSummon", .ms(summonClock.elapsedMs)),
+                ])
+            }
             if mode == .compose, let composeSession {
                 panelController.present(
                     FoundationComposeRootView(

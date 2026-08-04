@@ -205,6 +205,12 @@ struct DiagnosticErrorClass: DiagnosticCode {
     }
 }
 
+/// Which shape of answer came back. A fixed four-case vocabulary defined by the
+/// gateway contract, never text read off the screen.
+extension VisionResult.Mode: DiagnosticCode {
+    var diagnosticCode: String { rawValue }
+}
+
 extension AXFocusSnapshot.CaptureStatus: DiagnosticCode {
     var diagnosticCode: String { String(describing: self) }
 }

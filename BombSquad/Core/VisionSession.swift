@@ -74,6 +74,12 @@ final class VisionSession: ObservableObject {
     private let client: GatewayVisionClient?
     private let outputLanguage: OutputLanguage
     private let preferredTargetPID: pid_t?
+    /// When the user asked for the turn currently in flight — the double-tap
+    /// for the opening turn, Enter for a question, the click for a copilot
+    /// step. Every latency record in the turn is measured from here, so the
+    /// trail reads as one ladder from one origin instead of several unrelated
+    /// stopwatches (`SummonClock`).
+    private var askClock: SummonClock
     private let candidateCaptureTask: Task<VisionObservationCaptureService.Snapshot, Never>
     /// Resolved separately from the candidate capture so the very first turn
     /// already carries the product identity; the candidate collection can take
@@ -105,12 +111,16 @@ final class VisionSession: ObservableObject {
         identityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>? = nil,
         selection: VisionSelectionContext? = nil,
         client: GatewayVisionClient? = GatewayVisionClient.make(),
+        // Handed in from the summon so the opening turn is measured from the
+        // user's gesture, not from the moment this object happened to exist.
+        askClock: SummonClock = SummonClock(),
         onRequestModeTransition: @escaping (AppMode, TransitionReason) -> Bool = { _, _ in true },
         onRequestPanelClose: @escaping () -> Void = {}
     ) {
         self.attachment = attachment
         self.preferredTargetPID = preferredTargetPID
         self.selection = selection
+        self.askClock = askClock
         self.candidateCaptureTask = candidateCaptureTask ?? Task {
             VisionObservationCaptureService.Snapshot(
                 environment: nil,
@@ -207,6 +217,9 @@ final class VisionSession: ObservableObject {
         let question = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isLoading else { return }
 
+        // The origin moves to Enter: this turn's wait is the user's, and it has
+        // nothing to do with how long ago the panel was summoned.
+        askClock = SummonClock()
         let priorTurns = wireTurns
         input = ""
         errorMessage = nil
@@ -398,6 +411,11 @@ final class VisionSession: ObservableObject {
                 self.hasIssuedRequest = true
                 Diagnostics.record("vision.request", details: [
                     ("turn", .code(turnKind)),
+                    // Everything the user waited through before the request
+                    // could even leave: the gesture, the capture, the panel,
+                    // and the two waits below. Only this number is comparable
+                    // to the provider's own timing.
+                    ("sinceAsk", .ms(self.askClock.elapsedMs)),
                     ("candidatesWait", .ms(candidatesMs)),
                     ("identity", .ms(identityMs)),
                     ("candidates", .count(fixedCandidates.count)),
@@ -414,6 +432,7 @@ final class VisionSession: ObservableObject {
                 )
                 Diagnostics.record("vision.turn", details: [
                     ("turn", .code(turnKind)),
+                    ("sinceAsk", .ms(self.askClock.elapsedMs)),
                     ("gatewayRoundTrip", .ms(Self.elapsedMs(since: requestStarted))),
                     ("total", .ms(Self.elapsedMs(since: started))),
                 ])
@@ -433,12 +452,14 @@ final class VisionSession: ObservableObject {
                 guard ledger.cause == nil else { return }
                 Diagnostics.record("vision.cancelledUnexplained", details: [
                     ("turn", .code(turnKind)),
+                    ("sinceAsk", .ms(self.askClock.elapsedMs)),
                     ("total", .ms(Self.elapsedMs(since: started))),
                 ])
                 self.errorMessage = "画面の読み取りが中断されました。もう一度お試しください。"
             } catch {
                 Diagnostics.record("vision.failed", details: [
                     ("turn", .code(turnKind)),
+                    ("sinceAsk", .ms(self.askClock.elapsedMs)),
                     ("total", .ms(Self.elapsedMs(since: started))),
                     ("error", .code(DiagnosticErrorClass(error))),
                 ])
@@ -484,6 +505,7 @@ final class VisionSession: ObservableObject {
         errorMessage = "画面の読み取りが時間内に完了しませんでした。もう一度お試しください。"
         Diagnostics.record("vision.deadlineExceeded", details: [
             ("turn", .code(turn)),
+            ("sinceAsk", .ms(askClock.elapsedMs)),
             ("budget", .ms(Int(OperationDeadline.visionTurn * 1000))),
         ])
     }
@@ -512,6 +534,10 @@ final class VisionSession: ObservableObject {
     private func scheduleCopilotProgressCheck(after delay: UInt64, waitForChange: Bool) {
         guard isCopilotActive, !isCopilotChecking,
               copilotState != .complete, copilotState != .stepLimit else { return }
+        // The user's click is the origin of a copilot step, and it is where
+        // their wait starts — including the settle delay below, which is spent
+        // on their behalf and therefore belongs in the number.
+        askClock = SummonClock()
         OperationalNoticeCenter.shared.beginOperation()
         copilotCancellation?.cause = .supersededByNewerRequest
         copilotProgressTask?.cancel()
@@ -545,6 +571,17 @@ final class VisionSession: ObservableObject {
                 // Confirm the exact adopted frame after capture, without
                 // delaying AX collection or the Gateway request.
                 CopilotCaptureCuePresenter.shared.flash(for: capture.attachment)
+                // Copilot progress turns produced no operational record at all
+                // until now: the 2026-08-03 trail had the AX walk and the
+                // capture as DEBUG-only NSLog, so a shipped build reported
+                // nothing for the slowest path in the product
+                // (docs/guidance-accuracy-plan.md 1-k).
+                Diagnostics.record("copilot.capture", details: [
+                    ("sinceAsk", .ms(self.askClock.elapsedMs)),
+                    ("attempts", .count(capture.attempts)),
+                    ("changeObserved", .flag(capture.changeObserved)),
+                    ("settled", .flag(capture.settled)),
+                ])
 #if DEBUG
                 NSLog(
                     "Vision progress capture adopted changeObserved=%d settled=%d",
@@ -581,12 +618,14 @@ final class VisionSession: ObservableObject {
     ) async {
         guard let client else { return }
         copilotState = .evaluating
+        let axStarted = Date()
         let snapshotTask = VisionObservationCaptureService.captureTask(
             preferredPID: preferredTargetPID,
             attachment: newAttachment
         )
         beginIdentityRefresh()
         let snapshot = await snapshotTask.value
+        let axMs = Self.elapsedMs(since: axStarted)
         guard !Task.isCancelled, isCopilotActive else {
             try? FileManager.default.removeItem(at: newAttachment.url)
             return
@@ -595,6 +634,12 @@ final class VisionSession: ObservableObject {
         let previousCandidates = candidates
         let previousDiagnostics = candidateDiagnostics
         do {
+            let requestStarted = Date()
+            Diagnostics.record("copilot.request", details: [
+                ("sinceAsk", .ms(askClock.elapsedMs)),
+                ("ax", .ms(axMs)),
+                ("candidates", .count(snapshot.axCandidates.count)),
+            ])
             let response = try await client.understand(
                 attachment: newAttachment,
                 question: nil,
@@ -608,6 +653,10 @@ final class VisionSession: ObservableObject {
                 ),
                 language: outputLanguage
             )
+            Diagnostics.record("copilot.turn", details: [
+                ("sinceAsk", .ms(askClock.elapsedMs)),
+                ("gatewayRoundTrip", .ms(Self.elapsedMs(since: requestStarted))),
+            ])
             try Task.checkCancellation()
             guard isCopilotActive, response.captureID == newAttachment.id else {
                 try? FileManager.default.removeItem(at: newAttachment.url)
@@ -671,6 +720,10 @@ final class VisionSession: ObservableObject {
             }
             try? FileManager.default.removeItem(at: newAttachment.url)
             copilotState = .timedOut
+            Diagnostics.record("copilot.failed", details: [
+                ("sinceAsk", .ms(askClock.elapsedMs)),
+                ("error", .code(DiagnosticErrorClass(error))),
+            ])
 #if DEBUG
             errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 #else
@@ -700,6 +753,19 @@ final class VisionSession: ObservableObject {
             screenshotHighlight = nil
             if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
         }
+        // The number the user would give if asked "how long did it take" — the
+        // first moment this turn put readable content in front of them.
+        //
+        // Today the whole answer arrives at once, so this sits a hair before
+        // `vision.turn`. That is the point of recording it separately now:
+        // when the answer starts streaming, this event keeps meaning exactly
+        // what it means today, and the two numbers pull apart by however much
+        // the change was worth. A metric invented after the optimization has
+        // nothing to be compared against.
+        Diagnostics.record("vision.firstContent", details: [
+            ("sinceAsk", .ms(askClock.elapsedMs)),
+            ("mode", .code(response.result.mode)),
+        ])
         turns.append(VisionDisplayTurn(
             role: .assistant,
             text: response.result.message,

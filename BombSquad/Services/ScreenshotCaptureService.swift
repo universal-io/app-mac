@@ -287,6 +287,11 @@ struct StableScreenCaptureResult {
     /// False: the screen was still changing when the window closed
     /// (animation, slow load); the freshest frame was adopted anyway.
     let settled: Bool
+    /// How many screenshots this watch window took before adopting one. The
+    /// user waits through every one of them plus the delay between them, so a
+    /// copilot step that felt slow is explained by this number more often than
+    /// by the model. The no-change path spends the full budget by construction.
+    let attempts: Int
 }
 
 enum StableScreenCaptureService {
@@ -345,7 +350,8 @@ enum StableScreenCaptureService {
                     return StableScreenCaptureResult(
                         attachment: current,
                         changeObserved: false,
-                        settled: true
+                        settled: true,
+                        attempts: attempt + 1
                     )
                 } else {
                     remove(current)
@@ -360,7 +366,8 @@ enum StableScreenCaptureService {
                     return StableScreenCaptureResult(
                         attachment: current,
                         changeObserved: observedChange,
-                        settled: true
+                        settled: true,
+                        attempts: attempt + 1
                     )
                 }
             } else {
@@ -381,7 +388,8 @@ enum StableScreenCaptureService {
             return StableScreenCaptureResult(
                 attachment: latestCapture,
                 changeObserved: observedChange,
-                settled: false
+                settled: false,
+                attempts: maxAttempts
             )
         }
         let final = try await captureService.captureMatchingScope(of: baseline)
@@ -389,7 +397,8 @@ enum StableScreenCaptureService {
         return StableScreenCaptureResult(
             attachment: final,
             changeObserved: observedChange,
-            settled: false
+            settled: false,
+            attempts: maxAttempts + 1
         )
     }
 
