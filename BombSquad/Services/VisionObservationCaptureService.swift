@@ -1,6 +1,11 @@
 import AppKit
 import ApplicationServices
 
+/// The operational trail, reachable from inside this file. `Diagnostics` alone
+/// resolves to the collector's own nested payload struct once inside the type,
+/// and that shadowing is silent — the wrong one simply fails to have `record`.
+private typealias OperationalTrail = Diagnostics
+
 /// Collects capture-time metadata that cannot be derived from screenshot
 /// pixels. The screenshot remains the source of truth; AX only contributes
 /// visible, bounded candidates from the app associated with this capture.
@@ -190,6 +195,7 @@ enum VisionObservationCaptureService {
                    captureRect.width > 0, captureRect.height > 0 {
                     let overallDeadline = started.addingTimeInterval(Budget.totalDeadline)
                     var previousVisited = 0
+                    var firstPassCandidates = 0
                     while collectionPasses < Budget.maxPasses {
                         collectionPasses += 1
                         let result = collectCandidates(
@@ -197,6 +203,9 @@ enum VisionObservationCaptureService {
                             captureRect: captureRect
                         )
                         webAreaPresent = webAreaPresent || result.sawWebArea
+                        if collectionPasses == 1 {
+                            firstPassCandidates = result.candidates.count
+                        }
                         if result.candidates.count >= candidates.count {
                             candidates = result.candidates
                             visitedNodes = result.visitedNodes
@@ -222,6 +231,22 @@ enum VisionObservationCaptureService {
                               coldWebContent || stillGrowing else { break }
                         try? await Task.sleep(nanoseconds: Budget.passWaitNanoseconds)
                     }
+                    // Every extra pass costs the 500ms wait plus the walk, and
+                    // the user waits through all of it before the request can
+                    // leave. Whether that buys anything was only observable in
+                    // a DEBUG build until now, which is why the one measured
+                    // session had to be a DEBUG one: 11 collections, 11 second
+                    // passes, 11 identical results (guidance-accuracy-plan 1-k).
+                    // `gained` is the number that decides whether the retry
+                    // policy can be tightened — from real machines, not one.
+                    OperationalTrail.record("vision.axCollected", details: [
+                        ("passes", .count(collectionPasses)),
+                        ("elapsed", .ms(Int(Date().timeIntervalSince(started) * 1_000))),
+                        ("candidates", .count(candidates.count)),
+                        ("gained", .count(candidates.count - firstPassCandidates)),
+                        ("webArea", .flag(webAreaPresent)),
+                        ("truncated", .code(AXTruncationCode(truncatedReason))),
+                    ])
                 } else {
                     truncatedReason = "unknown_capture_rect"
                 }

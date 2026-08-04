@@ -94,6 +94,21 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(code, "provider.gateway")
     }
 
+    /// The AX collector carries its stop reason as a `String?` because the wire
+    /// payload needs it that way. Recording it therefore needs a gate: known
+    /// reasons pass, anything else collapses. Without this, a later change that
+    /// put a window title or a host name in that field would quietly start
+    /// writing it to a trail the user hands over.
+    func testUnknownTruncationReasonsCollapseInsteadOfPassingThrough() {
+        XCTAssertEqual(AXTruncationCode("node_limit").diagnosticCode, "node_limit")
+        XCTAssertEqual(AXTruncationCode("deadline").diagnosticCode, "deadline")
+        XCTAssertEqual(AXTruncationCode(nil).diagnosticCode, "complete")
+        XCTAssertEqual(
+            AXTruncationCode("mail.google.com - 山田さん").diagnosticCode,
+            "other"
+        )
+    }
+
     func testCancellationIsRecognizedAsItsOwnClass() {
         XCTAssertEqual(DiagnosticErrorClass(CancellationError()).diagnosticCode, "cancelled")
     }

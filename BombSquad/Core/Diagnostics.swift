@@ -205,6 +205,28 @@ struct DiagnosticErrorClass: DiagnosticCode {
     }
 }
 
+/// Why an AX walk stopped early, reduced to the fixed set the collector can
+/// write. The collector carries this as a `String?` for the wire payload, and
+/// an unrecognized value collapses to `other` rather than passing through —
+/// so the trail cannot start carrying text just because a caller elsewhere
+/// began putting text in that field.
+struct AXTruncationCode: DiagnosticCode {
+    private static let known: Set<String> = [
+        "node_limit", "candidate_limit", "deadline",
+        "unknown_capture_rect", "permission_denied", "no_target_app",
+    ]
+
+    let diagnosticCode: String
+
+    init(_ reason: String?) {
+        guard let reason else {
+            diagnosticCode = "complete"
+            return
+        }
+        diagnosticCode = Self.known.contains(reason) ? reason : "other"
+    }
+}
+
 /// Which shape of answer came back. A fixed four-case vocabulary defined by the
 /// gateway contract, never text read off the screen.
 extension VisionResult.Mode: DiagnosticCode {
