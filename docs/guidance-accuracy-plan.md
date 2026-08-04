@@ -318,9 +318,12 @@ Finderで⌘N→⇧⌘Gによりシートを出し、前後で同じ走査を回
   推定する初版は、VS Codeのターミナルから起動するとVS Code自身を測ってしまい、3本連続で
   無効な数字を出した（1-f）。scratchpadは揮発するので、必要なら`main.swift`を保全する。
 - **1-a〜1-cと1-k、1-hの頻度はPID 20271（Debugビルド、2026-08-03 21:53起動）のunified logから
-  取っている。** `Vision AX collection`／`Vision stable capture`のNSLogは`#if DEBUG`なので、
-  **このプロセスを終了させるとこの経路の実測手段は失われる**（Releaseには出ない）。
-  D7の長時間稼働試験も同じプロセスなので、いずれにせよ終了させない。
+  取った。このプロセスは2026-08-04 22:15:12に正常終了した（稼働24時間22分）。**
+  `Vision AX collection`／`Vision stable capture`のNSLogは`#if DEBUG`なのでReleaseには出ない。
+  **`blockMax`の実値をログから取るには、Debugビルドを起動し直してCopilotを動かす必要がある。**
+  unified logは数日で流れるので、必要な行はその都度ファイルへ落とす。
+  なおD7（24時間連続稼働のgolden path）は**このプロセスでも未達**で、24時間到達後の21:53〜22:15は
+  無操作だった（[manual-golden-paths.md](manual-golden-paths.md)に記録）。
 - **R11は実装・機械検証まで完了し、`main`へ統合・本番デプロイ済み。** 残るは長時間稼働試験
   （D7）だけで、2026-08-03夜から実施中。結果は[manual-golden-paths.md](manual-golden-paths.md)へ記録する。
   R12はこれと独立に進めてよい。
