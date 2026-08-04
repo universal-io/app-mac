@@ -154,6 +154,103 @@ export async function runWithModelFallback<T>(
   );
 }
 
+/** What a streaming attempt hands back as it runs. */
+export type ModelStreamEvent<T> =
+  | { type: "delta"; text: string }
+  | { type: "value"; value: T };
+
+/**
+ * What a caller of `runStreamWithModelFallback` sees. `reset` means text
+ * already sent must be thrown away: the primary died partway through its
+ * answer and the secondary is starting a different one from the beginning.
+ */
+export type RoutedStreamEvent<T> =
+  | { type: "delta"; text: string }
+  | { type: "reset" }
+  | { type: "final"; result: RoutedModelResult<T> };
+
+/**
+ * The same primary-then-secondary contract as `runWithModelFallback`, for
+ * attempts that produce their answer incrementally.
+ *
+ * It lives beside its non-streaming twin on purpose. Fallback behaviour and the
+ * notice a recovered request carries are policy, and policy that exists in two
+ * places drifts — which is the reason this file is the single source of truth
+ * for routes at all.
+ *
+ * The one thing streaming adds is that a failure can arrive after the user has
+ * already read part of an answer. That text cannot be unsaid, so it is
+ * retracted explicitly rather than left on screen with a different answer
+ * appended to it.
+ */
+export async function* runStreamWithModelFallback<T>(
+  feature: AIFeature,
+  attempt: (target: AIModelTarget) => AsyncGenerator<ModelStreamEvent<T>>,
+): AsyncGenerator<RoutedStreamEvent<T>> {
+  const route = AI_MODEL_ROUTES[feature];
+  const targets = [route.primary, route.secondary] as const;
+  const failures: Array<{ target: AIModelTarget; error: unknown }> = [];
+
+  for (const [index, target] of targets.entries()) {
+    let sentText = false;
+    try {
+      for await (const event of attempt(target)) {
+        if (event.type === "delta") {
+          if (event.text.length === 0) continue;
+          sentText = true;
+          yield { type: "delta", text: event.text };
+          continue;
+        }
+        yield {
+          type: "final",
+          result: {
+            value: event.value,
+            modelVendor: target.vendor,
+            modelId: target.modelId,
+            api: target.api,
+            fallbackUsed: index === 1,
+            notices: index === 1
+              ? [modelFallbackNotice({
+                  fromVendor: route.primary.vendor,
+                  fromModelId: route.primary.modelId,
+                  toVendor: route.secondary.vendor,
+                  toModelId: route.secondary.modelId,
+                })]
+              : [],
+          },
+        };
+        return;
+      }
+      throw new ProviderCallError(
+        `${target.vendor}/${target.modelId} stream ended without a result.`,
+      );
+    } catch (error) {
+      failures.push({ target, error });
+      console.warn(
+        `[ai-routing] ${feature} ${target.vendor}/${target.modelId} stream failed` +
+          `${index === 0 ? "; trying secondary" : "; no route left"}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      if (sentText && index === 0) {
+        yield { type: "reset" };
+      }
+    }
+  }
+
+  const rateLimited = failures.length > 0 && failures.every(({ error }) =>
+    error instanceof ProviderCallError && error.rateLimited
+  );
+  const detail = failures
+    .map(({ target, error }) =>
+      `${target.vendor}/${target.modelId}: ${error instanceof Error ? error.message : String(error)}`
+    )
+    .join(" | ");
+  throw new ProviderCallError(
+    `${route.label} primary and secondary models failed. ${detail}`,
+    { rateLimited },
+  );
+}
+
 export function endpointFor(target: AIModelTarget): string {
   const base = target.vendor === "openai"
     ? "https://api.openai.com/v1"

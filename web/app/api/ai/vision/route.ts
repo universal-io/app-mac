@@ -4,18 +4,22 @@ import {
   errorResponse,
   gatewayErrorResponse,
   GatewayError,
+  recordUsage,
   recordUsageAfterResponse,
   warmAIRequest,
 } from "@/lib/server/gateway";
 import {
   aiModelFailureContract,
   AI_MODEL_ROUTES,
+  ProviderCallError,
 } from "@/lib/server/ai-routing";
 import {
   runVision,
+  runVisionStream,
   VISION_IMAGE_DETAIL,
   VISION_REASONING_EFFORT,
   type VisionCandidate,
+  type VisionEngineOutput,
   type VisionTurn,
 } from "@/lib/server/vision-engine";
 import {
@@ -40,6 +44,10 @@ const MAX_FOCUS_COORDINATE = 100_000;
 type VisionRequestBody = {
   request_id?: string;
   operation?: string;
+  /** When true, the response is SSE: `delta` events carrying increments of
+   * result.message, then one `result` event with the full JSON envelope. A
+   * `reset` event means discard what was shown — see `runStreamWithModelFallback`. */
+  stream?: boolean;
   input?: {
     capture_id?: string;
     image_base64?: string;
@@ -206,18 +214,35 @@ export async function POST(request: Request): Promise<Response> {
       reasoning_effort: VISION_REASONING_EFFORT,
     };
 
+    const engineInput = {
+      imageDataURL: `data:${mediaType};base64,${imageBase64}`,
+      question,
+      turns,
+      candidates,
+      guidance,
+      selection,
+      context,
+      language,
+    };
+
+    // --- Streaming path (SSE) ---
+    // Validation, auth, and quota are already settled above, so a rejected
+    // request is still an ordinary HTTP error. Only the model call streams.
+    if (body.stream === true) {
+      return streamingResponse({
+        requestId: requestId!,
+        captureId,
+        tenantId,
+        userId,
+        language,
+        engineInput,
+        metadata,
+      });
+    }
+
     const started = Date.now();
     try {
-      const output = await runVision({
-        imageDataURL: `data:${mediaType};base64,${imageBase64}`,
-        question,
-        turns,
-        candidates,
-        guidance,
-        selection,
-        context,
-        language,
-      });
+      const output = await runVision(engineInput);
       const latencyMs = Date.now() - started;
       recordUsageAfterResponse(tenantId, userId, {
         operation: "vision",
@@ -236,31 +261,13 @@ export async function POST(request: Request): Promise<Response> {
         },
       });
 
-      return Response.json({
-        request_id: requestId,
-        capture_id: captureId,
-        result: {
-          mode: output.result.mode,
-          message: output.result.message,
-          observations: output.result.observations,
-          uncertainties: output.result.uncertainties,
-          target_candidate_id: output.result.targetCandidateId,
-          skill: output.skill,
-        },
-        meta: {
-          output_language: language,
-          skill: output.skill?.id ?? null,
-          model_vendor: output.modelVendor,
-          model_id: output.modelId,
-          route: output.route,
-          api: output.modelApi,
-          image_detail: VISION_IMAGE_DETAIL,
-          reasoning_effort: VISION_REASONING_EFFORT,
-          fallback_used: output.fallbackUsed,
-          latency_ms: latencyMs,
-          notices: output.notices,
-        },
-      });
+      return Response.json(visionSuccessBody({
+        requestId: requestId!,
+        captureId,
+        language,
+        output,
+        latencyMs,
+      }));
     } catch (error) {
       const latencyMs = Date.now() - started;
       const failure = aiModelFailureContract(error);
@@ -305,6 +312,169 @@ export async function POST(request: Request): Promise<Response> {
     console.error("[/api/ai/vision] internal error:", error);
     return errorResponse(500, "INTERNAL_ERROR", "Unclassified server failure.", requestId);
   }
+}
+
+type StreamingResponseInput = {
+  requestId: string;
+  captureId: string;
+  tenantId: string;
+  userId: string;
+  language: "japanese" | "english";
+  engineInput: Parameters<typeof runVisionStream>[0];
+  metadata: Record<string, unknown>;
+};
+
+/**
+ * SSE envelope over the streaming engine. Events:
+ * - `delta`:  {"text": "..."} — increments of result.message
+ * - `reset`:  {} — discard every delta so far; a different model is restarting
+ * - `result`: the same JSON as the non-streaming success response
+ * - `error`:  the same JSON as the error contract
+ *
+ * The result event is what the client acts on. Deltas exist so the user can
+ * start reading; the mode, the highlight target, and the uncertainties are only
+ * ever taken from the validated object at the end.
+ *
+ * Usage is recorded once, after the stream is closed, so bookkeeping stays out
+ * of the user's wait (README「データ保存」).
+ */
+function streamingResponse(input: StreamingResponseInput): Response {
+  const encoder = new TextEncoder();
+  const started = Date.now();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let responseClosed = false;
+      const send = (event: string, data: unknown) => {
+        controller.enqueue(
+          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+        );
+      };
+      try {
+        let output: VisionEngineOutput | null = null;
+        for await (const event of runVisionStream(input.engineInput)) {
+          if (event.type === "delta") {
+            send("delta", { text: event.text });
+          } else if (event.type === "reset") {
+            send("reset", {});
+          } else {
+            output = event.output;
+          }
+        }
+        if (!output) {
+          throw new ProviderCallError("Vision stream ended without a result.");
+        }
+        const latencyMs = Date.now() - started;
+        send("result", visionSuccessBody({
+          requestId: input.requestId,
+          captureId: input.captureId,
+          language: input.language,
+          output,
+          latencyMs,
+        }));
+        controller.close();
+        responseClosed = true;
+        await recordUsage(input.tenantId, input.userId, {
+          operation: "vision",
+          unitType: "call",
+          requestId: input.requestId,
+          status: "success",
+          modelVendor: output.modelVendor,
+          modelId: output.modelId,
+          inputUnits: output.inputTokens,
+          outputUnits: output.outputTokens,
+          latencyMs,
+          metadata: {
+            ...input.metadata,
+            streamed: true,
+            fallback_used: output.fallbackUsed,
+            operational_notice_codes: output.notices.map((notice) => notice.code),
+          },
+        });
+      } catch (error) {
+        const latencyMs = Date.now() - started;
+        const failure = aiModelFailureContract(error);
+        console.error(
+          `[/api/ai/vision] stream provider error (request ${input.requestId}):`,
+          failure.detail,
+        );
+        const primary = AI_MODEL_ROUTES.vision.primary;
+        const secondary = AI_MODEL_ROUTES.vision.secondary;
+        if (!responseClosed) {
+          send("error", {
+            error: { code: failure.code, message: failure.message },
+            request_id: input.requestId,
+          });
+          controller.close();
+          responseClosed = true;
+        }
+        await recordUsage(input.tenantId, input.userId, {
+          operation: "vision",
+          unitType: "call",
+          requestId: input.requestId,
+          status: "error",
+          modelVendor: primary.vendor,
+          modelId: primary.modelId,
+          errorCode: failure.code,
+          latencyMs,
+          metadata: {
+            ...input.metadata,
+            streamed: true,
+            fallback_attempted: true,
+            secondary_model_vendor: secondary.vendor,
+            secondary_model_id: secondary.modelId,
+          },
+        });
+      } finally {
+        if (!responseClosed) controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+    },
+  });
+}
+
+/** One shape for the success envelope, so the streamed `result` event and the
+ * non-streaming body cannot drift apart. */
+function visionSuccessBody(input: {
+  requestId: string;
+  captureId: string;
+  language: string;
+  output: VisionEngineOutput;
+  latencyMs: number;
+}): Record<string, unknown> {
+  const { output } = input;
+  return {
+    request_id: input.requestId,
+    capture_id: input.captureId,
+    result: {
+      mode: output.result.mode,
+      message: output.result.message,
+      observations: output.result.observations,
+      uncertainties: output.result.uncertainties,
+      target_candidate_id: output.result.targetCandidateId,
+      skill: output.skill,
+    },
+    meta: {
+      output_language: input.language,
+      skill: output.skill?.id ?? null,
+      model_vendor: output.modelVendor,
+      model_id: output.modelId,
+      route: output.route,
+      api: output.modelApi,
+      image_detail: VISION_IMAGE_DETAIL,
+      reasoning_effort: VISION_REASONING_EFFORT,
+      fallback_used: output.fallbackUsed,
+      latency_ms: input.latencyMs,
+      notices: output.notices,
+    },
+  };
 }
 
 function validateBody(

@@ -2,9 +2,13 @@ import {
   apiKeyFor,
   endpointFor,
   ProviderCallError,
+  runStreamWithModelFallback,
   runWithModelFallback,
   type AIModelTarget,
+  type ModelStreamEvent,
 } from "@/lib/server/ai-routing";
+import { JSONStringFieldStream } from "@/lib/server/json-field-stream";
+import { sseData } from "@/lib/server/provider-sse";
 import type { OperationalNotice } from "@/lib/server/operational-notice";
 import { visionSkill } from "@/lib/server/skills/registry";
 import type { ActiveSkill, AppSignals } from "@/lib/server/skills/types";
@@ -51,6 +55,13 @@ export type VisionEngineInput = {
   language: "japanese" | "english";
 };
 
+/** One provider call's outcome, before it is dressed as a `VisionEngineOutput`. */
+type VisionModelCall = {
+  result: VisionResult;
+  inputTokens: number;
+  outputTokens: number;
+};
+
 export type VisionEngineOutput = {
   result: VisionResult;
   /** The skill that shaped this answer, surfaced so injection is never silent. */
@@ -90,11 +101,141 @@ export async function runVision(
   };
 }
 
+export type VisionStreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "reset" }
+  | { type: "final"; output: VisionEngineOutput };
+
+/**
+ * The same answer as `runVision`, delivered as it is written.
+ *
+ * The model replies with a JSON object, so without this the user sees nothing
+ * until the last brace: the entire generation is dead time even though the
+ * sentence they need was finished early. `message` sits second in the schema
+ * and reasoning is off, so it starts arriving almost immediately.
+ *
+ * The final event still carries the fully parsed and validated result. Deltas
+ * are for reading, never for deciding: the mode, the candidate ID, and the
+ * uncertainties come only from the complete object.
+ */
+export async function* runVisionStream(
+  input: VisionEngineInput,
+): AsyncGenerator<VisionStreamEvent> {
+  if (!input.imageDataURL) {
+    throw new ProviderCallError("Vision requires an image.");
+  }
+
+  const skill = visionSkill(input.context);
+  for await (const event of runStreamWithModelFallback("vision", (target) =>
+    streamVisionModel(input, skill, target)
+  )) {
+    if (event.type === "final") {
+      yield {
+        type: "final",
+        output: {
+          result: event.result.value.result,
+          skill: skill && { id: skill.id, name: skill.name },
+          route: "snapshot_vlm",
+          modelVendor: event.result.modelVendor,
+          modelId: event.result.modelId,
+          modelApi: event.result.api,
+          fallbackUsed: event.result.fallbackUsed,
+          inputTokens: event.result.value.inputTokens,
+          outputTokens: event.result.value.outputTokens,
+          notices: event.result.notices,
+        },
+      };
+      return;
+    }
+    yield event;
+  }
+}
+
+/**
+ * Streams where the wire format supports it, and stands in for it where it
+ * does not. A `chat_completions` target still produces one delta with the
+ * finished text, so the caller never has to know which route it got — the
+ * answer just arrives all at once, exactly as it does today.
+ */
+async function* streamVisionModel(
+  input: VisionEngineInput,
+  skill: ActiveSkill | null,
+  target: AIModelTarget,
+): AsyncGenerator<ModelStreamEvent<VisionModelCall>> {
+  if (target.api === "responses") {
+    yield* streamResponsesVision(input, skill, target);
+    return;
+  }
+  const value = await callVisionModel(input, skill, target);
+  yield { type: "delta", text: value.result.message };
+  yield { type: "value", value };
+}
+
+async function* streamResponsesVision(
+  input: VisionEngineInput,
+  skill: ActiveSkill | null,
+  target: AIModelTarget,
+): AsyncGenerator<ModelStreamEvent<VisionModelCall>> {
+  const response = await fetchProvider(
+    "vision",
+    `${target.vendor}/${target.modelId}`,
+    endpointFor(target),
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKeyFor(target)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        ...responsesRequestBody(input, skill, target),
+        stream: true,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new ProviderCallError(
+      `${target.vendor}/${target.modelId} failed with HTTP ${response.status}.`,
+      { rateLimited: response.status === 429 },
+    );
+  }
+
+  const message = new JSONStringFieldStream("message");
+  let completed: ResponsesRoot | null = null;
+
+  for await (const event of sseData(response.body, `${target.vendor}/${target.modelId}`)) {
+    const type = event.type;
+    if (type === "response.output_text.delta") {
+      const chunk = typeof event.delta === "string" ? event.delta : "";
+      if (!chunk) continue;
+      const text = message.push(chunk);
+      if (text) yield { type: "delta", text };
+      continue;
+    }
+    if (type === "response.completed") {
+      completed = event.response as ResponsesRoot;
+      break;
+    }
+    if (type === "response.failed" || type === "response.incomplete" || type === "error") {
+      throw new ProviderCallError(
+        `${target.vendor}/${target.modelId} stream ended as ${String(type)}.`,
+      );
+    }
+  }
+
+  if (!completed) {
+    throw new ProviderCallError(
+      `${target.vendor}/${target.modelId} stream ended without a completed response.`,
+    );
+  }
+  yield { type: "value", value: valueFromResponsesRoot(completed, input, target) };
+}
+
 async function callVisionModel(
   input: VisionEngineInput,
   skill: ActiveSkill | null,
   target: AIModelTarget,
-): Promise<{ result: VisionResult; inputTokens: number; outputTokens: number }> {
+): Promise<VisionModelCall> {
   if (target.api === "responses") {
     return callResponsesVision(input, skill, target);
   }
@@ -108,7 +249,7 @@ async function callResponsesVision(
   input: VisionEngineInput,
   skill: ActiveSkill | null,
   target: AIModelTarget,
-): Promise<{ result: VisionResult; inputTokens: number; outputTokens: number }> {
+): Promise<VisionModelCall> {
   const response = await fetchProvider(
     "vision",
     `${target.vendor}/${target.modelId}`,
@@ -130,16 +271,32 @@ async function callResponsesVision(
     );
   }
 
-  const root = (await response.json()) as {
-    status?: string;
-    incomplete_details?: { reason?: string };
-    output_text?: string;
-    output?: Array<{
-      type?: string;
-      content?: Array<{ type?: string; text?: string; refusal?: string }>;
-    }>;
-    usage?: { input_tokens?: number; output_tokens?: number };
-  };
+  return valueFromResponsesRoot((await response.json()) as ResponsesRoot, input, target);
+}
+
+type ResponsesRoot = {
+  status?: string;
+  incomplete_details?: { reason?: string };
+  output_text?: string;
+  output?: Array<{
+    type?: string;
+    content?: Array<{ type?: string; text?: string; refusal?: string }>;
+  }>;
+  usage?: { input_tokens?: number; output_tokens?: number };
+};
+
+/**
+ * The one place a Responses payload becomes a validated result, shared by the
+ * streaming and non-streaming paths. Streaming must not get a laxer check than
+ * the path it is replacing: the deltas were only ever for reading, and the
+ * candidate ID that decides where a highlight lands is validated here or
+ * nowhere.
+ */
+function valueFromResponsesRoot(
+  root: ResponsesRoot,
+  input: VisionEngineInput,
+  target: AIModelTarget,
+): VisionModelCall {
   if (root.status === "incomplete") {
     throw new ProviderCallError(
       `${target.vendor}/${target.modelId} returned an incomplete response: ${root.incomplete_details?.reason ?? "unknown"}`,
@@ -167,7 +324,7 @@ async function callChatCompletionsVision(
   input: VisionEngineInput,
   skill: ActiveSkill | null,
   target: AIModelTarget,
-): Promise<{ result: VisionResult; inputTokens: number; outputTokens: number }> {
+): Promise<VisionModelCall> {
   const response = await fetchProvider(
     "vision",
     `${target.vendor}/${target.modelId}`,
