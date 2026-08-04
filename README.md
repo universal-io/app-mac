@@ -516,6 +516,25 @@ pushします。過去に「クライアントは正しいのに文案が出な�
 
 ## リリース運用
 
+**テスター配布中の候補版は `0.2.2` build `6`（バイナリソース `ce6045f`、2026-08-04）です。
+公開ダウンロードはまだ `v0.2.1` のままです。**
+
+```text
+テスター向け（不変URL）: https://dl.universal-io.com/releases/0.2.2/build-6/Universal-IO.dmg
+バージョン別:            https://dl.universal-io.com/Universal-IO-0.2.2.dmg
+SHA-256:                f074fc8150a347a417181776f0d8de8a3dbeb3705191f7da0594b6281b9ea1c6
+```
+
+R10／R10.5／R11のコードを含み、Developer ID署名、notarization、staple、Gatekeeper評価、
+公開URLからの再取得によるSHA-256一致まで確認済みです。ローカルとR2上のbyte列は同一です。
+
+**公開ダウンロード（`Universal-IO.dmg`）へは向けていません。** R11の完了条件であるD7
+（24時間以上連続稼働したプロセスでgolden pathを通す）が未達だからです。1回目の試行は稼働
+24時間22分に達しましたが、24時間到達後は無操作のまま終了しました（時間の経過は通過ではない。
+[manual-golden-paths.md](docs/manual-golden-paths.md)）。D7を通した後に
+`bash tools/release.sh --promote 0.2.2 6` で公開を切り替え、そのソースコミットへ`v0.2.2`タグを
+付けます。**候補は再ビルドしません**（検証したbyte列と公開物を取り違えないため）。
+
 現行の正式版は `v0.2.1`（build `5`、バイナリソース `893c92a`）です。Focused Visionと
 clipboard安全化を正式採用し、配布DMGは
 `https://dl.universal-io.com/releases/0.2.1/build-5/Universal-IO.dmg`、公開ダウンロードは
