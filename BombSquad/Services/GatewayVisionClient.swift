@@ -95,18 +95,18 @@ struct GatewayVisionClient {
         guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> VisionResponse {
-        let encoded = try Self.encodedImage(for: attachment)
+        let encoded = try await Self.encodedImage(for: attachment)
         // What actually went over the wire. Image tokens grow with area and are
         // most of the wait, so a change in this number explains a change in
         // latency that no other record would.
         Diagnostics.record("vision.image", details: [
             ("width", .count(encoded.width)),
             ("height", .count(encoded.height)),
-            ("kb", .count(encoded.data.count / 1024)),
+            ("kb", .count(encoded.base64.count / 1024)),
         ])
         let input = Self.requestInput(
             attachment: attachment,
-            imageBase64: encoded.data.base64EncodedString(),
+            imageBase64: encoded.base64,
             mediaType: encoded.mediaType,
             question: question,
             turns: turns,
@@ -147,18 +147,18 @@ struct GatewayVisionClient {
         guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> AsyncThrowingStream<VisionStreamEvent, Error> {
-        let encoded = try Self.encodedImage(for: attachment)
+        let encoded = try await Self.encodedImage(for: attachment)
         // What actually went over the wire. Image tokens grow with area and are
         // most of the wait, so a change in this number explains a change in
         // latency that no other record would.
         Diagnostics.record("vision.image", details: [
             ("width", .count(encoded.width)),
             ("height", .count(encoded.height)),
-            ("kb", .count(encoded.data.count / 1024)),
+            ("kb", .count(encoded.base64.count / 1024)),
         ])
         let input = Self.requestInput(
             attachment: attachment,
-            imageBase64: encoded.data.base64EncodedString(),
+            imageBase64: encoded.base64,
             mediaType: encoded.mediaType,
             question: question,
             turns: turns,
@@ -291,31 +291,71 @@ struct GatewayVisionClient {
     ///
     /// Normalized candidate rectangles are fractions of the capture, so nothing
     /// about the highlight geometry depends on how many pixels were sent.
+    /// Runs off the calling actor, and must.
+    ///
+    /// `VisionSession` is `@MainActor`, so its request task inherits the main
+    /// actor. Decoding a 3380x1892 PNG, re-encoding it, and base64-ing half a
+    /// megabyte there would merely be slow — but `downscale` also installs a
+    /// **global** `NSGraphicsContext.current`, and doing that on the main actor
+    /// takes the drawing context out from under AppKit while SwiftUI may be
+    /// mid-render. On 2026-08-05 a summon froze at "画面を見ています…" with
+    /// NSHostingView reporting layout pass after layout pass skipped as
+    /// reentrant. Reading a file and passing the bytes through, which is all this
+    /// used to do, was cheap and touched no shared drawing state; this is neither.
     private static func encodedImage(
         for attachment: ScreenshotAttachment
-    ) throws -> (data: Data, mediaType: String, width: Int, height: Int) {
-        let source = try Data(contentsOf: attachment.url)
-        let sourceType = attachment.url.pathExtension.lowercased() == "jpg"
+    ) async throws -> (base64: String, mediaType: String, width: Int, height: Int) {
+        let url = attachment.url
+        let pixelWidth = attachment.pixelWidth
+        let pixelHeight = attachment.pixelHeight
+        let captureRect = attachment.captureRect
+        return try await Task.detached(priority: .userInitiated) {
+            try encodeForWire(
+                url: url,
+                pixelWidth: pixelWidth,
+                pixelHeight: pixelHeight,
+                captureRect: captureRect
+            )
+        }.value
+    }
+
+    private static func encodeForWire(
+        url: URL,
+        pixelWidth: Int?,
+        pixelHeight: Int?,
+        captureRect: CGRect?
+    ) throws -> (base64: String, mediaType: String, width: Int, height: Int) {
+        let source = try Data(contentsOf: url)
+        let sourceType = url.pathExtension.lowercased() == "jpg"
             ? "image/jpeg"
             : "image/png"
 
         guard let bitmap = NSBitmapImageRep(data: source) else {
             // Unreadable as a bitmap: pass the bytes through rather than fail a
             // turn over an optimization.
-            return (source, sourceType, attachment.pixelWidth ?? 0, attachment.pixelHeight ?? 0)
+            return (
+                source.base64EncodedString(),
+                sourceType,
+                pixelWidth ?? 0,
+                pixelHeight ?? 0
+            )
         }
 
-        let resized = logicalSize(for: attachment).flatMap { downscale(bitmap, to: $0) }
+        let resized = logicalSize(
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            captureRect: captureRect
+        ).flatMap { downscale(bitmap, to: $0) }
         let scaled = resized ?? bitmap
         let width = scaled.pixelsWide
         let height = scaled.pixelsHigh
 
         if resized == nil, source.count <= maxRawImageBytes {
-            return (source, sourceType, width, height)
+            return (source.base64EncodedString(), sourceType, width, height)
         }
         if let png = scaled.representation(using: .png, properties: [:]),
            png.count <= maxRawImageBytes {
-            return (png, "image/png", width, height)
+            return (png.base64EncodedString(), "image/png", width, height)
         }
         guard let jpeg = scaled.representation(
             using: .jpeg,
@@ -323,17 +363,21 @@ struct GatewayVisionClient {
         ) else {
             throw ProviderError.decoding("The captured image exceeds the Gateway limit.")
         }
-        return (jpeg, "image/jpeg", width, height)
+        return (jpeg.base64EncodedString(), "image/jpeg", width, height)
     }
 
     /// The capture's size in points, when the capture is known to be denser than
     /// that. `captureRect` is in points and `pixelWidth` in pixels, so their
     /// ratio is the display's backing scale — no assumption about which Mac this
     /// is. Returns nil when there is nothing to gain or nothing to divide by.
-    private static func logicalSize(for attachment: ScreenshotAttachment) -> NSSize? {
-        guard let pixelWidth = attachment.pixelWidth,
-              let pixelHeight = attachment.pixelHeight,
-              let rect = attachment.captureRect,
+    private static func logicalSize(
+        pixelWidth: Int?,
+        pixelHeight: Int?,
+        captureRect: CGRect?
+    ) -> NSSize? {
+        guard let pixelWidth,
+              let pixelHeight,
+              let rect = captureRect,
               rect.width >= 1, rect.height >= 1,
               // A capture already at 1x, or one whose recorded size disagrees
               // with its rect, is left alone.

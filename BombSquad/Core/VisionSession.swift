@@ -111,6 +111,9 @@ final class VisionSession: ObservableObject {
     /// the `vision.firstContent` measurement so it marks the first moment only,
     /// whether that came from a streamed increment or the finished result.
     private var turnHasVisibleContent = false
+    /// Increments received but not yet shown, and the timer that will show them.
+    private var pendingStreamText = ""
+    private var streamFlushTask: Task<Void, Never>?
 
     init(
         attachment: ScreenshotAttachment,
@@ -301,6 +304,7 @@ final class VisionSession: ObservableObject {
         copilotProgressTask = nil
         screenshotImageTask?.cancel()
         screenshotImageTask = nil
+        clearStreamingText()
         visionTurnDeadline?.cancel()
         visionTurnDeadline = nil
         removeCopilotClickMonitor()
@@ -357,7 +361,7 @@ final class VisionSession: ObservableObject {
 
         isLoading = true
         errorMessage = nil
-        streamingMessage = nil
+        clearStreamingText()
         turnHasVisibleContent = false
         let expectedCaptureID = attachment.id
         let ledger = CancellationLedger()
@@ -387,7 +391,7 @@ final class VisionSession: ObservableObject {
                     self.visionTurnDeadline = nil
                     // A half-written answer must not outlive the turn writing
                     // it: by here it is either superseded or meaningless.
-                    self.streamingMessage = nil
+                    self.clearStreamingText()
                 }
             }
             // Phase timing: the gateway records only its own model call, so the
@@ -549,9 +553,34 @@ final class VisionSession: ObservableObject {
         Int(Date().timeIntervalSince(start) * 1000)
     }
 
+    /// Ten screen updates a second. A turn arrives as roughly 180 increments, and
+    /// publishing each one drove a SwiftUI render plus a scroll-to-bottom per
+    /// token — pressure the panel answered with reentrant-layout warnings. Text
+    /// appearing at this rate still reads as continuous.
+    private static let streamFlushInterval = Duration.milliseconds(100)
+
     private func appendStreamingText(_ text: String) {
         noteFirstContent(via: "stream")
-        streamingMessage = (streamingMessage ?? "") + text
+        pendingStreamText += text
+        guard streamFlushTask == nil else { return }
+        streamFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.streamFlushInterval)
+            guard let self, !Task.isCancelled else { return }
+            self.streamFlushTask = nil
+            if !self.pendingStreamText.isEmpty {
+                self.streamingMessage = self.pendingStreamText
+            }
+        }
+    }
+
+    /// Drops the draft and anything still waiting to be shown. Called wherever
+    /// the draft stops being the answer — a result, a retraction, teardown — so a
+    /// scheduled flush cannot put it back after the real turn has landed.
+    private func clearStreamingText() {
+        streamFlushTask?.cancel()
+        streamFlushTask = nil
+        pendingStreamText = ""
+        streamingMessage = nil
     }
 
     /// The gateway retracted what it had sent: the primary model died partway
@@ -563,7 +592,7 @@ final class VisionSession: ObservableObject {
             ("turn", .code(turn)),
             ("sinceAsk", .ms(askClock.elapsedMs)),
         ])
-        streamingMessage = nil
+        clearStreamingText()
     }
 
     /// Marks when this turn first showed the user something readable, which is
@@ -844,7 +873,7 @@ final class VisionSession: ObservableObject {
         noteFirstContent(via: "result")
         // The validated answer replaces the draft in the same breath, so the
         // panel is never showing both versions of one answer.
-        streamingMessage = nil
+        clearStreamingText()
         turns.append(VisionDisplayTurn(
             role: .assistant,
             text: response.result.message,
