@@ -402,6 +402,19 @@ struct GatewayVisionClient {
         else {
             throw ProviderError.decoding("The Vision response did not match its contract.")
         }
+        // What the server says it spent, so the difference from the client's own
+        // round trip is attributable instead of unexplained. On 2026-08-05 the
+        // client measured 7.1s against a model call the server clocked at 2.8s,
+        // and nothing accounted for the rest (docs/latency-plan.md 1-k).
+        if let timing = meta["timing_ms"] as? [String: Any] {
+            Diagnostics.record("vision.serverTiming", details: [
+                ("body", .ms(timing["body"] as? Int ?? -1)),
+                ("auth", .ms(timing["auth"] as? Int ?? -1)),
+                ("quota", .ms(timing["quota"] as? Int ?? -1)),
+                ("provider", .ms(timing["provider"] as? Int ?? -1)),
+                ("total", .ms(timing["total"] as? Int ?? -1)),
+            ])
+        }
         let targetCandidateID = resultObject["target_candidate_id"] as? String
         let skill = resultObject["skill"] as? [String: Any]
         let skillName = (skill?["name"] as? String)?

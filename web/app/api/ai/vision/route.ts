@@ -7,7 +7,9 @@ import {
   recordUsage,
   recordUsageAfterResponse,
   warmAIRequest,
+  type UsageInput,
 } from "@/lib/server/gateway";
+import { after } from "next/server";
 import {
   aiModelFailureContract,
   AI_MODEL_ROUTES,
@@ -122,10 +124,17 @@ export const GET = warmAIRequest;
 
 export async function POST(request: Request): Promise<Response> {
   let requestId: string | null = null;
+  // Started before the body is read. A capture arrives as ~750KB of base64
+  // inside JSON, and parsing that is part of the wait even though no timing so
+  // far attributed it to anything. The client measured 7.1s round trips against
+  // a model call the server clocked at 2.8s, and nothing said where the rest
+  // went (docs/latency-plan.md 1-k).
+  const totalStarted = performance.now();
   try {
     const body = (await request.json().catch(() => null)) as
       | VisionRequestBody
       | null;
+    const bodyMs = performance.now() - totalStarted;
     if (!body) {
       return errorResponse(400, "BAD_REQUEST", "Request body must be JSON.", null);
     }
@@ -189,8 +198,13 @@ export async function POST(request: Request): Promise<Response> {
       visualSelectionHint,
     });
 
+    const authStarted = performance.now();
     const { userId, tenantId, entitlement } = await authenticate(request);
+    const authMs = performance.now() - authStarted;
+    const quotaStarted = performance.now();
     await enforceQuota(tenantId, entitlement);
+    const quotaMs = performance.now() - quotaStarted;
+    const timing: GatewayTiming = { bodyMs, authMs, quotaMs, totalStarted };
 
     const metadata = {
       capture_id: captureId,
@@ -237,6 +251,7 @@ export async function POST(request: Request): Promise<Response> {
         language,
         engineInput,
         metadata,
+        timing,
       });
     }
 
@@ -267,6 +282,7 @@ export async function POST(request: Request): Promise<Response> {
         language,
         output,
         latencyMs,
+        timing,
       }));
     } catch (error) {
       const latencyMs = Date.now() - started;
@@ -322,6 +338,15 @@ type StreamingResponseInput = {
   language: "japanese" | "english";
   engineInput: Parameters<typeof runVisionStream>[0];
   metadata: Record<string, unknown>;
+  timing: GatewayTiming;
+};
+
+/** What the route spent before the model, and when it started counting. */
+type GatewayTiming = {
+  bodyMs: number;
+  authMs: number;
+  quotaMs: number;
+  totalStarted: number;
 };
 
 /**
@@ -341,6 +366,22 @@ type StreamingResponseInput = {
 function streamingResponse(input: StreamingResponseInput): Response {
   const encoder = new TextEncoder();
   const started = Date.now();
+
+  // Usage cannot be written from inside the stream. By the time the stream
+  // finishes the route handler has already returned, so an `await` in there
+  // races the platform ending the invocation — and loses: two of thirteen
+  // vision calls on 2026-08-05 were served, streamed, and never recorded, which
+  // for a metered product means a request nobody was charged for and a quota
+  // that undercounts. `after` is registered here, while the request scope still
+  // exists, and waits for the stream to say what happened.
+  let reportUsage: (usage: UsageInput | null) => void = () => {};
+  const usageReported = new Promise<UsageInput | null>((resolve) => {
+    reportUsage = resolve;
+  });
+  after(async () => {
+    const usage = await usageReported;
+    if (usage) await recordUsage(input.tenantId, input.userId, usage);
+  });
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -371,10 +412,11 @@ function streamingResponse(input: StreamingResponseInput): Response {
           language: input.language,
           output,
           latencyMs,
+          timing: input.timing,
         }));
         controller.close();
         responseClosed = true;
-        await recordUsage(input.tenantId, input.userId, {
+        reportUsage({
           operation: "vision",
           unitType: "call",
           requestId: input.requestId,
@@ -412,7 +454,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
           controller.close();
           responseClosed = true;
         }
-        await recordUsage(input.tenantId, input.userId, {
+        reportUsage({
           operation: "vision",
           unitType: "call",
           requestId: input.requestId,
@@ -431,6 +473,10 @@ function streamingResponse(input: StreamingResponseInput): Response {
         });
       } finally {
         if (!responseClosed) controller.close();
+        // Releases the `after` callback when neither branch reported — a client
+        // that disconnected mid-stream, say. Resolving twice is a no-op, so the
+        // reported outcome above always wins.
+        reportUsage(null);
       }
     },
   });
@@ -452,6 +498,7 @@ function visionSuccessBody(input: {
   language: string;
   output: VisionEngineOutput;
   latencyMs: number;
+  timing: GatewayTiming;
 }): Record<string, unknown> {
   const { output } = input;
   return {
@@ -476,6 +523,17 @@ function visionSuccessBody(input: {
       reasoning_effort: VISION_REASONING_EFFORT,
       fallback_used: output.fallbackUsed,
       latency_ms: input.latencyMs,
+      // Everything the route can see. What the client waited on top of `total`
+      // is the network: uploading the capture, TLS, and reading the response.
+      timing_ms: {
+        body: Math.round(input.timing.bodyMs),
+        auth: Math.round(input.timing.authMs),
+        quota: Math.round(input.timing.quotaMs),
+        provider: input.latencyMs,
+        usage: 0,
+        total: Math.round(performance.now() - input.timing.totalStarted),
+      },
+      usage_deferred: true,
       notices: output.notices,
     },
   };

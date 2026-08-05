@@ -170,6 +170,12 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 `mode`、`target_candidate_id`、`uncertainties`は必ず`result`から読む。`delta`から推測しない
 （ストリーミングが検証を緩めてはならない）。`result`が来ないまま終わったストリームは失敗である。
 
+成功応答（ストリーミング／非ストリーミング共通）の`meta.timing_ms`は`body` / `auth` / `quota` /
+`provider` / `usage` / `total`のミリ秒内訳を返す。`usage`は応答後実行のため0である。
+**クライアントの往復時間と`total`の差が回線（アップロード・TLS・応答転送）である。**
+実測でモデル時間2.4〜3.5秒に対しクライアントは3.4〜7.7秒待っていたため、この内訳を追加した
+（latency-plan.md 1-k）。
+
 `message`はschemaの2番目で`reasoning_effort`は`none`なので、最初の増分は総時間のごく一部で届く。
 Copilot進捗ターン（`input.guidance`）は**現状ストリーミングしない**。結果受領後に
 `mode == observation`をクライアントが棄却するため、流した本文を取り消す挙動になるからである。

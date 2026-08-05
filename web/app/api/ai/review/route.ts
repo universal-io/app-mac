@@ -2,6 +2,7 @@
 // Flow: verify Supabase JWT -> resolve tenant -> check entitlement/quota ->
 // call provider -> record usage event -> return result + quota envelope.
 
+import { after } from "next/server";
 import {
   authenticate,
   countMonthlyUsage,
@@ -14,6 +15,7 @@ import {
   recordUsageAfterResponse,
   warmAIRequest,
   type QuotaInfo,
+  type UsageInput,
 } from "@/lib/server/gateway";
 import {
   runReview,
@@ -214,6 +216,19 @@ function streamingResponse(input: StreamingResponseInput): Response {
   const encoder = new TextEncoder();
   const started = Date.now();
 
+  // The same hazard the vision route hit: awaiting the write from inside the
+  // stream races the platform ending the invocation, and a lost row is a served
+  // request nobody was charged for. `after` is registered in request scope and
+  // waits for the stream to report.
+  let reportUsage: (usage: UsageInput | null) => void = () => {};
+  const usageReported = new Promise<UsageInput | null>((resolve) => {
+    reportUsage = resolve;
+  });
+  after(async () => {
+    const usage = await usageReported;
+    if (usage) await recordUsage(input.tenantId, input.userId, usage);
+  });
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let responseClosed = false;
@@ -252,7 +267,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
         });
         controller.close();
         responseClosed = true;
-        await recordUsage(input.tenantId, input.userId, {
+        reportUsage({
           operation: "review",
           unitType: "review",
           requestId: input.requestId,
@@ -281,7 +296,7 @@ function streamingResponse(input: StreamingResponseInput): Response {
           controller.close();
           responseClosed = true;
         }
-        await recordUsage(input.tenantId, input.userId, {
+        reportUsage({
           operation: "review",
           unitType: "review",
           requestId: input.requestId,
@@ -292,6 +307,9 @@ function streamingResponse(input: StreamingResponseInput): Response {
         });
       } finally {
         if (!responseClosed) controller.close();
+        // Frees the `after` callback when neither branch reported. Resolving
+        // twice is a no-op, so a reported outcome always wins.
+        reportUsage(null);
       }
     },
   });
