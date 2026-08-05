@@ -56,6 +56,20 @@ struct VisionResponse: Equatable {
     let metadata: VisionMetadata
 }
 
+/// One event of a streaming Vision turn (SSE from the gateway).
+enum VisionStreamEvent {
+    /// An increment of `result.message`, for reading only.
+    case delta(String)
+    /// Discard every delta so far. The primary model died partway through its
+    /// answer and the secondary is starting a different one; the abandoned half
+    /// must not stay on screen with a new answer appended to it.
+    case reset
+    /// The validated result. Always the last event of a successful stream, and
+    /// the only thing the mode, the highlight target, and the uncertainties may
+    /// be read from.
+    case result(VisionResponse)
+}
+
 struct GatewayVisionClient {
     private static let maxRawImageBytes = 3_000_000
 
@@ -105,7 +119,100 @@ struct GatewayVisionClient {
             body: body,
             timeout: OperationDeadline.visionRequest
         )
-        return try Self.decode(data, expectedCaptureID: attachment.id)
+        return try Self.decode(try GatewayClient.rootObject(data), expectedCaptureID: attachment.id)
+    }
+
+    /// The same turn, delivered as the model writes it.
+    ///
+    /// The answer is a JSON object, so the non-streaming call cannot show
+    /// anything until generation ends — the user watches a spinner through the
+    /// whole of it even though the sentence they need is finished early. Here
+    /// the first increment typically arrives in a fraction of the total.
+    func understandStream(
+        attachment: ScreenshotAttachment,
+        question: String?,
+        turns: [VisionTurn],
+        candidates: [VisionObservation.Candidate] = [],
+        candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
+        identity: VisionObservationCaptureService.TargetIdentity? = nil,
+        selection: VisionSelectionContext? = nil,
+        guidanceContext: ScreenGuidanceContext? = nil,
+        language: OutputLanguage
+    ) async throws -> AsyncThrowingStream<VisionStreamEvent, Error> {
+        let encoded = try Self.encodedImage(at: attachment.url)
+        let input = Self.requestInput(
+            attachment: attachment,
+            imageBase64: encoded.data.base64EncodedString(),
+            mediaType: encoded.mediaType,
+            question: question,
+            turns: turns,
+            candidates: candidates,
+            candidateDiagnostics: candidateDiagnostics,
+            identity: identity,
+            selection: selection,
+            guidanceContext: guidanceContext
+        )
+
+        var body = GatewayClient.envelope(
+            operation: "vision",
+            input: input,
+            language: language
+        )
+        body["stream"] = true
+        let events = try await client.postSSE(
+            "ai/vision",
+            body: body,
+            timeout: OperationDeadline.visionRequest
+        )
+        let expectedCaptureID = attachment.id
+
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    var sawResult = false
+                    for try await event in events {
+                        switch event.name {
+                        case "delta":
+                            if let text = event.json["text"] as? String, !text.isEmpty {
+                                continuation.yield(.delta(text))
+                            }
+                        case "reset":
+                            continuation.yield(.reset)
+                        case "result":
+                            GatewayAPI.captureQuota(fromResponseRoot: event.json)
+                            continuation.yield(.result(try Self.decode(
+                                event.json,
+                                expectedCaptureID: expectedCaptureID
+                            )))
+                            sawResult = true
+                        case "error":
+                            // Without this the stream would simply end, leaving
+                            // the panel waiting on a turn the server already
+                            // gave up on — the silent stall R11 exists to remove.
+                            throw Self.streamError(event.json)
+                        default:
+                            break
+                        }
+                    }
+                    guard sawResult else {
+                        throw ProviderError.decoding(
+                            "The Vision stream ended without a result."
+                        )
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    private static func streamError(_ json: [String: Any]) -> Error {
+        let message = (json["error"] as? [String: Any])?["message"] as? String
+        return ProviderError.gateway(
+            message: message ?? "画面の読み取りに失敗しました。"
+        )
     }
 
     /// Builds the one Vision Core input shape. Keeping this pure lets the C6
@@ -170,11 +277,13 @@ struct GatewayVisionClient {
         return (jpeg, "image/jpeg")
     }
 
+    /// One contract check for both transports. The streamed `result` event and
+    /// the non-streaming body are the same JSON by construction on the server,
+    /// so validating them in two places could only let them drift.
     private static func decode(
-        _ data: Data,
+        _ root: [String: Any],
         expectedCaptureID: UUID
     ) throws -> VisionResponse {
-        let root = try GatewayClient.rootObject(data)
         guard
             let rawCaptureID = root["capture_id"] as? String,
             let captureID = UUID(uuidString: rawCaptureID),

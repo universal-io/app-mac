@@ -140,13 +140,24 @@ struct VisionSessionView: View {
                                 .id(turn.id)
                                 .accessibilitySortPriority(3)
                         }
+                        // The answer as it is being written. Same styling as a
+                        // finished turn, because it is the same text — it just
+                        // has not stopped growing yet. The row below says so.
+                        if let streaming = session.streamingMessage, !streaming.isEmpty {
+                            Text(streaming)
+                                .font(.body)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilitySortPriority(3)
+                        }
                         if session.isLoading {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
-                                Text(session.turns.isEmpty ? "画面を見ています…" : "考えています…")
+                                Text(loadingLabel)
                                     .foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .id(Self.pendingRowID)
                         }
                     }
                     .padding(12)
@@ -157,6 +168,13 @@ struct VisionSessionView: View {
                     withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
+                }
+                // Streaming text pushes its own end off screen as it grows.
+                // Following it is not animated: an easing curve restarted on
+                // every increment reads as jitter rather than motion.
+                .onChange(of: session.streamingMessage) {
+                    guard session.streamingMessage != nil else { return }
+                    proxy.scrollTo(Self.pendingRowID, anchor: .bottom)
                 }
             }
 
@@ -301,6 +319,17 @@ struct VisionSessionView: View {
             format: "x=%.4f y=%.4f width=%.4f height=%.4f",
             rect.minX, rect.minY, rect.width, rect.height
         )
+    }
+
+    private static let pendingRowID = "vision.pending"
+
+    /// What the app is doing, in the user's terms. Three states rather than one
+    /// spinner: before the request leaves, while waiting for the first word, and
+    /// while the answer is arriving — that last one only reads as progress if it
+    /// says the text is still growing.
+    private var loadingLabel: String {
+        if session.streamingMessage?.isEmpty == false { return "回答を書いています…" }
+        return session.turns.isEmpty ? "画面を見ています…" : "考えています…"
     }
 
     @ViewBuilder

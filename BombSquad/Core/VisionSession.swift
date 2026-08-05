@@ -44,6 +44,10 @@ final class VisionSession: ObservableObject {
     /// that silently never arrives is not (docs/reliability-hardening-plan.md D3).
     @Published private(set) var screenshotImage: ScreenshotImageState = .loading
     @Published private(set) var turns: [VisionDisplayTurn] = []
+    /// The answer being written, shown while it is still arriving. Nil once the
+    /// validated result has taken its place in `turns`, so the panel never holds
+    /// both the draft and the finished version of the same answer.
+    @Published private(set) var streamingMessage: String?
     @Published private(set) var isLoading = false
     @Published private(set) var metadata: VisionMetadata?
     @Published private(set) var candidates: [VisionObservation.Candidate] = []
@@ -103,6 +107,10 @@ final class VisionSession: ObservableObject {
     private var requestCancellation: CancellationLedger?
     private var copilotCancellation: CancellationLedger?
     private var visionTurnDeadline: Task<Void, Never>?
+    /// Whether this turn has already put something readable on screen. Guards
+    /// the `vision.firstContent` measurement so it marks the first moment only,
+    /// whether that came from a streamed increment or the finished result.
+    private var turnHasVisibleContent = false
 
     init(
         attachment: ScreenshotAttachment,
@@ -349,6 +357,8 @@ final class VisionSession: ObservableObject {
 
         isLoading = true
         errorMessage = nil
+        streamingMessage = nil
+        turnHasVisibleContent = false
         let expectedCaptureID = attachment.id
         let ledger = CancellationLedger()
         requestCancellation = ledger
@@ -366,9 +376,19 @@ final class VisionSession: ObservableObject {
         requestTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                self.isLoading = false
-                self.visionTurnDeadline?.cancel()
-                self.visionTurnDeadline = nil
+                // Only the live request may clear the turn's state. A
+                // superseded task resumes from its await *after* the newer
+                // run() has already set up, so an unguarded cleanup here
+                // stops the new turn's spinner and — now that text streams —
+                // erases the answer being written for it.
+                if self.requestCancellation === ledger {
+                    self.isLoading = false
+                    self.visionTurnDeadline?.cancel()
+                    self.visionTurnDeadline = nil
+                    // A half-written answer must not outlive the turn writing
+                    // it: by here it is either superseded or meaningless.
+                    self.streamingMessage = nil
+                }
             }
             // Phase timing: the gateway records only its own model call, so the
             // waits on this side — the AX candidate walk and the product
@@ -420,7 +440,7 @@ final class VisionSession: ObservableObject {
                     ("identity", .ms(identityMs)),
                     ("candidates", .count(fixedCandidates.count)),
                 ])
-                let response = try await client.understand(
+                let events = try await client.understandStream(
                     attachment: self.attachment,
                     question: question,
                     turns: priorTurns,
@@ -430,6 +450,21 @@ final class VisionSession: ObservableObject {
                     selection: self.selection,
                     language: self.outputLanguage
                 )
+                var streamed: VisionResponse?
+                for try await event in events {
+                    try Task.checkCancellation()
+                    switch event {
+                    case .delta(let text):
+                        self.appendStreamingText(text)
+                    case .reset:
+                        self.discardStreamedText(turn: turnKind)
+                    case .result(let value):
+                        streamed = value
+                    }
+                }
+                guard let response = streamed else {
+                    throw ProviderError.decoding("The Vision stream carried no result.")
+                }
                 Diagnostics.record("vision.turn", details: [
                     ("turn", .code(turnKind)),
                     ("sinceAsk", .ms(self.askClock.elapsedMs)),
@@ -512,6 +547,38 @@ final class VisionSession: ObservableObject {
 
     private static func elapsedMs(since start: Date) -> Int {
         Int(Date().timeIntervalSince(start) * 1000)
+    }
+
+    private func appendStreamingText(_ text: String) {
+        noteFirstContent(via: "stream", mode: nil)
+        streamingMessage = (streamingMessage ?? "") + text
+    }
+
+    /// The gateway retracted what it had sent: the primary model died partway
+    /// through and the secondary is answering from the beginning. Clearing this
+    /// is the whole point — leaving it would splice two different answers
+    /// together into one that neither model wrote.
+    private func discardStreamedText(turn: VisionTurnKind) {
+        Diagnostics.record("vision.streamReset", details: [
+            ("turn", .code(turn)),
+            ("sinceAsk", .ms(askClock.elapsedMs)),
+        ])
+        streamingMessage = nil
+    }
+
+    /// Marks when this turn first showed the user something readable, which is
+    /// the number that says how fast the app feels. Recorded once per turn,
+    /// naming which path got there so the streaming route can be told from the
+    /// fallback that arrives all at once.
+    private func noteFirstContent(via path: StaticString, mode: VisionResult.Mode?) {
+        guard !turnHasVisibleContent else { return }
+        turnHasVisibleContent = true
+        var details: [(StaticString, DiagnosticValue)] = [
+            ("sinceAsk", .ms(askClock.elapsedMs)),
+            ("via", .literal(path)),
+        ]
+        if let mode { details.append(("mode", .code(mode))) }
+        Diagnostics.record("vision.firstContent", details: details)
     }
 
     private func installCopilotClickMonitor() {
@@ -753,19 +820,14 @@ final class VisionSession: ObservableObject {
             screenshotHighlight = nil
             if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
         }
-        // The number the user would give if asked "how long did it take" — the
-        // first moment this turn put readable content in front of them.
-        //
-        // Today the whole answer arrives at once, so this sits a hair before
-        // `vision.turn`. That is the point of recording it separately now:
-        // when the answer starts streaming, this event keeps meaning exactly
-        // what it means today, and the two numbers pull apart by however much
-        // the change was worth. A metric invented after the optimization has
-        // nothing to be compared against.
-        Diagnostics.record("vision.firstContent", details: [
-            ("sinceAsk", .ms(askClock.elapsedMs)),
-            ("mode", .code(response.result.mode)),
-        ])
+        // Normally the text is already on screen and this only confirms which
+        // shape of answer it turned out to be. It still records first content
+        // for the paths that never streamed — a `chat_completions` target, or a
+        // fallback that arrived complete.
+        noteFirstContent(via: "result", mode: response.result.mode)
+        // The validated answer replaces the draft in the same breath, so the
+        // panel is never showing both versions of one answer.
+        streamingMessage = nil
         turns.append(VisionDisplayTurn(
             role: .assistant,
             text: response.result.message,

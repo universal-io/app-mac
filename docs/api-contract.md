@@ -104,6 +104,11 @@ macOSはnoticeをユーザーへ表示する。両モデルが失敗した場合
 - 実装: `web/app/api/ai/review/route.ts`
 - クライアント: `GatewayReviewClient`
 
+**この`delta`はまだ逐次ではない。** `runReviewStream`はモデルの生成完了を待ってから全文を
+1つの`delta`として送る（プロバイダへ`stream: true`を送っていない）。SSEの封筒は本物だが、
+体感遅延は非ストリーミングと同じである。逐次化はvisionと同じ機構
+（`runStreamWithModelFallback`＋`JSONStringFieldStream`）で行える。
+
 ## POST /ai/transcribe
 
 音声を文字起こしする。一次はGroq `whisper-large-v3-turbo`、二次はOpenAI `whisper-1`。
@@ -148,8 +153,26 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
   Skill判定と画面の出所提示のためだけの参照データで保存しない。判定規則はsuggestと同じで、
   `host`が一次シグナル、ネイティブアプリは`bundle_id`。`candidate_diagnostics`には
   アプリ名・ウインドウタイトルを入れない（あちらはusageへ渡る運用情報）
+- `stream`: 任意boolean。`true`のときSSEで返す（下記）。省略・falseは従来のJSON応答で、
+  公開済みクライアントの契約は変わらない
 - 実装: `web/app/api/ai/vision/route.ts`
 - クライアント: `GatewayVisionClient`
+
+### `stream: true`のSSE契約
+
+| event | data | 意味 |
+|---|---|---|
+| `delta` | `{"text": "..."}` | `result.message`の増分。**読ませるためだけに使う** |
+| `reset` | `{}` | ここまでの`delta`を破棄する。一次モデルが回答途中で落ち、二次モデルが別の回答を最初から書き直す |
+| `result` | 非ストリーミング成功応答と同一のJSON | 検証済みの結果。**これが唯一の判断材料** |
+| `error` | エラー契約と同一のJSON | 一次・二次とも失敗 |
+
+`mode`、`target_candidate_id`、`uncertainties`は必ず`result`から読む。`delta`から推測しない
+（ストリーミングが検証を緩めてはならない）。`result`が来ないまま終わったストリームは失敗である。
+
+`message`はschemaの2番目で`reasoning_effort`は`none`なので、最初の増分は総時間のごく一部で届く。
+Copilot進捗ターン（`input.guidance`）は**現状ストリーミングしない**。結果受領後に
+`mode == observation`をクライアントが棄却するため、流した本文を取り消す挙動になるからである。
 
 `selection`と後方互換fieldはVision promptだけで使い、usage metadata、運用ログ、応答へ保存しない。
 通常Vision、Focused Vision、継続質問は同じmodel routeと応答契約を使う。Copilotの新captureへ古い
