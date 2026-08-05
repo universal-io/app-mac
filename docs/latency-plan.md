@@ -48,7 +48,8 @@ R11までに入っていた計測は、AX走査・identity解決・Gateway往復
 | `coordinator.axFocusResolved` | 撮影とAX snapshotの完了 |
 | `vision.axCollected` | AX走査のpass数、経過、候補数、`gained`、打ち切り理由 |
 | `vision.request` | リクエスト発射まで（`sinceAsk`）と、その内訳 |
-| `vision.firstContent` | **最初に読めるものが出た瞬間**と、その経路（`stream` / `result`） |
+| `vision.firstContent` | **最初に読めるものが出た瞬間**と、その経路（`stream` / `result`）。時間だけを扱う |
+| `vision.result` | 回答のmode、ハイライトの結末（`none` / `resolved` / `unresolvable`）、候補数 |
 | `vision.turn` | ターン完了 |
 | `copilot.capture` / `copilot.request` / `copilot.turn` | Copilotステップの同じ梯子 |
 
@@ -123,7 +124,39 @@ strict json_schema の結果として parse できる    : true
 一方、ストリーミングが取り戻せるのは**生成の尾**だけである。上の表では約0.9〜1.0秒
 （message完成から完了まで、および最初のdeltaから完了まで）。
 
-### 1-g. 未計測（推測で直さないもの）
+### 1-g. ハイライトが出ないという報告と、その切り分け（2026-08-05）
+
+L2投入後の実機で「Vision・Copilotともに該当箇所のハイライトが出なくなった」という報告を受けた。
+
+**ストリーミングは原因ではない。** 本番の`runVision`と`runVisionStream`へ同一の画像・質問・
+候補6件を与えて交互に3回ずつ実行した結果、**両方とも3/3で同じ候補（`c2`＝「レポート」）を選び、
+mode=guideも一致した**（リポジトリ外probe、§5）。差分もハイライト解決部
+（`VisionSession.apply`の`targetCandidateID`分岐、`showLiveHighlight`、
+`VisionSessionView.previewHighlight`）を1行も変更していない。
+
+**しかし当時の記録では、この問いに答えられなかった。** ハイライトが出ない理由は3つあり
+（モデルが対象を選ばなかった／選んだが画面に置けなかった／描いたが見えない）、
+どれであるかを示す記録が無かった。さらに`vision.firstContent`へ載せていた`mode`は、
+ストリーミングが先に発火すると失われる作りだった。**計測が先に必要だという本プロジェクトの前提を、
+自分の計測で破っていた。** `vision.result`（mode／highlight／candidates）を追加し、
+`vision.firstContent`は時間だけを扱うようにした。
+
+**同じログに、以前から測られていた別の容疑者がある。**
+
+```text
+vision.axCollected passes=2 elapsed=2503ms candidates=137 gained=0 webArea=true truncated=deadline
+vision.axCollected passes=3 elapsed=4317ms candidates=280 gained=76 webArea=true truncated=deadline
+```
+
+**この画面ではAX走査が毎回1秒の期限に当たって打ち切られている**（`Budget.deadline = 1.0`）。
+R12 §1-hの実測では、打ち切りで落ちるのは**まさに案内したいボタン**（ダウンロード系3つ、
+タブバー、入力欄など）だった。候補137件が返っていても対象が入っていない状態はあり得る。
+これはR12 E4／本書L4の領域で、L2とは無関係な既存の欠陥である。
+
+次の1回の実機で`vision.result`の`highlight=`を見れば確定する。`none`なら候補集合の問題
+（上の容疑者）、`resolved`なのに見えないなら描画側の回帰である。
+
+### 1-h. 未計測（推測で直さないもの）
 
 - **論理解像度でも開いたメニューの文字が読めるか。** これがR12 E6の合格条件そのものである。
   読めないなら縮小は採らない。判定には**メニューを開いた実画面のスクリーンショット**が必要で、
@@ -209,6 +242,8 @@ strict json_schema の結果として parse できる    : true
 - **最も大きい未解決の数字は画像トークン4,927である（1-f）。** ストリーミングが取り戻すのは
   生成の尾（約1秒）で、prefillはそれより大きい。ただし縮小の可否は
   「開いたメニューが読めるか」を測るまで決めない（1-g）。
+- **ハイライトが出ない報告を調査中（1-g）。** ストリーミングは原因ではないと実測で確認したが、
+  当時の記録では確定できなかったため`vision.result`を追加した。次の1回で`highlight=`を見る。
 - **Copilotは逐次化していない。** §4の理由による。
 - **reviewの`delta`は逐次ではない。** 1-d。api-contract.mdに明記した。
 - R12（案内の正確さ）とは独立に進めてよいが、**L3はR12 E6と、L5はR12 E2と合流させる。**

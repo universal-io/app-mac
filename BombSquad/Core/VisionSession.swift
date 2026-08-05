@@ -550,7 +550,7 @@ final class VisionSession: ObservableObject {
     }
 
     private func appendStreamingText(_ text: String) {
-        noteFirstContent(via: "stream", mode: nil)
+        noteFirstContent(via: "stream")
         streamingMessage = (streamingMessage ?? "") + text
     }
 
@@ -570,15 +570,17 @@ final class VisionSession: ObservableObject {
     /// the number that says how fast the app feels. Recorded once per turn,
     /// naming which path got there so the streaming route can be told from the
     /// fallback that arrives all at once.
-    private func noteFirstContent(via path: StaticString, mode: VisionResult.Mode?) {
+    ///
+    /// Timing only. What the answer turned out to be belongs to `vision.result`,
+    /// which is recorded whether or not this fired first — an earlier version
+    /// carried the mode here and lost it whenever streaming won the race.
+    private func noteFirstContent(via path: StaticString) {
         guard !turnHasVisibleContent else { return }
         turnHasVisibleContent = true
-        var details: [(StaticString, DiagnosticValue)] = [
+        Diagnostics.record("vision.firstContent", details: [
             ("sinceAsk", .ms(askClock.elapsedMs)),
             ("via", .literal(path)),
-        ]
-        if let mode { details.append(("mode", .code(mode))) }
-        Diagnostics.record("vision.firstContent", details: details)
+        ])
     }
 
     private func installCopilotClickMonitor() {
@@ -805,26 +807,41 @@ final class VisionSession: ObservableObject {
     ) throws {
         metadata = response.metadata
         activeSkillName = response.skillName
+        let highlight: VisionHighlightOutcome
         if let targetID = response.result.targetCandidateID {
             guard let candidate = fixedCandidates.first(where: { $0.id == targetID }),
                   let rect = candidate.rect else {
+                Diagnostics.record("vision.result", details: [
+                    ("mode", .code(response.result.mode)),
+                    ("highlight", .code(VisionHighlightOutcome.unresolvable)),
+                    ("candidates", .count(fixedCandidates.count)),
+                ])
                 throw ProviderError.decoding(
                     "Vision selected a candidate without a usable capture rectangle."
                 )
             }
             selectedCandidate = candidate
             screenshotHighlight = rect
+            highlight = .resolved
             if isCopilotActive { showLiveHighlight() }
         } else {
             selectedCandidate = nil
             screenshotHighlight = nil
+            highlight = .none
             if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
         }
-        // Normally the text is already on screen and this only confirms which
-        // shape of answer it turned out to be. It still records first content
-        // for the paths that never streamed — a `chat_completions` target, or a
-        // fallback that arrived complete.
-        noteFirstContent(via: "result", mode: response.result.mode)
+        // Whether the user got a highlight, and why not when they did not.
+        // A missing ring has three different causes — the model named no
+        // target, it named one the screen could not place, or it named one that
+        // resolved — and until this record they were indistinguishable from the
+        // trail. A regression report could not be answered at all
+        // (docs/guidance-accuracy-plan.md E4).
+        Diagnostics.record("vision.result", details: [
+            ("mode", .code(response.result.mode)),
+            ("highlight", .code(highlight)),
+            ("candidates", .count(fixedCandidates.count)),
+        ])
+        noteFirstContent(via: "result")
         // The validated answer replaces the draft in the same breath, so the
         // panel is never showing both versions of one answer.
         streamingMessage = nil
@@ -882,6 +899,19 @@ final class CancellationLedger {
     }
 
     var cause: Cause?
+}
+
+/// What became of the answer's highlight target. The three cases are the three
+/// reasons a user can end up without a ring, and they call for different fixes:
+/// no target is the model's judgement, an unresolvable one means the screen
+/// could not place what the model named, and a resolved one means the ring was
+/// drawn and anything still missing is downstream of here.
+enum VisionHighlightOutcome: String, DiagnosticCode {
+    case none
+    case resolved
+    case unresolvable
+
+    var diagnosticCode: String { rawValue }
 }
 
 /// Which turn a vision request belongs to. A named type rather than a string so

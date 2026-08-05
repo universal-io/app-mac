@@ -109,6 +109,31 @@ final class DiagnosticsTests: XCTestCase {
         )
     }
 
+    /// A user reporting "the highlight stopped appearing" can be answered only
+    /// if the three ways it can go missing are separable in the trail. They call
+    /// for different fixes: the model naming no target is its judgement, an
+    /// unresolvable one means the screen could not place what it named, and a
+    /// resolved one means the ring was drawn and the fault lies downstream.
+    func testHighlightOutcomeSeparatesTheThreeWaysARingGoesMissing() {
+        let codes = [
+            VisionHighlightOutcome.none,
+            .resolved,
+            .unresolvable,
+        ].map(\.diagnosticCode)
+        XCTAssertEqual(codes, ["none", "resolved", "unresolvable"])
+        XCTAssertEqual(Set(codes).count, 3, "the cases must not collapse into each other")
+
+        Diagnostics.record("vision.result", details: [
+            ("mode", .code(VisionResult.Mode.guide)),
+            ("highlight", .code(VisionHighlightOutcome.none)),
+            ("candidates", .count(137)),
+        ])
+        let line = Diagnostics.recent(1).first?.line ?? ""
+        XCTAssertTrue(line.contains("mode=guide"), line)
+        XCTAssertTrue(line.contains("highlight=none"), line)
+        XCTAssertTrue(line.contains("candidates=137"), line)
+    }
+
     func testCancellationIsRecognizedAsItsOwnClass() {
         XCTAssertEqual(DiagnosticErrorClass(CancellationError()).diagnosticCode, "cancelled")
     }
