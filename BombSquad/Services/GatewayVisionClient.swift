@@ -95,7 +95,15 @@ struct GatewayVisionClient {
         guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> VisionResponse {
-        let encoded = try Self.encodedImage(at: attachment.url)
+        let encoded = try Self.encodedImage(for: attachment)
+        // What actually went over the wire. Image tokens grow with area and are
+        // most of the wait, so a change in this number explains a change in
+        // latency that no other record would.
+        Diagnostics.record("vision.image", details: [
+            ("width", .count(encoded.width)),
+            ("height", .count(encoded.height)),
+            ("kb", .count(encoded.data.count / 1024)),
+        ])
         let input = Self.requestInput(
             attachment: attachment,
             imageBase64: encoded.data.base64EncodedString(),
@@ -139,7 +147,15 @@ struct GatewayVisionClient {
         guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> AsyncThrowingStream<VisionStreamEvent, Error> {
-        let encoded = try Self.encodedImage(at: attachment.url)
+        let encoded = try Self.encodedImage(for: attachment)
+        // What actually went over the wire. Image tokens grow with area and are
+        // most of the wait, so a change in this number explains a change in
+        // latency that no other record would.
+        Diagnostics.record("vision.image", details: [
+            ("width", .count(encoded.width)),
+            ("height", .count(encoded.height)),
+            ("kb", .count(encoded.data.count / 1024)),
+        ])
         let input = Self.requestInput(
             attachment: attachment,
             imageBase64: encoded.data.base64EncodedString(),
@@ -260,21 +276,100 @@ struct GatewayVisionClient {
         return input
     }
 
-    private static func encodedImage(at url: URL) throws -> (data: Data, mediaType: String) {
-        let source = try Data(contentsOf: url)
-        guard source.count > maxRawImageBytes else {
-            return (source, url.pathExtension.lowercased() == "jpg" ? "image/jpeg" : "image/png")
+    /// The screen at one pixel per point.
+    ///
+    /// A Retina capture holds four times the pixels of what the user is looking
+    /// at, and image tokens grow with area: the same Kinsta screen costs 7,756
+    /// tokens at 3380x1892 and 2,052 at 1690x946. That prefill is most of the
+    /// wait, and the extra pixels buy nothing measurable — at logical size the
+    /// model read every line of an opened menu (11/11, three runs) and the small
+    /// form values exactly as well as at full size, reproducing even full size's
+    /// own single mistake. Below logical size it degrades, and it degrades
+    /// silently: at 1/4 a port read 4141 instead of 41411, and at 1/4.5 「次に
+    /// 適用する」came back as「次に進む」rather than as an admission that it was
+    /// unreadable (docs/latency-plan.md 1-j).
+    ///
+    /// Normalized candidate rectangles are fractions of the capture, so nothing
+    /// about the highlight geometry depends on how many pixels were sent.
+    private static func encodedImage(
+        for attachment: ScreenshotAttachment
+    ) throws -> (data: Data, mediaType: String, width: Int, height: Int) {
+        let source = try Data(contentsOf: attachment.url)
+        let sourceType = attachment.url.pathExtension.lowercased() == "jpg"
+            ? "image/jpeg"
+            : "image/png"
+
+        guard let bitmap = NSBitmapImageRep(data: source) else {
+            // Unreadable as a bitmap: pass the bytes through rather than fail a
+            // turn over an optimization.
+            return (source, sourceType, attachment.pixelWidth ?? 0, attachment.pixelHeight ?? 0)
         }
-        guard
-            let bitmap = NSBitmapImageRep(data: source),
-            let jpeg = bitmap.representation(
-                using: .jpeg,
-                properties: [.compressionFactor: 0.9]
-            )
-        else {
+
+        let resized = logicalSize(for: attachment).flatMap { downscale(bitmap, to: $0) }
+        let scaled = resized ?? bitmap
+        let width = scaled.pixelsWide
+        let height = scaled.pixelsHigh
+
+        if resized == nil, source.count <= maxRawImageBytes {
+            return (source, sourceType, width, height)
+        }
+        if let png = scaled.representation(using: .png, properties: [:]),
+           png.count <= maxRawImageBytes {
+            return (png, "image/png", width, height)
+        }
+        guard let jpeg = scaled.representation(
+            using: .jpeg,
+            properties: [.compressionFactor: 0.9]
+        ) else {
             throw ProviderError.decoding("The captured image exceeds the Gateway limit.")
         }
-        return (jpeg, "image/jpeg")
+        return (jpeg, "image/jpeg", width, height)
+    }
+
+    /// The capture's size in points, when the capture is known to be denser than
+    /// that. `captureRect` is in points and `pixelWidth` in pixels, so their
+    /// ratio is the display's backing scale — no assumption about which Mac this
+    /// is. Returns nil when there is nothing to gain or nothing to divide by.
+    private static func logicalSize(for attachment: ScreenshotAttachment) -> NSSize? {
+        guard let pixelWidth = attachment.pixelWidth,
+              let pixelHeight = attachment.pixelHeight,
+              let rect = attachment.captureRect,
+              rect.width >= 1, rect.height >= 1,
+              // A capture already at 1x, or one whose recorded size disagrees
+              // with its rect, is left alone.
+              Double(pixelWidth) > rect.width * 1.1 else { return nil }
+        let scale = Double(pixelWidth) / rect.width
+        return NSSize(
+            width: (Double(pixelWidth) / scale).rounded(),
+            height: (Double(pixelHeight) / scale).rounded()
+        )
+    }
+
+    private static func downscale(_ bitmap: NSBitmapImageRep, to size: NSSize) -> NSBitmapImageRep? {
+        guard size.width >= 1, size.height >= 1 else { return nil }
+        guard let target = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width),
+            pixelsHigh: Int(size.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return nil }
+        target.size = size
+
+        guard let context = NSGraphicsContext(bitmapImageRep: target) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        // Screen text survives a 2:1 reduction only with a real resampling
+        // filter; nearest-neighbour turns 13pt glyphs into noise.
+        context.imageInterpolation = .high
+        bitmap.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        return target
     }
 
     /// One contract check for both transports. The streamed `result` event and
