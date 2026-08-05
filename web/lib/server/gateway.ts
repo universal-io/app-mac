@@ -22,6 +22,25 @@ export type AuthContext = {
   tenantId: string;
   email: string | null;
   entitlement: Entitlement;
+  /**
+   * Which round trips this call actually made, in milliseconds. A cold instance
+   * pays five sequential Supabase round trips before a model is reached — the
+   * client measured 1,509ms of auth and 1,238ms of quota on 2026-08-05 — and
+   * until this breakdown existed there was no way to know which of them to
+   * attack (docs/latency-plan.md 1-k). Absent on a cache hit.
+   */
+  timings?: AuthTimings;
+};
+
+export type AuthTimings = {
+  getUserMs: number;
+  tenantMs: number;
+  entitlementMs: number;
+};
+
+export type QuotaTimings = {
+  planMs: number;
+  countMs: number;
 };
 
 export type AuthenticateOptions = {
@@ -90,6 +109,12 @@ export async function authenticate(
     throw new GatewayError(401, "UNAUTHENTICATED", "Missing Supabase access token.");
   }
 
+  // The plan catalog is keyed by nothing — `loadPlans` selects every row — so it
+  // has no reason to sit behind the three round trips below. Started here and
+  // awaited later (or never, on a cache hit); its own in-process cache absorbs
+  // the result. Failures surface where it is awaited, not here.
+  void warmPlanCatalog();
+
   const cacheKey = createHash("sha256").update(token).digest("base64url");
   const cached = authCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
@@ -108,13 +133,16 @@ export async function authenticate(
   if (cached) authCache.delete(cacheKey);
 
   const admin = getSupabaseAdminClient();
+  const getUserStarted = performance.now();
   const { data: userData, error: userError } = await admin.auth.getUser(token);
+  const getUserMs = performance.now() - getUserStarted;
   if (userError || !userData?.user) {
     throw new GatewayError(401, "UNAUTHENTICATED", "Invalid Supabase access token.");
   }
   const userId = userData.user.id;
   const email = userData.user.email ?? null;
 
+  const tenantStarted = performance.now();
   let tenantId = await fetchDefaultTenantId(userId);
   if (!tenantId) {
     const userClient = getSupabaseUserClient(token);
@@ -125,11 +153,15 @@ export async function authenticate(
     throw new GatewayError(403, "TENANT_ACCESS_DENIED", "No tenant found for this user.");
   }
 
+  const tenantMs = performance.now() - tenantStarted;
+
+  const entitlementStarted = performance.now();
   const { data: entitlement } = await admin
     .from("bs_entitlements")
     .select("plan, status, monthly_review_limit")
     .eq("tenant_id", tenantId)
     .maybeSingle();
+  const entitlementMs = performance.now() - entitlementStarted;
   if (
     !entitlement ||
     (requireActiveEntitlement && !isUsableEntitlementStatus(entitlement.status))
@@ -143,11 +175,24 @@ export async function authenticate(
 
   const result = { userId, tenantId, email, entitlement };
   pruneCache(authCache);
+  // The cached copy carries no timings: a later hit made no round trips, and
+  // reporting the ones this call made would attribute them to a request that
+  // did not pay them.
   authCache.set(cacheKey, {
     value: result,
     expiresAt: Date.now() + PREFLIGHT_CACHE_TTL_MS,
   });
-  return result;
+  return { ...result, timings: { getUserMs, tenantMs, entitlementMs } };
+}
+
+/** Loads the plan catalog into its in-process cache, swallowing failures so a
+ * speculative warm cannot fail a request that has not needed plans yet. */
+async function warmPlanCatalog(): Promise<void> {
+  try {
+    await getPlanConfig("free");
+  } catch {
+    // The real await inside effectiveMonthlyLimit reports any real problem.
+  }
 }
 
 async function fetchDefaultTenantId(userId: string): Promise<string | null> {
@@ -337,22 +382,34 @@ export async function countMonthlyUsage(tenantId: string): Promise<number> {
 export async function enforceQuota(
   tenantId: string,
   entitlement: Entitlement,
-): Promise<void> {
+): Promise<QuotaTimings | null> {
   const cachedUntil = quotaCache.get(tenantId) ?? 0;
-  if (cachedUntil > Date.now()) return;
+  if (cachedUntil > Date.now()) return null;
   if (cachedUntil) quotaCache.delete(tenantId);
+
+  // The count depends only on the tenant, and the limit only on the plan, so
+  // there is no reason for them to queue behind each other. Started together;
+  // an unlimited plan discards a count it did not need, which costs one query
+  // nobody waits for.
+  const countStarted = performance.now();
+  const counting = countMonthlyUsage(tenantId);
+  const planStarted = performance.now();
   const limit = await effectiveMonthlyLimit(entitlement);
+  const planMs = performance.now() - planStarted;
   if (limit === null) {
+    void counting.catch(() => {});
     pruneCache(quotaCache);
     quotaCache.set(tenantId, Date.now() + PREFLIGHT_CACHE_TTL_MS);
-    return;
+    return { planMs, countMs: 0 };
   }
-  const used = await countMonthlyUsage(tenantId);
+  const used = await counting;
+  const countMs = performance.now() - countStarted;
   if (used >= limit) {
     throw new GatewayError(429, "QUOTA_EXCEEDED", "Monthly usage limit reached.");
   }
   pruneCache(quotaCache);
   quotaCache.set(tenantId, Date.now() + PREFLIGHT_CACHE_TTL_MS);
+  return { planMs, countMs };
 }
 
 function pruneCache<T>(cache: Map<string, T>): void {

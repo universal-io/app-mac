@@ -7,6 +7,8 @@ import {
   recordUsage,
   recordUsageAfterResponse,
   warmAIRequest,
+  type AuthTimings,
+  type QuotaTimings,
   type UsageInput,
 } from "@/lib/server/gateway";
 import { after } from "next/server";
@@ -199,12 +201,24 @@ export async function POST(request: Request): Promise<Response> {
     });
 
     const authStarted = performance.now();
-    const { userId, tenantId, entitlement } = await authenticate(request);
+    const {
+      userId,
+      tenantId,
+      entitlement,
+      timings: authTimings,
+    } = await authenticate(request);
     const authMs = performance.now() - authStarted;
     const quotaStarted = performance.now();
-    await enforceQuota(tenantId, entitlement);
+    const quotaTimings = await enforceQuota(tenantId, entitlement);
     const quotaMs = performance.now() - quotaStarted;
-    const timing: GatewayTiming = { bodyMs, authMs, quotaMs, totalStarted };
+    const timing: GatewayTiming = {
+      bodyMs,
+      authMs,
+      quotaMs,
+      authTimings,
+      quotaTimings,
+      totalStarted,
+    };
 
     const metadata = {
       capture_id: captureId,
@@ -346,6 +360,9 @@ type GatewayTiming = {
   bodyMs: number;
   authMs: number;
   quotaMs: number;
+  /** Present only when the preflight caches missed and round trips were made. */
+  authTimings?: AuthTimings;
+  quotaTimings: QuotaTimings | null;
   totalStarted: number;
 };
 
@@ -532,6 +549,13 @@ function visionSuccessBody(input: {
         provider: input.latencyMs,
         usage: 0,
         total: Math.round(performance.now() - input.timing.totalStarted),
+        // Which Supabase round trip cost what, on a cold instance. Zero means
+        // the cache answered and nothing was asked.
+        get_user: Math.round(input.timing.authTimings?.getUserMs ?? 0),
+        tenant: Math.round(input.timing.authTimings?.tenantMs ?? 0),
+        entitlement: Math.round(input.timing.authTimings?.entitlementMs ?? 0),
+        plan: Math.round(input.timing.quotaTimings?.planMs ?? 0),
+        count: Math.round(input.timing.quotaTimings?.countMs ?? 0),
       },
       usage_deferred: true,
       notices: output.notices,
