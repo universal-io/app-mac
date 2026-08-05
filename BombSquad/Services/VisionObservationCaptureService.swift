@@ -100,8 +100,22 @@ enum VisionObservationCaptureService {
     }
 
     private enum Budget {
-        static let maxNodes = 2_000
+        /// Sized to hold a real tree rather than to bound cost — the deadline
+        /// below does that, and it is the only bound the user feels.
+        ///
+        /// 2,000 was calibrated when each node cost seven cross-process reads.
+        /// Batching them (`nodeFacts`) made a node 3-6x cheaper, at which point
+        /// the old cap stopped protecting anything and started being the reason
+        /// candidates went missing: VS Code's 3,300-node tree was cut at 61%,
+        /// and an earlier 6,885-node one at 29%. Measured trees on 2026-08-05 —
+        /// VS Code 3,300-6,900, Chrome 1,700, Xcode 800, Slack 450, Finder 270 —
+        /// all fit under 8,000, and 8,000 batched browser nodes cost about
+        /// 800ms, so the deadline still decides (docs/latency-plan.md 1-h).
+        static let maxNodes = 8_000
         static let maxCandidates = 500
+        /// The user-visible ceiling on one pass. Deliberately unchanged: the
+        /// same second now buys several times more of the tree, so coverage
+        /// improves without anyone waiting longer.
         static let deadline: TimeInterval = 1.0
         static let axMessagingTimeout: Float = 0.1
         /// Chromium builds its web-content AX tree lazily: only after
@@ -426,16 +440,16 @@ enum VisionObservationCaptureService {
             let item = stack.removeLast()
             visited += 1
 
-            let role = copyString(item.element, kAXRoleAttribute) ?? ""
+            let node = nodeFacts(item.element)
+            let role = node.role
             if role == "AXWebArea" { sawWebArea = true }
-            let subrole = copyString(item.element, kAXSubroleAttribute) ?? ""
-            let isSecure = subrole == "AXSecureTextField"
-            let elementLabel = isSecure ? nil : label(for: item.element, role: role)
+            let isSecure = node.subrole == "AXSecureTextField"
+            let elementLabel = isSecure ? nil : node.label
             let directActionRole = candidateRoles.contains(role) ? role : nil
             let inheritedActionRole = role == "AXStaticText" ? item.unlabeledActionRole : nil
             if let candidateRole = directActionRole ?? inheritedActionRole,
                let elementLabel,
-               let frame = copyFrame(item.element),
+               let frame = node.frame,
                let normalizedRect = normalized(frame, within: captureRect) {
                 candidates.append(VisionObservation.Candidate(
                     id: "ax:\(visited - 1)",
@@ -455,10 +469,8 @@ enum VisionObservationCaptureService {
             } else {
                 nearestUnlabeledActionRole = item.unlabeledActionRole
             }
-            if let children = copyChildren(item.element) {
-                for child in children.reversed() {
-                    stack.append((child, nearestParentLabel, nearestUnlabeledActionRole))
-                }
+            for child in node.children.reversed() {
+                stack.append((child, nearestParentLabel, nearestUnlabeledActionRole))
             }
         }
         return CollectionResult(
@@ -469,19 +481,84 @@ enum VisionObservationCaptureService {
         )
     }
 
-    private static func label(for element: AXUIElement, role: String) -> String? {
-        var values = [
-            copyString(element, kAXTitleAttribute),
-            copyString(element, kAXDescriptionAttribute),
-            copyString(element, "AXLabel"),
-            copyString(element, "AXPlaceholderValue"),
-        ]
-        if role == "AXStaticText" || role == "AXHeading" {
-            values.append(copyString(element, kAXValueAttribute))
+    /// Everything the walk needs from one node.
+    private struct NodeFacts {
+        var role = ""
+        var subrole = ""
+        var label: String?
+        var frame: CGRect?
+        var children: [AXUIElement] = []
+    }
+
+    /// Attributes fetched together, in the order `nodeFacts` reads them back.
+    private static let nodeAttributes: [String] = [
+        kAXRoleAttribute,
+        kAXSubroleAttribute,
+        kAXTitleAttribute,
+        kAXDescriptionAttribute,
+        "AXLabel",
+        "AXPlaceholderValue",
+        kAXValueAttribute,
+        kAXPositionAttribute,
+        kAXSizeAttribute,
+        kAXChildrenAttribute,
+    ]
+
+    /// One cross-process round trip per node instead of seven.
+    ///
+    /// Reading attributes one at a time is what made the walk expensive enough
+    /// to need a budget, and the budget is what drops the buttons a guide wants
+    /// to point at. Measured on 2026-08-05 over three apps: identical
+    /// candidates, 2.3x faster on Chrome, 6.5x on Slack, and VS Code's whole
+    /// 6,885-node tree in 1,419ms where the old cost reached 29% of it in the
+    /// same second (docs/latency-plan.md 1-h).
+    ///
+    /// The frame now comes back for every node rather than only for candidates.
+    /// It rides along in a trip already being made, so asking for it costs
+    /// nothing and it is what lets truncation be reasoned about at all.
+    private static func nodeFacts(_ element: AXUIElement) -> NodeFacts {
+        var facts = NodeFacts()
+        var raw: CFArray?
+        guard AXUIElementCopyMultipleAttributeValues(
+            element,
+            nodeAttributes as CFArray,
+            AXCopyMultipleAttributeOptions(rawValue: 0),
+            &raw
+        ) == .success,
+            let values = raw as? [AnyObject],
+            values.count == nodeAttributes.count
+        else { return facts }
+
+        // An attribute the element does not support comes back as a wrapped
+        // error rather than a string, so the cast fails exactly where the
+        // individual read would have failed.
+        func text(_ index: Int) -> String? {
+            (values[index] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return values.compactMap { value in
-            value?.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.first { !$0.isEmpty }
+
+        facts.role = text(0) ?? ""
+        facts.subrole = text(1) ?? ""
+        var labels = [text(2), text(3), text(4), text(5)]
+        if facts.role == "AXStaticText" || facts.role == "AXHeading" {
+            labels.append(text(6))
+        }
+        facts.label = labels.compactMap { $0 }.first { !$0.isEmpty }
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        if CFGetTypeID(values[7]) == AXValueGetTypeID(),
+           CFGetTypeID(values[8]) == AXValueGetTypeID(),
+           AXValueGetValue((values[7] as! AXValue), .cgPoint, &position),
+           AXValueGetValue((values[8] as! AXValue), .cgSize, &size) {
+            facts.frame = CGRect(origin: position, size: size)
+        }
+        if let children = values[9] as? [AnyObject] {
+            facts.children = children.compactMap { child in
+                guard CFGetTypeID(child) == AXUIElementGetTypeID() else { return nil }
+                return (child as! AXUIElement)
+            }
+        }
+        return facts
     }
 
     private static func states(for element: AXUIElement, role: String) -> [String] {
@@ -542,33 +619,4 @@ enum VisionObservationCaptureService {
         return nil
     }
 
-    private static func copyFrame(_ element: AXUIElement) -> CGRect? {
-        var positionRef: CFTypeRef?
-        var sizeRef: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRef) == .success,
-            AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
-            let positionRef, let sizeRef,
-            CFGetTypeID(positionRef) == AXValueGetTypeID(),
-            CFGetTypeID(sizeRef) == AXValueGetTypeID()
-        else { return nil }
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        guard
-            AXValueGetValue((positionRef as! AXValue), .cgPoint, &position),
-            AXValueGetValue((sizeRef as! AXValue), .cgSize, &size)
-        else { return nil }
-        return CGRect(origin: position, size: size)
-    }
-
-    private static func copyChildren(_ element: AXUIElement) -> [AXUIElement]? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
-              let array = value as? [AnyObject]
-        else { return nil }
-        return array.compactMap { child in
-            guard CFGetTypeID(child) == AXUIElementGetTypeID() else { return nil }
-            return (child as! AXUIElement)
-        }
-    }
 }
