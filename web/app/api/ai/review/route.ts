@@ -5,8 +5,7 @@
 import { after } from "next/server";
 import {
   authenticate,
-  countMonthlyUsage,
-  effectiveMonthlyLimit,
+  buildQuota,
   errorResponse,
   gatewayErrorResponse,
   GatewayError,
@@ -101,8 +100,8 @@ export async function POST(request: Request): Promise<Response> {
     const { userId, tenantId, entitlement } = await authenticate(request);
 
     // --- Quota ---
-    const limit = await effectiveMonthlyLimit(entitlement);
-    const used = await countMonthlyUsage(tenantId);
+    const currentQuota = await buildQuota(tenantId, entitlement);
+    const { limit, used } = currentQuota;
 
     const quota = (usedNow: number): QuotaInfo => quotaInfo(entitlement, usedNow, limit);
 

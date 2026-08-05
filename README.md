@@ -42,6 +42,9 @@ Vision / CopilotのCerebras `gemma-4-31b`トライアルは2026-08-04に終了�
 - 音声入力は16 kHz mono PCM WAVを使う。全AI routeは共通の認証・quota前処理を、モデル呼び出し
   なしでウォームできる。アプリ起動時は全route、各操作の開始時は次に使うrouteを先回りし、
   成功した前処理をGateway instance内で5分キャッシュする。
+- 冷間時の認証前処理はprofileとentitlementをFK経由の1リクエストで取得する。月次利用数も
+  Gateway instance内で5分保持し、成功usageを書いた時は既知の値をその場で進める。同一instanceの
+  次ターンで、直前に自分が書いた利用数をCOUNTし直さない。
 - usage記録は成功・モデルエラーとも応答後に行い、レビューのSSEも最終結果を閉じてから記録する。
   モデル推論後の運用記録をユーザーの待ち時間へ含めない。
 

@@ -552,8 +552,14 @@ function visionSuccessBody(input: {
         // Which Supabase round trip cost what, on a cold instance. Zero means
         // the cache answered and nothing was asked.
         get_user: Math.round(input.timing.authTimings?.getUserMs ?? 0),
-        tenant: Math.round(input.timing.authTimings?.tenantMs ?? 0),
-        entitlement: Math.round(input.timing.authTimings?.entitlementMs ?? 0),
+        tenant_entitlement: Math.round(
+          input.timing.authTimings?.tenantEntitlementMs ?? 0,
+        ),
+        // Kept for the already-distributed 0.2.2 candidate. The combined
+        // profile/FK read is attributed to `tenant`; no second entitlement
+        // request exists anymore.
+        tenant: Math.round(input.timing.authTimings?.tenantEntitlementMs ?? 0),
+        entitlement: 0,
         plan: Math.round(input.timing.quotaTimings?.planMs ?? 0),
         count: Math.round(input.timing.quotaTimings?.countMs ?? 0),
       },

@@ -4,6 +4,10 @@
 // validation and quota policy.
 
 import { getPlanConfig } from "@/lib/server/plans";
+import {
+  QuotaStateCache,
+  type QuotaState,
+} from "@/lib/server/quota-state-cache";
 import { createHash } from "node:crypto";
 import { after } from "next/server";
 import {
@@ -34,8 +38,7 @@ export type AuthContext = {
 
 export type AuthTimings = {
   getUserMs: number;
-  tenantMs: number;
-  entitlementMs: number;
+  tenantEntitlementMs: number;
 };
 
 export type QuotaTimings = {
@@ -55,7 +58,10 @@ export type AuthenticateOptions = {
 const PREFLIGHT_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_PREFLIGHT_CACHE_ENTRIES = 256;
 const authCache = new Map<string, { value: AuthContext; expiresAt: number }>();
-const quotaCache = new Map<string, number>();
+const quotaStateCache = new QuotaStateCache(
+  PREFLIGHT_CACHE_TTL_MS,
+  MAX_PREFLIGHT_CACHE_ENTRIES,
+);
 
 /**
  * Entitlement statuses that may use the product.
@@ -142,26 +148,18 @@ export async function authenticate(
   const userId = userData.user.id;
   const email = userData.user.email ?? null;
 
-  const tenantStarted = performance.now();
-  let tenantId = await fetchDefaultTenantId(userId);
-  if (!tenantId) {
+  const tenantEntitlementStarted = performance.now();
+  let tenantContext = await fetchDefaultTenantContext(userId);
+  if (!tenantContext?.tenantId) {
     const userClient = getSupabaseUserClient(token);
     await userClient.rpc("bs_initialize_current_user");
-    tenantId = await fetchDefaultTenantId(userId);
+    tenantContext = await fetchDefaultTenantContext(userId);
   }
-  if (!tenantId) {
+  if (!tenantContext?.tenantId) {
     throw new GatewayError(403, "TENANT_ACCESS_DENIED", "No tenant found for this user.");
   }
-
-  const tenantMs = performance.now() - tenantStarted;
-
-  const entitlementStarted = performance.now();
-  const { data: entitlement } = await admin
-    .from("bs_entitlements")
-    .select("plan, status, monthly_review_limit")
-    .eq("tenant_id", tenantId)
-    .maybeSingle();
-  const entitlementMs = performance.now() - entitlementStarted;
+  const { tenantId, entitlement } = tenantContext;
+  const tenantEntitlementMs = performance.now() - tenantEntitlementStarted;
   if (
     !entitlement ||
     (requireActiveEntitlement && !isUsableEntitlementStatus(entitlement.status))
@@ -182,7 +180,7 @@ export async function authenticate(
     value: result,
     expiresAt: Date.now() + PREFLIGHT_CACHE_TTL_MS,
   });
-  return { ...result, timings: { getUserMs, tenantMs, entitlementMs } };
+  return { ...result, timings: { getUserMs, tenantEntitlementMs } };
 }
 
 /** Loads the plan catalog into its in-process cache, swallowing failures so a
@@ -195,14 +193,38 @@ async function warmPlanCatalog(): Promise<void> {
   }
 }
 
-async function fetchDefaultTenantId(userId: string): Promise<string | null> {
+type DefaultTenantContext = {
+  tenantId: string;
+  entitlement: Entitlement | null;
+};
+
+async function fetchDefaultTenantContext(
+  userId: string,
+): Promise<DefaultTenantContext | null> {
   const admin = getSupabaseAdminClient();
   const { data } = await admin
     .from("bs_profiles")
-    .select("default_tenant_id")
+    .select(`
+      default_tenant_id,
+      tenant:bs_tenants!bs_profiles_default_tenant_id_fkey(
+        entitlement:bs_entitlements!bs_entitlements_tenant_id_fkey(
+          plan,
+          status,
+          monthly_review_limit
+        )
+      )
+    `)
     .eq("id", userId)
     .maybeSingle();
-  return data?.default_tenant_id ?? null;
+  const row = data as unknown as {
+    default_tenant_id: string | null;
+    tenant: { entitlement: Entitlement | null } | null;
+  } | null;
+  if (!row?.default_tenant_id) return null;
+  return {
+    tenantId: row.default_tenant_id,
+    entitlement: row.tenant?.entitlement ?? null,
+  };
 }
 
 export type UsageInput = {
@@ -243,16 +265,21 @@ export async function recordUsage(
     latency_ms: usage.latencyMs ?? null,
     metadata: usage.metadata,
   });
-  if (error && !error.message.includes("duplicate")) {
+  const duplicate = error?.code === "23505" || error?.message.includes("duplicate");
+  if (error && !duplicate) {
     console.error(
       `[gateway] usage event insert failed (${usage.operation}):`,
       error.message,
     );
   }
-  if (!error || error.message.includes("duplicate")) {
-    // A successful metered write changes the value quota checks depend on.
-    // The next explicit warm-up may refill this cache before the next AI call.
-    quotaCache.delete(tenantId);
+  if (!error && usage.status === "success") {
+    // This instance just wrote the value its next quota check would otherwise
+    // fetch again. Advance the known count without extending its TTL.
+    quotaStateCache.increment(quotaCacheKey(tenantId));
+  } else if (duplicate) {
+    // A retry may have been recorded by another instance. Forget local
+    // knowledge so the next request reconciles with Postgres.
+    quotaStateCache.delete(quotaCacheKey(tenantId));
   }
 }
 
@@ -383,9 +410,25 @@ export async function enforceQuota(
   tenantId: string,
   entitlement: Entitlement,
 ): Promise<QuotaTimings | null> {
-  const cachedUntil = quotaCache.get(tenantId) ?? 0;
-  if (cachedUntil > Date.now()) return null;
-  if (cachedUntil) quotaCache.delete(tenantId);
+  const { state, timings } = await loadQuotaState(tenantId, entitlement);
+  if (state.limit !== null && (state.used ?? 0) >= state.limit) {
+    throw new GatewayError(429, "QUOTA_EXCEEDED", "Monthly usage limit reached.");
+  }
+  return timings;
+}
+
+async function loadQuotaState(
+  tenantId: string,
+  entitlement: Entitlement,
+  requireUsageCount = false,
+): Promise<{ state: QuotaState; timings: QuotaTimings | null }> {
+  // Include the UTC billing month so a five-minute entry created just before
+  // midnight cannot carry the previous month's count into the new month.
+  const cacheKey = quotaCacheKey(tenantId);
+  const cached = quotaStateCache.get(cacheKey);
+  if (cached && (!requireUsageCount || cached.used !== null)) {
+    return { state: cached, timings: null };
+  }
 
   // The count depends only on the tenant, and the limit only on the plan, so
   // there is no reason for them to queue behind each other. Started together;
@@ -396,20 +439,21 @@ export async function enforceQuota(
   const planStarted = performance.now();
   const limit = await effectiveMonthlyLimit(entitlement);
   const planMs = performance.now() - planStarted;
-  if (limit === null) {
+  if (limit === null && !requireUsageCount) {
     void counting.catch(() => {});
-    pruneCache(quotaCache);
-    quotaCache.set(tenantId, Date.now() + PREFLIGHT_CACHE_TTL_MS);
-    return { planMs, countMs: 0 };
+    const state = { used: null, limit };
+    quotaStateCache.set(cacheKey, state);
+    return { state, timings: { planMs, countMs: 0 } };
   }
   const used = await counting;
   const countMs = performance.now() - countStarted;
-  if (used >= limit) {
-    throw new GatewayError(429, "QUOTA_EXCEEDED", "Monthly usage limit reached.");
-  }
-  pruneCache(quotaCache);
-  quotaCache.set(tenantId, Date.now() + PREFLIGHT_CACHE_TTL_MS);
-  return { planMs, countMs };
+  const state = { used, limit };
+  quotaStateCache.set(cacheKey, state);
+  return { state, timings: { planMs, countMs } };
+}
+
+function quotaCacheKey(tenantId: string): string {
+  return `${tenantId}:${currentMonthStartUTC().toISOString()}`;
 }
 
 function pruneCache<T>(cache: Map<string, T>): void {
@@ -428,9 +472,8 @@ export async function buildQuota(
   entitlement: Entitlement,
   usedOffset = 0,
 ): Promise<QuotaInfo> {
-  const limit = await effectiveMonthlyLimit(entitlement);
-  const used = (await countMonthlyUsage(tenantId)) + usedOffset;
-  return quotaInfo(entitlement, used, limit);
+  const { state } = await loadQuotaState(tenantId, entitlement, true);
+  return quotaInfo(entitlement, (state.used ?? 0) + usedOffset, state.limit);
 }
 
 export function currentMonthStartUTC(): Date {

@@ -460,10 +460,11 @@ struct GatewayVisionClient {
             ])
             // Which Supabase round trip cost what. Zero throughout means the
             // instance's preflight caches answered and nothing was asked.
+            let tenantEntitlement = timing["tenant_entitlement"] as? Int
+                ?? ((timing["tenant"] as? Int ?? 0) + (timing["entitlement"] as? Int ?? 0))
             Diagnostics.record("vision.preflight", details: [
                 ("getUser", .ms(timing["get_user"] as? Int ?? -1)),
-                ("tenant", .ms(timing["tenant"] as? Int ?? -1)),
-                ("entitlement", .ms(timing["entitlement"] as? Int ?? -1)),
+                ("tenantEntitlement", .ms(tenantEntitlement)),
                 ("plan", .ms(timing["plan"] as? Int ?? -1)),
                 ("count", .ms(timing["count"] as? Int ?? -1)),
             ])
