@@ -540,7 +540,11 @@ profile・tenant・entitlementをPostgRESTのembedded relation 1リクエスト�
 1-qの本番再計測ではpreflightが2,676→1,210ms、後続は0msになった。ユーザー判断を受け、
 AI routeだけ`getClaims()`によるES256署名・期限のローカル検証へ変更する。アカウント・課金・
 ファクト・管理routeは`getUser()`を維持する。両方式のcache keyも分離し、AIで得たcontextが
-敏感なrouteのAuth server確認を迂回しない。次の冷間実測で`verifyJWT`を確認する。
+敏感なrouteのAuth server確認を迂回しない。
+
+本番実機では起動時warmが同じinstanceへ届き、初回・質問とも`verifyJWT`、tenant+entitlement、
+plan、COUNTがすべて0msになった。JWT高速化は受け入れ完了。残る観測値はidentity 1,470ms、
+回線等1,695〜3,077ms、AX focus 1,153ms／候補収集1,758ms（ともに2パス）である。
 
 L1（単一起点で測る）→ L2（分かった順に出す）→ L3（画像コスト＝R12 E6と合流）→
 L4（AXをどこまで取るか）→ L5（Copilot撮影予算＝R12 E2と合流）→ L6（review/suggest逐次化）→

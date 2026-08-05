@@ -464,6 +464,28 @@ Auth serverの`getUser()`を維持する。さらに両方式の5分cache keyを
 contextが敏感なrouteのAuth確認を迂回しない。診断名は`getUser`から`verifyJWT`へ変え、配布済み
 候補には互換fieldを返す。削減余地は実測の冷間揺れに応じて約0.3〜1.1秒である。
 
+### 1-s. 初回preflightも0msになった（実機受け入れ、2026-08-06）
+
+JWTローカル検証の本番デプロイ後、アプリを起動し直してVision初回＋質問を実行した。
+
+| | verifyJWT | tenantEntitlement | plan | count | provider | server total |
+|---|---:|---:|---:|---:|---:|---:|
+| 初回 | **0ms** | **0ms** | **0ms** | **0ms** | 1,842ms | 1,856ms |
+| 質問 | **0ms** | **0ms** | **0ms** | **0ms** | 2,409ms | 2,423ms |
+
+起動時`warmAll()`が同じGateway instanceへ届き、ローカルJWT検証とtenant・枠のcacheを初回操作前に
+満たした。初回リクエストは`firstContent=4,692ms`、完了5,134ms。質問は`firstContent=4,743ms`、
+完了5,607msで、`mode=guide / highlight=resolved`まで正常に到達した。冷間`verifyJWT`単体の時間は
+cache hitのため観測できなかったが、**実際のユーザー初回preflightを0msにする**受け入れ条件は
+より良い形で成立した。warmはinstance親和性が無いため今後もbest-effortであり、miss時は
+`getClaims()`が署名・期限を検証する。
+
+次に残る数字も分離できた。初回は1,519KB画像でGateway往復4,933ms − server 1,856ms =
+**3,077ms**、質問は4,118ms − 2,423ms = **1,695ms**がアップロード・TLS・応答転送等である。
+質問前にはidentity解決が1,470msかかった。パネル前のAX focus解決は1,153ms／2パス、候補収集は
+1,758ms／2パス／`gained=0`。AXの実使用標本は通算12件中11件が`gained=0`になったが、1件は
+76候補増えているので無条件削除はまだしない。次セッションはidentity、回線、AX retryの順で測る。
+
 ## 2. 不変条件
 
 > **速くするために、正しさを削らない。**
@@ -559,10 +581,11 @@ contextが敏感なrouteのAuth確認を迂回しない。診断名は`getUser`�
   COUNT=273msで、後続COUNTも642〜942ms。profile+tenant+entitlementを1リクエストへ結合し、
   枠を値cacheにして成功usage後の再COUNTを消した。DB変更は無い。再計測では
   `tenantEntitlement=244ms`、後続`count=0ms`を確認した。
-- **AI routeだけJWTローカル検証へ変更した（1-r）。** アカウント・課金・ファクト・管理は
-  `getUser()`を維持し、cacheも分離した。**本番デプロイ後、冷間時の`verifyJWT`を再計測する。**
-- **起動時`warmAll()`はインスタンス親和性が無いため初回には効かない（1-o）。** 冷えた経路を
-  安くする方向で進める。
+- **AI routeだけJWTローカル検証へ変更し、実機受け入れまで完了した（1-r、1-s）。** アカウント・
+  課金・ファクト・管理は`getUser()`を維持し、cacheも分離した。起動時warmが同じinstanceへ届き、
+  初回・質問とも`verifyJWT / tenantEntitlement / plan / count = 0ms`だった。
+- **起動時`warmAll()`はbest-effortである。** 1-oでは別instanceへ流れて効かなかったが、1-sでは
+  同じinstanceへ届き初回preflightを0msにした。親和性は保証されないので冷えた経路も安く保つ。
 - **画像縮小をメインアクターで走らせてUIを固めた回帰を修正した（1-m）。** グローバルな
   `NSGraphicsContext`をSwiftUIの描画中に差し替えていた。ストリーミング表示も100msごとの
   まとめ反映にした（1ターン180回の描画→10回/秒）。実機で回帰解消を確認済み。
@@ -573,3 +596,4 @@ contextが敏感なrouteのAuth確認を迂回しない。診断名は`getUser`�
 - **Copilotは逐次化していない。** §4の理由による。
 - **reviewの`delta`は逐次ではない。** 1-d。api-contract.mdに明記した。
 - R12（案内の正確さ）とは独立に進めてよいが、**L3はR12 E6と、L5はR12 E2と合流させる。**
+- **次セッションのR13起点はidentity 1,470ms、回線等1,695〜3,077ms、AX retryである（1-s）。**
