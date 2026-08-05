@@ -387,6 +387,10 @@ function streamingResponse(input: StreamingResponseInput): Response {
           metadata: {
             ...input.metadata,
             streamed: true,
+            // False here means the client asked to stream and got a streamed
+            // answer. True means it silently ran the ordinary call instead, and
+            // this turn's latency says nothing about streaming.
+            stream_degraded: output.streamDegraded === true,
             fallback_used: output.fallbackUsed,
             operational_notice_codes: output.notices.map((notice) => notice.code),
           },

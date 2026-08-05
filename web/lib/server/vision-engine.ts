@@ -74,6 +74,12 @@ export type VisionEngineOutput = {
   inputTokens: number;
   outputTokens: number;
   notices: OperationalNotice[];
+  /**
+   * True when a streaming request fell back to an ordinary call before sending
+   * any text. Recorded in usage, because otherwise the latency numbers for
+   * "streaming" would describe a path that did not run.
+   */
+  streamDegraded?: boolean;
 };
 
 export async function runVision(
@@ -126,8 +132,9 @@ export async function* runVisionStream(
   }
 
   const skill = visionSkill(input.context);
+  let streamDegraded = false;
   for await (const event of runStreamWithModelFallback("vision", (target) =>
-    streamVisionModel(input, skill, target)
+    streamVisionModel(input, skill, target, () => { streamDegraded = true; })
   )) {
     if (event.type === "final") {
       yield {
@@ -143,6 +150,7 @@ export async function* runVisionStream(
           inputTokens: event.result.value.inputTokens,
           outputTokens: event.result.value.outputTokens,
           notices: event.result.notices,
+          streamDegraded,
         },
       };
       return;
@@ -156,15 +164,39 @@ export async function* runVisionStream(
  * does not. A `chat_completions` target still produces one delta with the
  * finished text, so the caller never has to know which route it got — the
  * answer just arrives all at once, exactly as it does today.
+ *
+ * That stand-in is also the safety net. Streaming is an optimization, and an
+ * optimization must not be able to take the feature down with it: if the
+ * streaming attempt fails before producing any text, the ordinary call runs
+ * instead, and the user gets a slow answer rather than none. A failure *after*
+ * text has been sent is not recoverable here — retracting it is the model
+ * fallback's job, not this function's.
  */
 async function* streamVisionModel(
   input: VisionEngineInput,
   skill: ActiveSkill | null,
   target: AIModelTarget,
+  onDegraded: () => void,
 ): AsyncGenerator<ModelStreamEvent<VisionModelCall>> {
   if (target.api === "responses") {
-    yield* streamResponsesVision(input, skill, target);
-    return;
+    let sentText = false;
+    try {
+      for await (const event of streamResponsesVision(input, skill, target)) {
+        if (event.type === "delta") sentText = true;
+        yield event;
+      }
+      return;
+    } catch (error) {
+      if (sentText) throw error;
+      // Recorded in usage, not just here: a silently degraded route would make
+      // the streaming latency numbers describe something that never ran.
+      console.warn(
+        `[vision-engine] ${target.vendor}/${target.modelId} streaming failed before any`
+          + ` text; falling back to a non-streaming call:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      onDegraded();
+    }
   }
   const value = await callVisionModel(input, skill, target);
   yield { type: "delta", text: value.result.message };
