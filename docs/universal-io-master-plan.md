@@ -535,7 +535,12 @@ prefillはそれより大きい。**ただし縮小の可否は「開いたメ�
 profile・tenant・entitlementをPostgRESTのembedded relation 1リクエストへ統合し、月次利用数は
 5分の値キャッシュへ変えた。成功usageは既知の値をその場で進めるため、同一Gateway instanceでは
 次ターンのCOUNTが消える。DB変更は無い。`getUser`を署名のローカル検証へ変える案は約1.1秒の余地が
-あるが、失効がJWT期限まで反映されない可能性を伴うため、製品判断を経るまで実装しない。
+あるが、失効がJWT期限まで反映されない可能性を伴うため、この段階では製品判断まで保留した。
+
+1-qの本番再計測ではpreflightが2,676→1,210ms、後続は0msになった。ユーザー判断を受け、
+AI routeだけ`getClaims()`によるES256署名・期限のローカル検証へ変更する。アカウント・課金・
+ファクト・管理routeは`getUser()`を維持する。両方式のcache keyも分離し、AIで得たcontextが
+敏感なrouteのAuth server確認を迂回しない。次の冷間実測で`verifyJWT`を確認する。
 
 L1（単一起点で測る）→ L2（分かった順に出す）→ L3（画像コスト＝R12 E6と合流）→
 L4（AXをどこまで取るか）→ L5（Copilot撮影予算＝R12 E2と合流）→ L6（review/suggest逐次化）→

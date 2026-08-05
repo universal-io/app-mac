@@ -1,5 +1,5 @@
 import {
-  authenticate,
+  authenticateAIRequest,
   enforceQuota,
   errorResponse,
   gatewayErrorResponse,
@@ -83,7 +83,8 @@ export async function POST(request: Request): Promise<Response> {
         }
       : undefined;
 
-    const { userId, tenantId, entitlement } = await authenticate(request);
+    const { userId, tenantId, entitlement } =
+      await authenticateAIRequest(request);
     await enforceQuota(tenantId, entitlement);
 
     // Read before the model call because it shapes the request twice over:

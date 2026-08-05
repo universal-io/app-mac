@@ -51,7 +51,7 @@ R11までに入っていた計測は、AX走査・identity解決・Gateway往復
 | `vision.firstContent` | **最初に読めるものが出た瞬間**と、その経路（`stream` / `result`）。時間だけを扱う |
 | `vision.image` | Gatewayへ送った画像の幅・高さ・KB |
 | `vision.serverTiming` | サーバー内訳（body／auth／quota／provider／total）。差が回線 |
-| `vision.preflight` | Supabase preflightの内訳（getUser／tenantEntitlement／plan／count） |
+| `vision.preflight` | Supabase preflightの内訳（verifyJWT／tenantEntitlement／plan／count） |
 | `vision.result` | 回答のmode、ハイライトの結末（`none` / `resolved` / `unresolvable`）、候補数 |
 | `vision.turn` | ターン完了 |
 | `copilot.capture` / `copilot.request` / `copilot.turn` | Copilotステップの同じ梯子 |
@@ -437,6 +437,33 @@ boolean cacheを消していたため、次のターンが直前に書いた値�
 AXの2パス目は今回も3回すべて`gained=0`で、通算10標本中9つが0になった。ただし1標本は76候補を
 追加しているため、固定500msをまだ無条件には削らない。
 
+### 1-r. 往復削減は成立。AIだけJWTをローカル検証する（実測・判断、2026-08-06）
+
+1-qを本番へ出した直後の同じ操作で再計測した。
+
+| | preflight | firstContent | turn完了 | Gateway往復 |
+|---|---:|---:|---:|---:|
+| 改善前の初回 | 2,676ms | 9,744ms | 10,416ms | 8,260ms |
+| 改善後の初回 | **1,210ms** | **7,650ms** | **8,130ms** | **6,351ms** |
+
+初回は`getUser=290ms`、結合後の`tenantEntitlement=244ms`、quota=674ms。後続質問は
+`auth=0ms / quota=0ms / count=0ms`となり、結合取得と値cacheの両方が成立した。preflightは
+約1.47秒、最初の可読内容は約2.09秒、完了は約2.29秒短くなった。画面が異なるため全体差を
+純粋な因果値とは扱わないが、サーバー内preflightの差は直接比較できる。
+
+後続質問が8,135msかかったのはpreflight回帰ではなく、providerが6,093msだったためである。
+サーバー記録では入力4,482 unitsで、改善前質問の14,750 unitsより小さい。直近100件の同モデル
+Visionはp50=3,159ms、p90=5,290ms、最大9,584ms、inputとlatencyの相関は-0.08だった。
+この1回はモデル揺れの遅い側である。最初の増分は3,471msで出ており、生成の尾を待たせない
+ストリーミングは機能している。
+
+ユーザーは残る認証往復も削る判断をした。projectのJWKSはES256なので、AI routeは
+`getClaims()`で署名と期限をローカル検証する。customizable claimで認可せず、検証済み`sub`で
+DBのtenant・entitlementを従来どおり取得する。アカウント・課金・ファクト・管理routeは
+Auth serverの`getUser()`を維持する。さらに両方式の5分cache keyを分離し、AIでローカル検証した
+contextが敏感なrouteのAuth確認を迂回しない。診断名は`getUser`から`verifyJWT`へ変え、配布済み
+候補には互換fieldを返す。削減余地は実測の冷間揺れに応じて約0.3〜1.1秒である。
+
 ## 2. 不変条件
 
 > **速くするために、正しさを削らない。**
@@ -517,8 +544,8 @@ AXの2パス目は今回も3回すべて`gained=0`で、通算10標本中9つが
 
 2026-08-06 時点。**このセクションだけで、着手前に知るべき状態が揃うようにする。**
 
-- **L1〜L3と1-qのpreflight改善は本番Gatewayへデプロイ済み。** 5ee3e59までの改善は
-  実機でも動作確認済み。1-qだけはデプロイ後の再計測が残る。
+- **L1〜L3と1-qのpreflight改善は本番Gatewayへデプロイ・実機確認済み。** preflightは
+  2,676→1,210ms、後続は0msになった（1-r）。
 - **プロバイダのストリーミング契約と本番Gateway経路は実測済み（1-e）。** 増分は読ませる用、
   mode・ハイライト・不確実性は最終オブジェクトだけを使う境界も維持している。
 - **画像は論理解像度へ縮小済み（1-i）。** 画像トークンは7,756→2,032。実機で動作しているが、
@@ -530,10 +557,10 @@ AXの2パス目は今回も3回すべて`gained=0`で、通算10標本中9つが
   回線側は732KBのアップロード、TLS/DNS、応答転送の分離がまだできていない。
 - **冷間preflightの内訳が出た（1-q）。** `getUser=1,099ms`、tenant+entitlement=1,304ms、
   COUNT=273msで、後続COUNTも642〜942ms。profile+tenant+entitlementを1リクエストへ結合し、
-  枠を値cacheにして成功usage後の再COUNTを消した。DB変更は無い。**本番デプロイ後、もう一度
-  冷えた状態で`tenantEntitlement`と後続`count=0ms`を確認する。**
-- **`getUser`には約1.1秒の余地が残る（1-q）。** JWTローカル検証へ変えると失効の反映時点が
-  変わり得るため、ユーザー判断待ち。勝手に実装しない。
+  枠を値cacheにして成功usage後の再COUNTを消した。DB変更は無い。再計測では
+  `tenantEntitlement=244ms`、後続`count=0ms`を確認した。
+- **AI routeだけJWTローカル検証へ変更した（1-r）。** アカウント・課金・ファクト・管理は
+  `getUser()`を維持し、cacheも分離した。**本番デプロイ後、冷間時の`verifyJWT`を再計測する。**
 - **起動時`warmAll()`はインスタンス親和性が無いため初回には効かない（1-o）。** 冷えた経路を
   安くする方向で進める。
 - **画像縮小をメインアクターで走らせてUIを固めた回帰を修正した（1-m）。** グローバルな

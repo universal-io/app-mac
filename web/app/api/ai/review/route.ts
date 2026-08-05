@@ -4,7 +4,7 @@
 
 import { after } from "next/server";
 import {
-  authenticate,
+  authenticateAIRequest,
   buildQuota,
   errorResponse,
   gatewayErrorResponse,
@@ -97,7 +97,8 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // --- Authentication / tenant / entitlement ---
-    const { userId, tenantId, entitlement } = await authenticate(request);
+    const { userId, tenantId, entitlement } =
+      await authenticateAIRequest(request);
 
     // --- Quota ---
     const currentQuota = await buildQuota(tenantId, entitlement);

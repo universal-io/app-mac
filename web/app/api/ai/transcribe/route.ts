@@ -4,7 +4,7 @@
 // per call so a cap can be enforced when Stripe plans land in M3-B).
 
 import {
-  authenticate,
+  authenticateAIRequest,
   enforceQuota,
   errorResponse,
   gatewayErrorResponse,
@@ -62,7 +62,8 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const authStarted = performance.now();
-    const { userId, tenantId, entitlement } = await authenticate(request);
+    const { userId, tenantId, entitlement } =
+      await authenticateAIRequest(request);
     const authMs = performance.now() - authStarted;
     const quotaStarted = performance.now();
     await enforceQuota(tenantId, entitlement);

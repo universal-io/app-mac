@@ -5,6 +5,11 @@
 
 import { getPlanConfig } from "@/lib/server/plans";
 import {
+  authContextCacheKey,
+  jwtIdentityFromClaims,
+  type JWTVerificationMode,
+} from "@/lib/server/jwt-identity";
+import {
   QuotaStateCache,
   type QuotaState,
 } from "@/lib/server/quota-state-cache";
@@ -27,17 +32,15 @@ export type AuthContext = {
   email: string | null;
   entitlement: Entitlement;
   /**
-   * Which round trips this call actually made, in milliseconds. A cold instance
-   * pays five sequential Supabase round trips before a model is reached — the
-   * client measured 1,509ms of auth and 1,238ms of quota on 2026-08-05 — and
-   * until this breakdown existed there was no way to know which of them to
-   * attack (docs/latency-plan.md 1-k). Absent on a cache hit.
+   * Which cold preflight work this call actually performed, in milliseconds.
+   * AI routes verify the asymmetric JWT locally; sensitive routes ask Auth for
+   * the current user. Absent on a cache hit.
    */
   timings?: AuthTimings;
 };
 
 export type AuthTimings = {
-  getUserMs: number;
+  verifyJWTMs: number;
   tenantEntitlementMs: number;
 };
 
@@ -53,6 +56,12 @@ export type AuthenticateOptions = {
    * A missing entitlement row still fails with 402. Defaults to true.
    */
   requireActiveEntitlement?: boolean;
+  /**
+   * AI routes may verify an asymmetric signed JWT locally. Sensitive account,
+   * billing, facts, and admin routes keep the default Auth-server lookup so a
+   * deleted user is observed immediately rather than at token expiry.
+   */
+  verification?: JWTVerificationMode;
 };
 
 const PREFLIGHT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -107,6 +116,7 @@ export async function authenticate(
   options?: AuthenticateOptions,
 ): Promise<AuthContext> {
   const requireActiveEntitlement = options?.requireActiveEntitlement ?? true;
+  const verification = options?.verification ?? "auth-server";
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ")
     ? authorization.slice(7).trim()
@@ -121,7 +131,8 @@ export async function authenticate(
   // the result. Failures surface where it is awaited, not here.
   void warmPlanCatalog();
 
-  const cacheKey = createHash("sha256").update(token).digest("base64url");
+  const tokenDigest = createHash("sha256").update(token).digest("base64url");
+  const cacheKey = authContextCacheKey(tokenDigest, verification);
   const cached = authCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     if (
@@ -139,14 +150,22 @@ export async function authenticate(
   if (cached) authCache.delete(cacheKey);
 
   const admin = getSupabaseAdminClient();
-  const getUserStarted = performance.now();
-  const { data: userData, error: userError } = await admin.auth.getUser(token);
-  const getUserMs = performance.now() - getUserStarted;
-  if (userError || !userData?.user) {
+  const verifyJWTStarted = performance.now();
+  let identity: { userId: string; email: string | null } | null = null;
+  if (verification === "local-jwt") {
+    const { data, error } = await admin.auth.getClaims(token);
+    if (!error) identity = jwtIdentityFromClaims(data?.claims);
+  } else {
+    const { data, error } = await admin.auth.getUser(token);
+    if (!error && data?.user) {
+      identity = { userId: data.user.id, email: data.user.email ?? null };
+    }
+  }
+  const verifyJWTMs = performance.now() - verifyJWTStarted;
+  if (!identity) {
     throw new GatewayError(401, "UNAUTHENTICATED", "Invalid Supabase access token.");
   }
-  const userId = userData.user.id;
-  const email = userData.user.email ?? null;
+  const { userId, email } = identity;
 
   const tenantEntitlementStarted = performance.now();
   let tenantContext = await fetchDefaultTenantContext(userId);
@@ -180,7 +199,13 @@ export async function authenticate(
     value: result,
     expiresAt: Date.now() + PREFLIGHT_CACHE_TTL_MS,
   });
-  return { ...result, timings: { getUserMs, tenantEntitlementMs } };
+  return { ...result, timings: { verifyJWTMs, tenantEntitlementMs } };
+}
+
+/** AI-only authentication boundary. Authorization still comes from database
+ * tenant/entitlement rows; only signature verification moves off Auth. */
+export function authenticateAIRequest(request: Request): Promise<AuthContext> {
+  return authenticate(request, { verification: "local-jwt" });
 }
 
 /** Loads the plan catalog into its in-process cache, swallowing failures so a
@@ -302,7 +327,7 @@ export function recordUsageAfterResponse(
  */
 export async function warmAIRequest(request: Request): Promise<Response> {
   try {
-    const { tenantId, entitlement } = await authenticate(request);
+    const { tenantId, entitlement } = await authenticateAIRequest(request);
     await enforceQuota(tenantId, entitlement);
     return new Response(null, {
       status: 204,

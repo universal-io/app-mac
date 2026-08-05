@@ -45,6 +45,9 @@ Vision / CopilotのCerebras `gemma-4-31b`トライアルは2026-08-04に終了�
 - 冷間時の認証前処理はprofileとentitlementをFK経由の1リクエストで取得する。月次利用数も
   Gateway instance内で5分保持し、成功usageを書いた時は既知の値をその場で進める。同一instanceの
   次ターンで、直前に自分が書いた利用数をCOUNTし直さない。
+- AI routeはES256署名と期限を`getClaims()`で検証し、ユーザー同定だけをローカルで完了する。
+  tenant・entitlementの認可は従来どおりDBから読む。アカウント・課金・ファクト・管理routeは
+  Auth serverの`getUser()`を維持し、両方式の5分cacheは別keyにして相互流用しない。
 - usage記録は成功・モデルエラーとも応答後に行い、レビューのSSEも最終結果を閉じてから記録する。
   モデル推論後の運用記録をユーザーの待ち時間へ含めない。
 

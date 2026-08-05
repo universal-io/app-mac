@@ -1,5 +1,5 @@
 import {
-  authenticate,
+  authenticateAIRequest,
   enforceQuota,
   errorResponse,
   gatewayErrorResponse,
@@ -206,7 +206,7 @@ export async function POST(request: Request): Promise<Response> {
       tenantId,
       entitlement,
       timings: authTimings,
-    } = await authenticate(request);
+    } = await authenticateAIRequest(request);
     const authMs = performance.now() - authStarted;
     const quotaStarted = performance.now();
     const quotaTimings = await enforceQuota(tenantId, entitlement);
@@ -551,7 +551,11 @@ function visionSuccessBody(input: {
         total: Math.round(performance.now() - input.timing.totalStarted),
         // Which Supabase round trip cost what, on a cold instance. Zero means
         // the cache answered and nothing was asked.
-        get_user: Math.round(input.timing.authTimings?.getUserMs ?? 0),
+        verify_jwt: Math.round(input.timing.authTimings?.verifyJWTMs ?? 0),
+        // Kept for the distributed 0.2.2 candidate. AI routes now verify the
+        // signed JWT locally, so this is verification time rather than an Auth
+        // server getUser round trip.
+        get_user: Math.round(input.timing.authTimings?.verifyJWTMs ?? 0),
         tenant_entitlement: Math.round(
           input.timing.authTimings?.tenantEntitlementMs ?? 0,
         ),

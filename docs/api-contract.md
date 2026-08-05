@@ -171,9 +171,11 @@ POST成功応答の`meta.timing_ms`と`Server-Timing`は
 （ストリーミングが検証を緩めてはならない）。`result`が来ないまま終わったストリームは失敗である。
 
 成功応答（ストリーミング／非ストリーミング共通）の`meta.timing_ms`は`body` / `auth` / `quota` /
-`provider` / `usage` / `total`と、preflightの内訳`get_user` / `tenant_entitlement` / `plan` /
-`count`をミリ秒で返す。配布済み0.2.2候補との互換用に`tenant`へ同じ結合取得時間、
-`entitlement`へ0も返す。`usage`は応答後実行のため0、preflight各値の0は
+`provider` / `usage` / `total`と、preflightの内訳`verify_jwt` / `tenant_entitlement` / `plan` /
+`count`をミリ秒で返す。配布済み0.2.2候補との互換用に`get_user`へ同じJWT検証時間、
+`tenant`へ同じ結合取得時間、`entitlement`へ0も返す。AI routeの`verify_jwt`はES256署名と期限の
+`getClaims()`検証であり、Auth serverから現在のuser rowを読む`getUser()`ではない。`usage`は
+応答後実行のため0、preflight各値の0は
 「プロセス内キャッシュが答えたので往復していない」を意味する。
 **クライアントの往復時間と`total`の差が回線（アップロード・TLS・応答転送）である。**
 実測でモデル時間2.4〜3.5秒に対しクライアントは3.4〜7.7秒待っていたため、この内訳を追加した
