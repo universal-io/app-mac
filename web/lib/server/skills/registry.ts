@@ -1,3 +1,4 @@
+import { ACTIVITY_MONITOR_SKILL } from "@/lib/server/skills/tools/activity-monitor";
 import { GA4_SKILL } from "@/lib/server/skills/tools/ga4";
 import { GMAIL_SKILL } from "@/lib/server/skills/tools/gmail";
 import { SLACK_SKILL } from "@/lib/server/skills/tools/slack";
@@ -24,6 +25,7 @@ const TOOL_SKILLS: readonly Skill[] = [
   GMAIL_SKILL,
   GA4_SKILL,
   STRIPE_SKILL,
+  ACTIVITY_MONITOR_SKILL,
 ];
 
 const DOMAIN_SKILLS: readonly Skill[] = [];
