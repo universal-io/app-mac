@@ -546,8 +546,22 @@ pushします。過去に「クライアントは正しいのに文案が出な�
 
 ## リリース運用
 
-**テスター配布中の候補版は `0.2.2` build `6`（バイナリソース `ce6045f`、2026-08-04）です。
-公開ダウンロードはまだ `v0.2.1` のままです。**
+**D7を通す候補版は `0.2.2` build `7`（バイナリソース `7a977ab`、2026-08-09）です。まだ
+`dist/` にあるだけで、どこにも公開していません。テスターへ配布済みなのは build `6`、
+公開ダウンロードは `v0.2.1` のままです。**
+
+```text
+dist/Universal-IO-0.2.2-build7.dmg
+SHA-256: db9b4e84513577efdc0c1f0d8bab9fb6789b173ff94bc13e2a2e60a4ca2ec7e4
+```
+
+**build番号は署名ビルドごとに必ず上げる。** build 6（`ce6045f`）のまま11コミット進めた結果、
+`main`からビルドしたアプリも「`0.2.2` (6)」と名乗り、notarization済み候補版と区別が付かなく
+なっていた。バージョン表示で見分けられない2つのバイナリを同時に持つと、検証したbyte列と
+別のものを公開しかねない。build 7はその11コミット（Vision回答のストリーミング、論理解像度での
+画面送信、AXノードの一括読み取り、画像処理のメインアクター退避、usage記録の取りこぼし修正、
+認証前処理の往復削減）を署名済み成果物へ載せたものである。要求経路そのものを触る変更なので、
+長時間稼働テストの対象としてもbuild 6より適している。
 
 ```text
 テスター向け（不変URL）: https://dl.universal-io.com/releases/0.2.2/build-6/Universal-IO.dmg
@@ -555,8 +569,13 @@ pushします。過去に「クライアントは正しいのに文案が出な�
 SHA-256:                f074fc8150a347a417181776f0d8de8a3dbeb3705191f7da0594b6281b9ea1c6
 ```
 
-R10／R10.5／R11のコードを含み、Developer ID署名、notarization、staple、Gatekeeper評価、
-公開URLからの再取得によるSHA-256一致まで確認済みです。ローカルとR2上のbyte列は同一です。
+build `7`はR10／R10.5／R11に加えて上の11コミットを含み、Developer ID署名、notarization
+（app・DMGとも`Accepted`）、staple、Gatekeeper評価（`source=Notarized Developer ID`）、
+Universal binary（x86_64 + arm64）、本番Gateway向きであることを確認済みです。まだ`--publish`
+していないため、R2上には存在しません。
+
+build `6`（バイナリソース `ce6045f`）はテスター向け不変URLへ配布済みで、SHA-256
+`f074fc8150a347a417181776f0d8de8a3dbeb3705191f7da0594b6281b9ea1c6`です。
 
 **公開ダウンロード（`Universal-IO.dmg`）へは向けていません。** R11の完了条件であるD7
 （24時間以上連続稼働したプロセスでgolden pathを通す）が未達だからです。1回目の試行は稼働
