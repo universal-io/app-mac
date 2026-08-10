@@ -546,14 +546,23 @@ pushします。過去に「クライアントは正しいのに文案が出な�
 
 ## リリース運用
 
-**D7を通す候補版は `0.2.2` build `7`（バイナリソース `7a977ab`、2026-08-09）です。まだ
+**D7を通す候補版は `0.2.2` build `8`（バイナリソース `3a9ed03`、2026-08-10）です。まだ
 `dist/` にあるだけで、どこにも公開していません。テスターへ配布済みなのは build `6`、
 公開ダウンロードは `v0.2.1` のままです。**
 
 ```text
-dist/Universal-IO-0.2.2-build7.dmg
-SHA-256: db9b4e84513577efdc0c1f0d8bab9fb6789b173ff94bc13e2a2e60a4ca2ec7e4
+dist/Universal-IO-0.2.2-build8.dmg
+SHA-256: b5efc42a5f770868eef37b6b6909f529b797614144d28570110b6c06332ad1f2
 ```
+
+build `7`（`db9b4e84…`）は2026-08-10のD7実行で**32時間50分稼働したプロセスが
+`uptime=0h0m`を出力**したため公開しない。R11がこのフィールドを足したのは、停止報告を
+受け取った時にそれが長時間稼働の事例かを判定するためで、常に「起動直後」と答える実装は
+機能の目的を反転させていた。原因はlazy staticの初期化タイミングで、詳細は該当コミットと
+`Diagnostics.launchDate()`のコメントにある。build `8`はその修正と、通信失敗を
+`provider.http.-1`へ潰していた問題（オフラインでも「APIエラー」と表示していた）の修正を
+含む。**要求経路・Vision・Copilot・Compose・音声のコードはbuild `7`と同一**なので、
+2026-08-10に32時間稼働で得た7項目分の証拠はbuild `8`の裏付けとしてそのまま有効である。
 
 **build番号は署名ビルドごとに必ず上げる。** build 6（`ce6045f`）のまま11コミット進めた結果、
 `main`からビルドしたアプリも「`0.2.2` (6)」と名乗り、notarization済み候補版と区別が付かなく
@@ -569,10 +578,11 @@ SHA-256: db9b4e84513577efdc0c1f0d8bab9fb6789b173ff94bc13e2a2e60a4ca2ec7e4
 SHA-256:                f074fc8150a347a417181776f0d8de8a3dbeb3705191f7da0594b6281b9ea1c6
 ```
 
-build `7`はR10／R10.5／R11に加えて上の11コミットを含み、Developer ID署名、notarization
-（app・DMGとも`Accepted`）、staple、Gatekeeper評価（`source=Notarized Developer ID`）、
+build `8`はR10／R10.5／R11に加えて上の11コミットと診断2件の修正を含み、Developer ID署名、
+notarization（app・DMGとも`Accepted`）、staple、Gatekeeper評価（`source=Notarized Developer ID`）、
 Universal binary（x86_64 + arm64）、本番Gateway向きであることを確認済みです。まだ`--publish`
-していないため、R2上には存在しません。
+していないため、R2上には存在しません。2026-08-10 11:07:25に`/Applications`へインストールして
+2回目のD7試行を開始しました。
 
 build `6`（バイナリソース `ce6045f`）はテスター向け不変URLへ配布済みで、SHA-256
 `f074fc8150a347a417181776f0d8de8a3dbeb3705191f7da0594b6281b9ea1c6`です。
