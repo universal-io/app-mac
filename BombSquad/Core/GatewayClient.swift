@@ -206,8 +206,17 @@ struct GatewayClient {
         return data
     }
 
+    /// Transport failures kept their own identity instead of being flattened
+    /// into `http(status: -1)`, which erased the URLError code and left the
+    /// trail unable to tell "the user is offline" from "our Gateway is down" —
+    /// the first question support has to answer.
     private static func transportError(_ error: Error) -> Error {
-        ProviderError.http(status: -1, body: error.localizedDescription)
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return error }
+        return ProviderError.transport(
+            code: nsError.code,
+            description: error.localizedDescription
+        )
     }
 
     private func captureOperationalNotice(from data: Data) async {

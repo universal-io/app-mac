@@ -226,6 +226,9 @@ struct DiagnosticErrorClass: DiagnosticCode {
             switch provider {
             case .missingAPIKey: diagnosticCode = "provider.missingAPIKey"
             case .http(let status, _): diagnosticCode = "provider.http.\(status)"
+            // The URLError code, not its message: offline, DNS, timeout and TLS
+            // must stay distinguishable in a trail the user copies out.
+            case .transport(let code, _): diagnosticCode = "transport.\(code)"
             case .noStructuredOutput: diagnosticCode = "provider.noStructuredOutput"
             case .decoding: diagnosticCode = "provider.decoding"
             case .emptyDraft: diagnosticCode = "provider.emptyDraft"

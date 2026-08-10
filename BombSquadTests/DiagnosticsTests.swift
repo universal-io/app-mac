@@ -139,6 +139,35 @@ final class DiagnosticsTests: XCTestCase {
         )
     }
 
+    /// D7 exercised this for real: with Wi-Fi off, Vision failed explicitly in
+    /// 51ms — correct — but recorded `provider.http.-1`, because the client
+    /// flattened every transport failure into an HTTP error with a sentinel
+    /// status. Offline, DNS failure, a dropped connection and a TLS failure all
+    /// produced that one code, and the user was told "API エラー（-1）" while the
+    /// problem was their own network.
+    ///
+    /// Support's first question is whether the user could reach us at all, so
+    /// these must stay apart in the trail and must not blame the API in the UI.
+    func testTransportFailuresStaySeparableFromServerErrors() {
+        let offline = ProviderError.transport(
+            code: URLError.notConnectedToInternet.rawValue,
+            description: "The Internet connection appears to be offline."
+        )
+        let timedOut = ProviderError.transport(
+            code: URLError.timedOut.rawValue,
+            description: "The request timed out."
+        )
+        let serverFault = ProviderError.http(status: 502, body: "bad gateway")
+
+        let codes = [offline, timedOut, serverFault].map { DiagnosticErrorClass($0).diagnosticCode }
+        XCTAssertEqual(codes, ["transport.-1009", "transport.-1001", "provider.http.502"])
+        XCTAssertEqual(Set(codes).count, 3, "a trail that cannot tell these apart cannot be triaged")
+
+        let message = offline.errorDescription ?? ""
+        XCTAssertFalse(message.contains("API"), message)
+        XCTAssertTrue(message.contains("接続"), message)
+    }
+
     /// A user reporting "the highlight stopped appearing" can be answered only
     /// if the three ways it can go missing are separable in the trail. They call
     /// for different fixes: the model naming no target is its judgement, an
