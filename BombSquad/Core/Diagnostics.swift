@@ -78,7 +78,38 @@ enum Diagnostics {
 
     private static let lock = NSLock()
     private nonisolated(unsafe) static var entries: [DiagnosticEntry] = []
-    private nonisolated(unsafe) static var startedAt = Date()
+    /// Test override only. Production reads the kernel, see `launchDate()`.
+    private nonisolated(unsafe) static var startedAtOverride: Date?
+
+    /// When this process actually started, taken from the kernel rather than
+    /// stored at launch.
+    ///
+    /// This was `static var startedAt = Date()`, and Swift initializes a static
+    /// lazily — on first access. Nothing read it until the user copied a report,
+    /// so it initialized at that moment and every report ever produced said
+    /// `uptime=0h0m`, whatever the real uptime was. A second copy in the same
+    /// session was worse: it showed the time since the first copy, which looks
+    /// plausible. The one field that identifies the long-uptime failure this
+    /// project exists for was reporting the opposite of it.
+    ///
+    /// The kernel's value cannot depend on when this type was first touched, so
+    /// the ordering assumption is gone rather than corrected.
+    static func launchDate() -> Date {
+        if let startedAtOverride { return startedAtOverride }
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else {
+            // Never seen in practice. Reporting the epoch would be a lie in the
+            // other direction, so fall back to "unknown, treat as just started".
+            return Date()
+        }
+        let started = info.kp_proc.p_starttime
+        return Date(
+            timeIntervalSince1970: Double(started.tv_sec)
+                + Double(started.tv_usec) / 1_000_000
+        )
+    }
 
     /// Records one event to the device log and the in-memory trail.
     static func record(
@@ -122,8 +153,8 @@ enum Diagnostics {
     static func exportText(now: Date = Date()) -> String {
         lock.lock()
         let snapshot = entries
-        let launched = startedAt
         lock.unlock()
+        let launched = launchDate()
 
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
@@ -139,10 +170,14 @@ enum Diagnostics {
     }
 
     /// Test seam. Production never resets: the trail is the process's history.
-    static func resetForTesting(launchedAt: Date = Date()) {
+    ///
+    /// `launchedAt: nil` clears the override so a test can exercise the real
+    /// kernel-backed path — which is what no test did before, letting the
+    /// lazy-static defect sit behind a seam that always assigned the value.
+    static func resetForTesting(launchedAt: Date? = nil) {
         lock.lock()
         entries = []
-        startedAt = launchedAt
+        startedAtOverride = launchedAt
         lock.unlock()
     }
 

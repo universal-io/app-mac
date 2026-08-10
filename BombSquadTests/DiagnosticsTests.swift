@@ -61,6 +61,36 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertTrue(text.contains("coordinator.started"), text)
     }
 
+    /// The test above passes on a build whose uptime is permanently zero,
+    /// because assigning the launch date is itself what initializes it. That is
+    /// how a 32-hour process came to report `uptime=0h0m` with 68 tests green.
+    ///
+    /// This exercises the real path with no override. The invariant is
+    /// ordering, not a duration: a process cannot have started after the first
+    /// thing it recorded. When launch was resolved lazily at export time it was
+    /// later than every entry, so this fails on the defect and needs no clock.
+    func testLaunchDateIsNotResolvedWhenTheReportIsFirstRead() {
+        Diagnostics.resetForTesting(launchedAt: nil)
+        Diagnostics.record("coordinator.started", mode: .idle)
+        let firstEntry = Diagnostics.recent(1).first
+        XCTAssertNotNil(firstEntry)
+
+        // Reading the report must not be what decides when the process began.
+        _ = Diagnostics.exportText()
+        let launched = Diagnostics.launchDate()
+
+        XCTAssertLessThanOrEqual(
+            launched,
+            firstEntry!.at,
+            "launch resolved after the first recorded event: uptime is being measured from first read"
+        )
+        XCTAssertGreaterThan(
+            Date().timeIntervalSince(launched),
+            0,
+            "a running process must report a positive uptime"
+        )
+    }
+
     /// The privacy boundary of README「データ保存」, pinned. Every value a caller
     /// can construct is a number, a flag, a compile-time literal, or a code
     /// from a closed vocabulary — there is no case that accepts free text, so a
