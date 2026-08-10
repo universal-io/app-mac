@@ -11,7 +11,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "0.2.2"
-    CURRENT_PROJECT_VERSION: "7"
+    CURRENT_PROJECT_VERSION: "8"
     SWIFT_VERSION: "5.0"
 targets:
   BombSquad:
