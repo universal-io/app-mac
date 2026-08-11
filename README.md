@@ -546,9 +546,9 @@ pushします。過去に「クライアントは正しいのに文案が出な�
 
 ## リリース運用
 
-**D7を通す候補版は `0.2.2` build `8`（バイナリソース `3a9ed03`、2026-08-10）です。まだ
-`dist/` にあるだけで、どこにも公開していません。テスターへ配布済みなのは build `6`、
-公開ダウンロードは `v0.2.1` のままです。**
+**現行の正式版は `v0.2.2`（build `8`、バイナリソース `3a9ed03`）です。** 2026-08-11、26時間20分
+連続稼働したプロセスでD7（[manual-golden-paths.md](docs/manual-golden-paths.md)）9項目を通過し、
+公開ダウンロードを build `8` へ切り替えました。
 
 ```text
 dist/Universal-IO-0.2.2-build8.dmg
@@ -580,9 +580,12 @@ SHA-256:                f074fc8150a347a417181776f0d8de8a3dbeb3705191f7da0594b628
 
 build `8`はR10／R10.5／R11に加えて上の11コミットと診断2件の修正を含み、Developer ID署名、
 notarization（app・DMGとも`Accepted`）、staple、Gatekeeper評価（`source=Notarized Developer ID`）、
-Universal binary（x86_64 + arm64）、本番Gateway向きであることを確認済みです。まだ`--publish`
-していないため、R2上には存在しません。2026-08-10 11:07:25に`/Applications`へインストールして
-2回目のD7試行を開始しました。
+Universal binary（x86_64 + arm64）、本番Gateway向きであることを確認済みです。
+
+D7で確定した事実として、26時間20分の連続稼働で説明のつかない失敗はゼロでした。記録された
+`failed`3件は、意図的なオフライン検証（`transport.-1009`、240msで明示失敗）と、リクエスト中に
+パネルを閉じたユーザー操作2件（`transport.-999`）です。R11の動機となった2026-08-03の無音停止は
+再現していません。
 
 build `6`（バイナリソース `ce6045f`）はテスター向け不変URLへ配布済みで、SHA-256
 `f074fc8150a347a417181776f0d8de8a3dbeb3705191f7da0594b6281b9ea1c6`です。
@@ -594,11 +597,10 @@ build `6`（バイナリソース `ce6045f`）はテスター向け不変URLへ�
 `bash tools/release.sh --promote 0.2.2 6` で公開を切り替え、そのソースコミットへ`v0.2.2`タグを
 付けます。**候補は再ビルドしません**（検証したbyte列と公開物を取り違えないため）。
 
-現行の正式版は `v0.2.1`（build `5`、バイナリソース `893c92a`）です。Focused Visionと
-clipboard安全化を正式採用し、配布DMGは
-`https://dl.universal-io.com/releases/0.2.1/build-5/Universal-IO.dmg`、公開ダウンロードは
-`https://dl.universal-io.com/Universal-IO.dmg`、SHA-256は
-`637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`です。
+前版の `v0.2.1`（build `5`、バイナリソース `893c92a`）は
+`https://dl.universal-io.com/releases/0.2.1/build-5/Universal-IO.dmg`、SHA-256
+`637cd6cc029452db349f87e0a1cae4e6ecf214a3d458ba9ce0ad87ea6344cd69`として不変保存されています。
+Focused Visionとclipboard安全化を正式採用した版です。
 
 前版の `v0.2.0`（build `4`、バイナリソース `ce74d12`）は
 `https://dl.universal-io.com/releases/0.2.0/build-4/Universal-IO.dmg`、SHA-256
