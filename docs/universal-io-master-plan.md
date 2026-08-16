@@ -381,7 +381,7 @@ fallback、Skill、Copilotを維持し、別surface、別endpoint、別prompt、
   選択用promptが常に付き、モデルが選択の不在報告から回答を始める不具合を確認した。原因は
   `visualOnly`／`accessibilityElement`という観測主体を持たない状態で、正本が実装不能な条件を
   書いていたことに起因する。修正計画・判定記録・受け入れ条件は
-  [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md)を正とする。
+  `api-gateway/docs/vision-selection-evidence-fix.md`を正とする。
   順序は正本修正（済）→ Gateway「受理して無視」ホットフィックス → 本番デプロイ
   （この時点で`v0.2.1`ユーザーの症状も消える）→ クライアント削除＋retry再設計 → 計測後にwire撤去。
   正本修正・Gatewayホットフィックス・本番デプロイ（`349bb9c`）・クライアント削除・retry再設計まで
@@ -436,7 +436,7 @@ versionを上げただけで未公開のため、R10／R10.5の成果を先に�
 `r11-reliability`。
 
 - **D0（完了）** 原因分析、目標構造、受け入れ条件、技術的負債15項目の棚卸しを
-  [reliability-hardening-plan.md](reliability-hardening-plan.md)へ固定した。実測により
+  `api-gateway/docs/reliability-hardening-plan.md`へ固定した。実測により
   旧D4の前提を反証し、実施順と範囲を改訂した。
 - **D1（完了）** 診断を`#if DEBUG`のNSLogから`os_log`へ移し、release buildでも開始・発行・
   完了・失敗を記録する。本文・回答・画像・タイトル・ホスト名は載せない。同じ記録を
@@ -471,7 +471,7 @@ macOS unit testは41件から61件へ増えた。webのlint／型検査／produc
 旧D4（パネル表示の作り直し）は`0.2.2`のゲートから外す。障害は新品のウインドウで起きており、
 ホスティングコントローラーの寿命を延ばしても防げない。衛生改善として公開後に扱う。
 
-詳細と技術的負債の一覧は[reliability-hardening-plan.md](reliability-hardening-plan.md)を正とする。
+詳細と技術的負債の一覧は`api-gateway/docs/reliability-hardening-plan.md`を正とする。
 
 ### R12 — 案内の正確さ（未着手）
 
@@ -498,7 +498,7 @@ E1（実機probeで測定）→ E2（観測できないことを述べない）�
 E4（候補ゼロを失敗として扱う）→ E5（話者と実行者＝M0.6）→ E6（固定材料でのモデル比較）。
 **入力を直してからモデルを測る。** 壊れた入力での比較は、モデルの差ではなく入力の壊れ方を測る。
 
-詳細は[guidance-accuracy-plan.md](guidance-accuracy-plan.md)を正とする。
+詳細は`api-gateway/docs/guidance-accuracy-plan.md`を正とする。
 
 ### R13 — 速さ（L1・L2実機確認済み、L3〜L5計測・改善中）
 
@@ -550,7 +550,7 @@ L1（単一起点で測る）→ L2（分かった順に出す）→ L3（画像
 L4（AXをどこまで取るか）→ L5（Copilot撮影予算＝R12 E2と合流）→ L6（review/suggest逐次化）→
 L7（モデル選定＝R12 E6）。**速くするために正しさを削らない。**
 
-詳細は[latency-plan.md](latency-plan.md)を正とする。
+詳細は`api-gateway/docs/latency-plan.md`を正とする。
 
 ## リリース判定
 
@@ -643,7 +643,7 @@ L7（モデル選定＝R12 E6）。**速くするために正しさを削らな�
   入力本文、回答、画像、音声などの内容は管理画面へ保存・表示しない。
 - モデル別token／音声秒数へ価格表を掛けたAPIコスト概算、ユーザー／機能／日別の推移、予算閾値を
   表示する。最終請求額はOpenAI、Groq等のprovider管理画面を正とする。
-- 詳細設計と実装順序の正本は[admin-dashboard-plan.md](admin-dashboard-plan.md)に置く。
+- 詳細設計と実装順序の正本は`api-gateway/docs/admin-dashboard-plan.md`に置く。
 
 ## 変更ルール
 

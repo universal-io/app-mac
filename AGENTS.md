@@ -1,13 +1,20 @@
 # Agent Rules (app-mac)
 
-## 隣にもう1つリポジトリがある（毎セッション必読）
+## 隣に複数のリポジトリがある（毎セッション必読）
 
-`/Users/kaya.matsumoto/projects/universal-io/` の下に**独立した2つのgitリポジトリ**がある。
+`/Users/kaya.matsumoto/projects/universal-io/` の下に**独立した複数のgitリポジトリ**がある。
 
 | パス | 中身 | `main` へのpushが意味すること |
 |---|---|---|
-| `app-mac` | macOSアプリ ＋ Gateway（`web/`） | `api.universal-io.com` の本番デプロイ |
-| `web-product` | 製品サイト（別リポジトリ） | `universal-io.com` の本番デプロイ |
+| `app-mac`（ここ） | **macOSアプリのみ** | クライアントのソース更新（本番デプロイは起きない） |
+| `api-gateway` | **本番Gateway＋認証＋課金＋Supabase** | **`api.universal-io.com` の本番デプロイ** |
+| `web-product` | 製品サイト | `universal-io.com` の本番デプロイ |
+| `app-ios` | iOSアプリ | — |
+| `app-web` | Webクライアント（企画中） | — |
+
+**2026-08-16にGatewayを`app-mac/web/`から`api-gateway`へ切り出した。**
+このリポジトリに `web/` と `supabase/` はもう無い。APIの正本は `api-gateway/docs/api-contract.md`、
+設計思想の正本は `api-gateway/docs/design-philosophy.md`。経緯は `app-web/docs/requirements.md`。
 
 **エージェントのシェルは作業ごとに `app-mac` へ戻る。** `cd` した直後でも、次の
 コマンドでは `app-mac` にいる。したがって裸の `git add -A && git commit` は、

@@ -1,27 +1,45 @@
 # ドキュメント索引
 
-最終更新: 2026-08-03 ／ ステータス: 現行
+最終更新: 2026-08-16 ／ ステータス: 現行
 
 このファイルがドキュメントの唯一の入口です。実装の正は現行コード、製品計画の正は
-`universal-io-master-plan.md`、APIの正は `api-contract.md` です。
+`universal-io-master-plan.md` です。
 
-## 正本
+**APIとサーバー側の正本はこのリポジトリにありません。** 2026-08-16にGatewayを
+`universal-io/api-gateway` へ切り出しました（下記「他リポジトリにある正本」）。
+
+## 正本（このリポジトリ）
 
 | ドキュメント | 役割 |
 |---|---|
 | [../README.md](../README.md) | 現行機能、実行経路、開発手順 |
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョンとリリース・マイルストーン |
-| [design-philosophy.md](design-philosophy.md) | 設計思想（北極星＝ユーザー起点の世界モデル、作る順序） |
-| [api-contract.md](api-contract.md) | macOSクライアントと本番Gatewayの契約 |
 | [manual-golden-paths.md](manual-golden-paths.md) | リリース前の手動検証 |
-| [dev-prod-app-identity.md](dev-prod-app-identity.md) | 開発版と本番版のアプリ正体分離（Launchpad/Launch Services 対策） |
 | [macos-ux-polish-checklist.md](macos-ux-polish-checklist.md) | リリース前 UX 磨き込みチェックリスト（TCC/ウィンドウ/署名） |
-| [supabase-setup.md](supabase-setup.md) | 認証・データ基盤の設定 |
-| [admin-dashboard-plan.md](admin-dashboard-plan.md) | 本番Admin Console |
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
 | [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9、Selection Extension改修（R10）、将来のAX直接入力研究の正本 |
-| [reliability-hardening-plan.md](reliability-hardening-plan.md) | 起動確実性と公開品質（R11）。長時間稼働での無音停止の原因分析と技術的負債の棚卸し |
-| [guidance-accuracy-plan.md](guidance-accuracy-plan.md) | 案内の正確さ（R12）。動いているのに内容が誤る欠陥の原因分析とマイルストーン |
+
+## 他リポジトリにある正本
+
+**`universal-io/api-gateway`**（本番Gateway。`api.universal-io.com`）
+
+| ドキュメント | 役割 |
+|---|---|
+| `docs/api-contract.md` | **APIの正本。** macOS/iOS/Webクライアントと本番Gatewayの契約 |
+| `docs/design-philosophy.md` | **設計思想の正本。** 北極星＝ユーザー起点の世界モデル、作る順序 |
+| `docs/supabase-setup.md` | 認証・データ基盤の設定 |
+| `docs/admin-dashboard-plan.md` | 本番Admin Console |
+| `docs/reliability-hardening-plan.md` | 起動確実性と公開品質（R11） |
+| `docs/guidance-accuracy-plan.md` | 案内の正確さ（R12） |
+| `docs/latency-plan.md` | 応答時間の内訳と改善 |
+| `docs/vision-selection-evidence-fix.md` | R10.5 selection判定の記録 |
+| `docs/dev-prod-app-identity.md` | 開発版と本番版のアプリ正体分離 |
+
+**`universal-io/app-web`**（Webクライアント企画）
+
+| ドキュメント | 役割 |
+|---|---|
+| `docs/requirements.md` | リポジトリ構成の決定とGateway切り出しの経緯 |
 
 ## 参照資料
 
@@ -37,3 +55,5 @@
 5. 方針変更はREADME、該当正本、コードを同じコミットで更新する。
 6. `test`、`mock`、`dummy`、`fixture`、`experiment`、`challenge`、`shadow`という本番代替経路を
    常設しない。必要な検証は隔離した短命ブランチで実施する。
+7. **Gateway・API・課金・Supabaseに関する変更は `api-gateway` リポジトリで行う。**
+   このリポジトリはmacOSクライアントだけを持つ。

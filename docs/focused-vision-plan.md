@@ -5,7 +5,7 @@
 本書は、TransformをVisionへ統合し、Universal I/Oがユーザーに見えない場所で
 システムクリップボードを退避・復元する構造を廃止するプロジェクトの仕様書である。
 進捗は[マスタープラン R9](universal-io-master-plan.md)、現行実装のAPI契約は
-[api-contract.md](api-contract.md)を正とする。独立Transform契約はA5で撤去済み。
+`api-gateway/docs/api-contract.md`を正とする。独立Transform契約はA5で撤去済み。
 
 2026-07-31に、`v0.2.1`の選択取得がfocused elementに近い最初の非空AX祖先で停止し、
 通常Visionの初期入力へ情報を加えるのではなく別taskへ置き換えていたことを確認した。
@@ -23,7 +23,7 @@ Focused Vision - Selection Extension = 通常Vision
 §3〜§6の目標仕様と§18以降のプロジェクトCが今後の実装判断に優先する。
 
 2026-08-01のC6実機テストで、選択していない画面にも選択カードと選択用promptが常に付く不具合を
-確認した。原因判定と修正は[vision-selection-evidence-fix.md](vision-selection-evidence-fix.md)
+確認した。原因判定と修正は`api-gateway/docs/vision-selection-evidence-fix.md`
 （R10.5）を正とする。本書の`visualOnly`／選択要素（`AXSelected`）による選択成立の記述は同日
 撤回し、**selectionは`VisionSelectionResolver`が確定した非空の選択テキストからのみ成立する**。
 C2〜C6の完了記録中の`visualOnly`等の記述は当時の実装履歴である。
@@ -1023,7 +1023,7 @@ document textを読み得る順序を修正した。macOS 41件、Web lint／Typ
 ブロッカー記録（2026-08-01）: 実機テストで、何も選択していない画面にも選択カードと選択用promptが
 常に付き、モデルが選択の不在報告から回答を始める不具合を確認した。C6をリリースブロッカーとして
 未完了へ戻す。原因判定・修正計画・受け入れ条件は
-[vision-selection-evidence-fix.md](vision-selection-evidence-fix.md)（R10.5）を正とし、
+`api-gateway/docs/vision-selection-evidence-fix.md`（R10.5）を正とし、
 `visualOnly`／`accessibilityElement`の撤回、Gatewayの「受理して無視」ホットフィックス、
 retry停止規則の再設計、不在検査の追加を含む。
 
@@ -1051,13 +1051,13 @@ R10.5実機確認（2026-08-01、Apple Development署名のDebug build）:
   `AXWebArea`まで10要素が同じ値を返すことを実測した。取得できていない原因は公開の有無ではなく、
   探索側の死角（focused element欠落時にdocument探索をしない、256要素上限と完走必須条件）と、
   AX挙動の不安定さである。詳細は
-  [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md) §4-c。
+  `api-gateway/docs/vision-selection-evidence-fix.md` §4-c。
 - **その後の実測で、AX取得の失敗そのものが自前の探索条件によるものだと判明した。** Chrome Gmailの
   実機診断も`[selection] status: none`で、AXは選択を返しているのに製品が捨てていた。祖先walkが
   `AXWebArea`をスキップし（Chromeはdocument自身をfocused elementにする）、それを拾うはずの
   document走査は「window全体を256要素以内で走査完了」を要求して決して成立しなかった。修正後は
   同じ画面で1ms・227 unitsを取得し、document走査もスキップされる。詳細は
-  [vision-selection-evidence-fix.md](vision-selection-evidence-fix.md) §4-c。
+  `api-gateway/docs/vision-selection-evidence-fix.md` §4-c。
 - **より本質的な誤りは、AX取得の失敗をユーザー意図の不在として扱ったことである。** 選択内容は
   回答対象を決めるsemantic authorityであり、AXはそれを運ぶacquisition channelの一つにすぎない。
   R10.5当初の「AXが返したtextだけがselection」という不変条件はこの2つを混同していた。同日、
@@ -1165,7 +1165,7 @@ R10.5実機確認（2026-08-01、Apple Development署名のDebug build）:
 ## 15. プロジェクトAの受け入れ条件
 
 （`v0.2.1`公開時の記録。`visualOnly`等の選択推測はR10.5で撤回済みで、現行仕様は§4.2と
-[vision-selection-evidence-fix.md](vision-selection-evidence-fix.md)を正とする。）
+`api-gateway/docs/vision-selection-evidence-fix.md`を正とする。）
 
 以下を全て満たした時だけ完了とする。
 
@@ -1222,5 +1222,5 @@ R10.5実機確認（2026-08-01、Apple Development署名のDebug build）:
 - AX直接入力はプロジェクトBのprobe結果が出るまで未採用とする。
 - Unicode keyboard eventは製品fallbackにしない。
 - Focused Visionの画像利用によるコストと送信範囲の増加を意識的に受け入れ、実測後に最適化する。
-- 現行本番API契約は[api-contract.md](api-contract.md)を正とし、本書はR9の履歴とR10の要件・
+- 現行本番API契約は`api-gateway/docs/api-contract.md`を正とし、本書はR9の履歴とR10の要件・
   実装計画を記録する。

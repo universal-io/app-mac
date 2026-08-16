@@ -3,13 +3,13 @@
 Universal I/O は、入力・受信・画面理解をひとつの操作体系にまとめる macOS アプリです。
 
 > **設計思想の正本**（北極星＝ユーザー起点の世界モデル、作る順序）は
-> [docs/design-philosophy.md](docs/design-philosophy.md)。本書が「現在どう動くか」、
+> `api-gateway/docs/design-philosophy.md`。本書が「現在どう動くか」、
 > あちらが「どういう思想でどの順に作るか」を扱います。
 
 ## 重要: 本番AIモデルとfallback
 
 全AIモデルの一次・二次ルートは
-[`web/lib/server/ai-routing.ts`](web/lib/server/ai-routing.ts) が唯一の正本です。
+`api-gateway` リポジトリの `lib/server/ai-routing.ts` が唯一の正本です。
 個別のengine、macOSクライアント、環境変数へモデル名を分散させません。
 
 **どのモデルを使うかは流動的です。** 新モデルの精度・遅延・単価を実画面で比較するため、
@@ -30,7 +30,7 @@ Vision / CopilotのCerebras `gemma-4-31b`トライアルは2026-08-04に終了�
 戻しました。実機で開いたプルダウンの中身を読めず、案内が成立しなかったためです。GA4や
 管理ツールの多くは目的の項目がメニューの中にあるので、開いたメニューを読めないことは
 一部の画面の問題ではなく、案内機能そのものが使えないことを意味します。判断の記録は
-[guidance-accuracy-plan.md](docs/guidance-accuracy-plan.md)。
+`api-gateway/docs/guidance-accuracy-plan.md`。
 
 共通規則:
 
@@ -204,7 +204,7 @@ R10の後方互換Gateway契約は2026-08-01にmacOS候補版より先に`main`�
 同日のC6実機テストで**リリースブロッカー**を確認した。何も選択していない画面にも選択カードと
 選択用promptが常に付き、モデルが選択の不在報告から回答を始める。原因は`visualOnly`／
 `accessibilityElement`という観測主体を持たない推測状態で、R10.5として撤回した。修正計画・
-判定記録は[vision-selection-evidence-fix.md](docs/vision-selection-evidence-fix.md)を正とする。
+判定記録は`api-gateway/docs/vision-selection-evidence-fix.md`を正とする。
 
 R10.5の正本はこの一文である。
 
@@ -258,7 +258,7 @@ bounded retryも「選択の証拠がまだ現れ得る積極的な兆候があ�
 
 **「再起動してください」を回避策として案内する状態を公開品質と認めない。** 原因分析、
 マイルストーン、技術的負債の棚卸しは
-[reliability-hardening-plan.md](docs/reliability-hardening-plan.md)、進捗は
+`api-gateway/docs/reliability-hardening-plan.md`、進捗は
 [マスタープラン R11](docs/universal-io-master-plan.md)を正本とする。
 公開前に24時間以上連続稼働させたgolden path（[manual-golden-paths.md](docs/manual-golden-paths.md)）
 を通す。起動直後だけを確認するチェックリストでは、この障害は原理的に検出できない。
@@ -280,7 +280,7 @@ bounded retryも「選択の証拠がまだ現れ得る積極的な兆候があ�
   ゲストデータのZDR扱い、初期値「20」。
 
 サーバー（Supabase 匿名認証・guest plan・provisioning 分岐）＋クライアント＋商品/セキュリティ判断に
-またがる中規模機能。アカウント管理UI（`docs/admin-dashboard-plan.md` §9-b の権限/plan/account class 分離）と
+またがる中規模機能。アカウント管理UI（`api-gateway/docs/admin-dashboard-plan.md` §9-b の権限/plan/account class 分離）と
 同じライフサイクル上にあるため、そのプロジェクトと合わせて設計・実装する。
 
 ### アイデア: 音声入力のリアルタイム化（未着手）
@@ -532,11 +532,14 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 
 ### Gatewayのデプロイ
 
-**`origin/main` へのpush＝本番Gatewayデプロイ**です（Vercelのgit連携。`vercel` CLIもCI workflowも
-使いません）。Vercelが見るのはGitHub上の`main`なので、ローカルでコミットしただけでは何も起きません。
-`web/` を触った変更は push するまで本番へ届かないので、実機検証の前に必ず `main` へマージして
-pushします。過去に「クライアントは正しいのに文案が出ない」障害の唯一の原因が、routeが本番の`main`に
-無かったことでした。macOSクライアントだけの変更はGatewayに影響しません。
+**Gatewayは別リポジトリ `universal-io/api-gateway` にあります**（2026-08-16に`app-mac/web/`から
+切り出し）。**そちらの `origin/main` へのpush＝本番Gatewayデプロイ**です（Vercelのgit連携。
+`vercel` CLIもCI workflowも使いません）。Vercelが見るのはGitHub上の`main`なので、ローカルで
+コミットしただけでは何も起きません。Gatewayを触った変更は push するまで本番へ届かないので、
+実機検証の前に必ず `main` へマージしてpushします。過去に「クライアントは正しいのに文案が出ない」
+障害の唯一の原因が、routeが本番の`main`に無かったことでした。
+
+**このリポジトリ（app-mac）へのpushは本番Gatewayに一切影響しません。**
 
 `main` 以外のブランチをpushするとVercelのPreviewが生成されますが、Deployment Protection配下で
 外部からは到達できず、固定エイリアスも持ちません。アプリは常に `api.universal-io.com`
