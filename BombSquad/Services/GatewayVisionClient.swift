@@ -92,10 +92,11 @@ struct GatewayVisionClient {
         candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
         identity: VisionObservationCaptureService.TargetIdentity? = nil,
         selection: VisionSelectionContext? = nil,
+        pointer: VisionPointer? = nil,
         guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> VisionResponse {
-        let encoded = try await Self.encodedImage(for: attachment)
+        let encoded = try await Self.encodedImage(for: attachment, pointer: pointer)
         // What actually went over the wire. Image tokens grow with area and are
         // most of the wait, so a change in this number explains a change in
         // latency that no other record would.
@@ -114,6 +115,7 @@ struct GatewayVisionClient {
             candidateDiagnostics: candidateDiagnostics,
             identity: identity,
             selection: selection,
+            pointer: pointer,
             guidanceContext: guidanceContext
         )
 
@@ -144,10 +146,11 @@ struct GatewayVisionClient {
         candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
         identity: VisionObservationCaptureService.TargetIdentity? = nil,
         selection: VisionSelectionContext? = nil,
+        pointer: VisionPointer? = nil,
         guidanceContext: ScreenGuidanceContext? = nil,
         language: OutputLanguage
     ) async throws -> AsyncThrowingStream<VisionStreamEvent, Error> {
-        let encoded = try await Self.encodedImage(for: attachment)
+        let encoded = try await Self.encodedImage(for: attachment, pointer: pointer)
         // What actually went over the wire. Image tokens grow with area and are
         // most of the wait, so a change in this number explains a change in
         // latency that no other record would.
@@ -166,6 +169,7 @@ struct GatewayVisionClient {
             candidateDiagnostics: candidateDiagnostics,
             identity: identity,
             selection: selection,
+            pointer: pointer,
             guidanceContext: guidanceContext
         )
 
@@ -243,6 +247,7 @@ struct GatewayVisionClient {
         candidateDiagnostics: VisionObservationCaptureService.Diagnostics? = nil,
         identity: VisionObservationCaptureService.TargetIdentity? = nil,
         selection: VisionSelectionContext? = nil,
+        pointer: VisionPointer? = nil,
         guidanceContext: ScreenGuidanceContext? = nil
     ) -> [String: Any] {
         var input: [String: Any] = [
@@ -265,6 +270,13 @@ struct GatewayVisionClient {
         if let selection,
            let payload = selection.wirePayload(for: attachment) {
             input["selection"] = payload
+        }
+        // Trusted intent: the user physically indicated a place, so this decides
+        // what the answer is about. The numbers travel even though the mark is
+        // burned into the image, because the Gateway's prompt uses them as the
+        // cross-check for a mark it cannot find.
+        if let pointer {
+            input["pointer"] = pointer.wirePayload
         }
         if let guidanceContext {
             input["guidance"] = guidanceContext.wirePayload
@@ -303,7 +315,8 @@ struct GatewayVisionClient {
     /// reentrant. Reading a file and passing the bytes through, which is all this
     /// used to do, was cheap and touched no shared drawing state; this is neither.
     private static func encodedImage(
-        for attachment: ScreenshotAttachment
+        for attachment: ScreenshotAttachment,
+        pointer: VisionPointer? = nil
     ) async throws -> (base64: String, mediaType: String, width: Int, height: Int) {
         let url = attachment.url
         let pixelWidth = attachment.pixelWidth
@@ -314,16 +327,18 @@ struct GatewayVisionClient {
                 url: url,
                 pixelWidth: pixelWidth,
                 pixelHeight: pixelHeight,
-                captureRect: captureRect
+                captureRect: captureRect,
+                pointer: pointer
             )
         }.value
     }
 
-    private static func encodeForWire(
+    static func encodeForWire(
         url: URL,
         pixelWidth: Int?,
         pixelHeight: Int?,
-        captureRect: CGRect?
+        captureRect: CGRect?,
+        pointer: VisionPointer? = nil
     ) throws -> (base64: String, mediaType: String, width: Int, height: Int) {
         let source = try Data(contentsOf: url)
         let sourceType = url.pathExtension.lowercased() == "jpg"
@@ -347,17 +362,26 @@ struct GatewayVisionClient {
             captureRect: captureRect
         ).flatMap { downscale(bitmap, to: $0) }
         let scaled = resized ?? bitmap
-        let width = scaled.pixelsWide
-        let height = scaled.pixelsHigh
+        // Drawn last, at the size actually being sent: a mark burned before the
+        // downscale gets thinned by the resampling filter that keeps the screen
+        // text legible, and a hairline mark is one the model can miss.
+        let marked = pointer.flatMap { VisionPointerMark.burn($0, into: scaled) }
+        let outgoing = marked ?? scaled
+        let width = outgoing.pixelsWide
+        let height = outgoing.pixelsHigh
 
-        if resized == nil, source.count <= maxRawImageBytes {
+        // Passing the original bytes through is only honest when nothing was
+        // drawn on them. A failed burn falls through to the unmarked image
+        // rather than failing the turn — the Gateway's prompt still has the
+        // coordinates, so the answer degrades instead of disappearing.
+        if resized == nil, marked == nil, source.count <= maxRawImageBytes {
             return (source.base64EncodedString(), sourceType, width, height)
         }
-        if let png = scaled.representation(using: .png, properties: [:]),
+        if let png = outgoing.representation(using: .png, properties: [:]),
            png.count <= maxRawImageBytes {
             return (png.base64EncodedString(), "image/png", width, height)
         }
-        guard let jpeg = scaled.representation(
+        guard let jpeg = outgoing.representation(
             using: .jpeg,
             properties: [.compressionFactor: 0.9]
         ) else {
