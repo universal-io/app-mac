@@ -132,6 +132,12 @@ struct ScreenshotCaptureService {
             excludingApplications: ownApplications,
             exceptingWindows: []
         )
+        // An empty exclusion list means the filter excludes nothing, and every
+        // overlay this app draws lands in the shot it is meant to be absent
+        // from. Nothing throws when that happens, so the count is recorded and
+        // a zero is the thing to look for.
+        let excludedCount = ownApplications.count
+        let menuWasOpen = Self.nativeMenuIsOpen()
         let configuration = SCStreamConfiguration()
         let scale = CGFloat(filter.pointPixelScale)
         var width = Int(CGFloat(display.width) * scale)
@@ -146,10 +152,47 @@ struct ScreenshotCaptureService {
         configuration.height = height
         configuration.showsCursor = false
 
+        let startedAt = Date()
         let image = try await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: configuration
         )
+        // How long one shot costs, which nothing recorded until now.
+        //
+        // The number decides a design question rather than merely describing
+        // one: pointing takes a fresh still at the moment of each gesture, and
+        // whether that is affordable — or whether an unchanged screen has to be
+        // reused instead — depends on this against a Gateway round trip
+        // (docs/universal-io-master-plan.md R14「設計の芯」).
+        Diagnostics.record("capture.display", details: [
+            ("ms", .ms(Int(Date().timeIntervalSince(startedAt) * 1000))),
+            ("px", .count(width * height / 1000)),
+            ("excluded", .count(excludedCount)),
+            ("menu", .flag(menuWasOpen)),
+        ])
         return (image, CGSize(width: display.width, height: display.height), display.displayID)
+    }
+
+    /// Whether a native menu was open at the moment of the shot.
+    ///
+    /// A macOS menu is its own window at the pop-up menu level; a web page's
+    /// dropdown is drawn inside the browser window and has no window of its
+    /// own. So this single flag separates the two cases, and it answers a
+    /// question a staged experiment could not: whether the screens people
+    /// actually point at have native menus open on them, and whether those
+    /// menus are still there once our overlay appears. Real use fills this in
+    /// without anyone having to hold a menu open on cue.
+    ///
+    /// Only the window level is read. Owner names and titles are available here
+    /// and are deliberately not taken — `DiagnosticValue` could not carry them
+    /// anyway (README「データ保存」).
+    private static func nativeMenuIsOpen() -> Bool {
+        guard let windows = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return false }
+        let popUpMenuLevel = Int(CGWindowLevelForKey(.popUpMenuWindow))
+        return windows.contains {
+            ($0[kCGWindowLayer as String] as? Int) == popUpMenuLevel
+        }
     }
 
     private static func displayID(containing rect: CGRect?) -> CGDirectDisplayID {
