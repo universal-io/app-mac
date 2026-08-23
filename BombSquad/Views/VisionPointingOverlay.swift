@@ -27,6 +27,10 @@ final class VisionPointingOverlay {
     private var canvas: PointingCanvas?
     private var bubble: NSHostingView<AnyView>?
     private var screenFrame: CGRect = .zero
+    /// Where the bubble is anchored, which outlives the drawn mark: once the
+    /// answer's own frame is up the mark retracts, but the bubble stays beside
+    /// the place the user pointed at rather than jumping to the corner.
+    private var anchor: CGPoint?
     /// Kept so the bubble can be re-placed when its own size changes.
     private var placedSize: CGSize = .zero
     private var reflow: Timer?
@@ -58,6 +62,13 @@ final class VisionPointingOverlay {
         canvas.addSubview(wash)
 
         let host = NSHostingView(rootView: AnyView(content))
+        // Report the SwiftUI view's own ideal size and keep reporting it as the
+        // content changes. Without this the only measurement available is
+        // `fittingSize` against whatever frame the view happens to have, which
+        // under-measured by about a line: the last row of an answer came out cut
+        // in half horizontally, which looks like a rendering fault rather than a
+        // sizing one.
+        host.sizingOptions = [.intrinsicContentSize]
         host.frame = NSRect(x: 0, y: 0, width: Self.bubbleWidth, height: 1)
         canvas.addSubview(host)
 
@@ -87,12 +98,28 @@ final class VisionPointingOverlay {
     /// that one is for the model, and is chosen to be absent from real interface
     /// chrome rather than to look like the product.
     func setMark(point: CGPoint?, frame: CGRect?) {
+        anchor = point
         canvas?.wash?.mark = point
         canvas?.wash?.hitFrame = frame
+        canvas?.wash?.pulse(around: frame)
+        placeBubble()
+    }
+
+    /// The answer has pointed at something, so the user's own mark steps back.
+    ///
+    /// Two marks in almost the same place stop reading as two marks: the web
+    /// client found they merge into one smear. The one that survives is the one
+    /// carrying new information — where the answer says to look — and the
+    /// gesture's own mark has said everything it had to say by then.
+    func showAnswerFrame(_ frame: CGRect) {
+        canvas?.wash?.mark = nil
+        canvas?.wash?.hitFrame = frame
+        canvas?.wash?.pulse(around: frame)
         placeBubble()
     }
 
     func close() {
+        anchor = nil
         reflow?.invalidate()
         reflow = nil
         panel?.orderOut(nil)
@@ -111,16 +138,27 @@ final class VisionPointingOverlay {
 
     private func placeBubbleIfResized() {
         guard let bubble else { return }
-        let height = bubble.fittingSize.height
-        guard abs(height - placedSize.height) > 0.5 else { return }
+        guard abs(Self.height(of: bubble) - placedSize.height) > 0.5 else { return }
         placeBubble()
+    }
+
+    /// The taller of the two answers AppKit will give, plus a point.
+    ///
+    /// `intrinsicContentSize` is the SwiftUI view's own ideal height and is the
+    /// one to trust; `fittingSize` is kept as a floor because a hosting view can
+    /// report an intrinsic size of zero before its first layout. The extra point
+    /// is for the descender of the final line, which was being clipped — text
+    /// sliced through the middle reads as a broken renderer, and a point of
+    /// unused space reads as nothing at all.
+    private static func height(of host: NSView) -> CGFloat {
+        max(host.intrinsicContentSize.height, host.fittingSize.height) + 1
     }
 
     private func placeBubble() {
         guard let bubble, let canvas else { return }
         let size = CGSize(
             width: Self.bubbleWidth,
-            height: max(1, bubble.fittingSize.height)
+            height: max(1, Self.height(of: bubble))
         )
         // Bounds are the visible frame in the covered screen's coordinates, so
         // the bubble clears the menu bar and the Dock without knowing they
@@ -135,7 +173,7 @@ final class VisionPointingOverlay {
             height: visible.height
         )
         let origin = VisionBubblePlacement.origin(
-            for: canvas.wash?.mark,
+            for: anchor,
             size: size,
             in: bounds,
             avoid: [canvas.wash?.hitFrame].compactMap { $0 }
@@ -195,14 +233,42 @@ private final class WashView: NSView {
     var hitFrame: CGRect? { didSet { needsDisplay = true } }
     var cursor: CGPoint? { didSet { needsDisplay = true } }
 
-    /// Colour only, no brightness filter, so the screen underneath keeps its own
-    /// light and dark. Shared value with the web client's wash.
-    private static let wash = NSColor(srgbRed: 0.29, green: 0.31, blue: 1.0, alpha: 1)
-    private static let washAlpha: CGFloat = 0.40
+    /// The tint. Colour only — nothing here filters brightness, so the screen
+    /// underneath keeps its own light and shade exactly. Raising the alpha to
+    /// make it "more purple" is the trap: a flat colour drags dark screens and
+    /// light screens alike toward its own lightness, and the web client measured
+    /// the difference between them shrinking by a third when that was tried.
+    /// Same value as the web client's wash (`app/wash.ts`).
+    private static let tint = NSColor(srgbRed: 74 / 255, green: 80 / 255, blue: 1, alpha: 0.40)
     /// One colour for "here, this, the thing you touched" — the mark and the
     /// frame, and nothing else. State never borrows it.
-    private static let iris = NSColor(srgbRed: 0.29, green: 0.31, blue: 1.0, alpha: 1)
-    private static let spotlightRadius: CGFloat = 300
+    private static let iris = NSColor(srgbRed: 74 / 255, green: 80 / 255, blue: 1, alpha: 1)
+
+    /// Where the spotlight's falloff ends — not where the clear part ends. The
+    /// held-clear core is half of it and every stop of the ramp is a fraction of
+    /// it, so this one number resizes the whole light in proportion.
+    private static let spotlightReach: CGFloat = 672
+
+    /// The lattice: white dots on a 22-point grid.
+    ///
+    /// This is the layer that says the screen is being read rather than used.
+    /// The wash alone changes the colour; the dots give it a reason — a sensor
+    /// looking at a surface. The gap between "I am operating this screen" and "I
+    /// am pointing at it" has to be large, because a user who thinks they are
+    /// operating it will click a button and get an explanation instead.
+    ///
+    /// Kept just above the threshold of notice: it should be found, not seen.
+    /// Built once as a tile and drawn as a pattern — a few thousand circles
+    /// redrawn on every cursor move would be paid for on every frame.
+    private static let lattice: NSColor = {
+        let side: CGFloat = 22
+        let image = NSImage(size: NSSize(width: side, height: side))
+        image.lockFocus()
+        NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.16).setFill()
+        NSBezierPath(ovalIn: CGRect(x: side / 2 - 1, y: side / 2 - 1, width: 2, height: 2)).fill()
+        image.unlockFocus()
+        return NSColor(patternImage: image)
+    }()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -214,9 +280,66 @@ private final class WashView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    private var pulseLayer: CALayer?
+
+    /// The beat on the answer's frame.
+    ///
+    /// Radiating a fixed distance outward rather than scaling: a frame can be a
+    /// button or an 800-point toolbar, and doubling the second one throws a ring
+    /// across half the screen. The web client hit this and switched to a spread
+    /// for exactly that reason.
+    ///
+    /// A rest between beats is what makes it a beat. A pulse with no gap is a
+    /// waiting spinner, which would say something about processing rather than
+    /// about a place. Held still under Reduce Motion.
+    func pulse(around rect: CGRect?) {
+        pulseLayer?.removeFromSuperlayer()
+        pulseLayer = nil
+        guard let rect, let host = layer else { return }
+
+        // One container so a new beat replaces the old one whole; two loose
+        // sublayers is how a stale ring outlives the frame it belonged to.
+        let container = CALayer()
+        host.addSublayer(container)
+        pulseLayer = container
+
+        let inner = NSBezierPath(roundedRect: rect.insetBy(dx: -4, dy: -4), xRadius: 8, yRadius: 8)
+        let shape = CAShapeLayer()
+        shape.path = inner.cgPath
+        shape.fillColor = nil
+        shape.strokeColor = Self.iris.cgColor
+        shape.lineWidth = 2.5
+        container.addSublayer(shape)
+
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+
+        let outer = NSBezierPath(roundedRect: rect.insetBy(dx: -18, dy: -18), xRadius: 20, yRadius: 20)
+        let grow = CAKeyframeAnimation(keyPath: "path")
+        grow.values = [inner.cgPath, outer.cgPath, outer.cgPath]
+        grow.keyTimes = [0, 0.58, 1]
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [0.61, 0, 0]
+        fade.keyTimes = [0, 0.58, 1]
+        let group = CAAnimationGroup()
+        group.animations = [grow, fade]
+        group.duration = 1.8
+        group.repeatCount = .infinity
+        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        let halo = CAShapeLayer()
+        halo.path = inner.cgPath
+        halo.fillColor = nil
+        halo.strokeColor = Self.iris.cgColor
+        halo.lineWidth = 2.5
+        halo.add(group, forKey: "beat")
+        container.addSublayer(halo)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         drawWash()
-        if let hitFrame { draw(frame: hitFrame) }
+        // The frame itself is a layer, not a drawing: it beats, and a beat drawn
+        // by hand would repaint the whole wash and its lattice thirty times a
+        // second to move one ring.
         if let mark { draw(mark: mark) }
     }
 
@@ -238,28 +361,35 @@ private final class WashView: NSView {
     /// app has covered, and that stays true.
     private func drawWash() {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        context.setFillColor(Self.wash.withAlphaComponent(Self.washAlpha).cgColor)
-        context.fill(bounds)
+        Self.tint.setFill()
+        bounds.fill()
+        Self.lattice.setFill()
+        bounds.fill()
 
         guard let cursor else { return }
         context.saveGState()
         // Erase rather than paint: `destinationOut` takes the gradient's alpha
-        // out of what is already there, which is what makes the edge of the hole
-        // as soft as the gradient itself.
+        // out of what is already there — tint and lattice together — which is
+        // what makes the edge of the light as soft as the gradient itself.
         context.setBlendMode(.destinationOut)
-        let opaque = NSColor.white.cgColor
-        let clear = NSColor.white.withAlphaComponent(0).cgColor
+        // The web client's stops, inverted: theirs is a mask where opaque means
+        // "keep the wash", so the amount erased here is one minus that. Enough
+        // of them that a soft edge this large does not band.
+        let stops: [(CGFloat, CGFloat)] = [
+            (0, 1), (0.50, 1), (0.58, 0.90), (0.66, 0.70),
+            (0.74, 0.45), (0.82, 0.22), (0.91, 0.07), (1, 0),
+        ]
         if let gradient = CGGradient(
             colorsSpace: CGColorSpaceCreateDeviceRGB(),
-            colors: [opaque, opaque, clear] as CFArray,
-            locations: [0, 0.5, 1]
+            colors: stops.map { NSColor(white: 1, alpha: $0.1).cgColor } as CFArray,
+            locations: stops.map(\.0)
         ) {
             context.drawRadialGradient(
                 gradient,
                 startCenter: cursor,
                 startRadius: 0,
                 endCenter: cursor,
-                endRadius: Self.spotlightRadius,
+                endRadius: Self.spotlightReach,
                 options: []
             )
         }

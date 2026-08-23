@@ -65,6 +65,20 @@ final class VisionSession: ObservableObject {
     /// as the answer's justification, because the Gateway strips candidate
     /// rectangles before the model sees them.
     @Published private(set) var pointedCandidate: VisionObservation.Candidate?
+    /// The box the answer is about, in the current capture's normalized space.
+    ///
+    /// Measured from accessibility when the model named a candidate, the model's
+    /// own estimate when it did not. This is what the overlay draws: the point
+    /// the user clicked and the thing the answer explains are not always the
+    /// same — the model reaches for the nearest meaningful element when the exact
+    /// pixel is between things — and of the two, **the one worth marking is the
+    /// one being explained**. A mark on the click with an answer about something
+    /// else tells the user the app misunderstood them; a mark on the neighbour
+    /// tells them what it understood, which they can accept or correct.
+    @Published private(set) var answerHighlight: CGRect?
+    /// Told when `answerHighlight` settles, for surfaces outside SwiftUI's
+    /// observation — the overlay draws on the real screen and has no view here.
+    var onAnswerHighlight: ((CGRect?) -> Void)?
     @Published private(set) var selectedCandidate: VisionObservation.Candidate?
     @Published private(set) var screenshotHighlight: CGRect?
     @Published private(set) var isCopilotActive = false
@@ -240,6 +254,37 @@ final class VisionSession: ObservableObject {
     /// mark on the screen already says where they pointed.
     static let pointedHereText = "ここについて"
 
+    /// The instant the user pointed, before anything has been captured or asked.
+    ///
+    /// Without this the bubble travels to the new place still showing the old
+    /// answer, and sits there through a capture, an accessibility walk and a
+    /// round trip — so pointing at the Open button puts "this is the Close
+    /// button" beside it for a second or two. The user does not read that as
+    /// stale, they read it as wrong, and by the time it is overwritten they have
+    /// already been told something false about the thing they just pointed at.
+    ///
+    /// Clearing first is the honest state: nothing is known about this place yet,
+    /// and the bubble says so.
+    func beginPointing() {
+        requestCancellation?.cause = .supersededByNewerRequest
+        requestTask?.cancel()
+        clearStreamingText()
+        turns = []
+        errorMessage = nil
+        pointer = nil
+        pointedCandidate = nil
+        selectedCandidate = nil
+        screenshotHighlight = nil
+        publishAnswerHighlight(nil)
+        isLoading = true
+    }
+
+    /// The gesture could not become a question. Says why and stops waiting.
+    func failPointing(_ message: String) {
+        isLoading = false
+        errorMessage = message
+    }
+
     /// The user pointed at a place on the real screen.
     ///
     /// A new place is a new subject, so the conversation so far is dropped: the
@@ -265,6 +310,7 @@ final class VisionSession: ObservableObject {
         pointedCandidate = hit
         selectedCandidate = nil
         screenshotHighlight = nil
+        publishAnswerHighlight(nil)
         turns = [VisionDisplayTurn(
             role: .user,
             text: Self.pointedHereText,
@@ -566,7 +612,11 @@ final class VisionSession: ObservableObject {
                       self.attachment.id == expectedCaptureID else {
                     throw ProviderError.decoding("The captured screen changed during the request.")
                 }
-                try self.apply(response, candidates: fixedCandidates)
+                try self.apply(
+                    response,
+                    candidates: fixedCandidates,
+                    toleratingUnplaceableTarget: pointer != nil
+                )
             } catch is CancellationError {
                 // A cancellation this session asked for needs no explanation:
                 // a newer request will produce the outcome, and a torn-down
@@ -918,30 +968,47 @@ final class VisionSession: ObservableObject {
 
     private func apply(
         _ response: VisionResponse,
-        candidates fixedCandidates: [VisionObservation.Candidate]
+        candidates fixedCandidates: [VisionObservation.Candidate],
+        /// A pointing turn keeps its answer even when the target cannot be
+        /// placed. Losing a correct sentence because a rectangle went missing
+        /// is the wrong trade when the sentence is what the user asked for; for
+        /// guidance it is not, because "click here" with no here is not an answer.
+        toleratingUnplaceableTarget tolerant: Bool = false
     ) throws {
         metadata = response.metadata
         activeSkillName = response.skillName
         let highlight: VisionHighlightOutcome
-        if let targetID = response.result.targetCandidateID {
-            guard let candidate = fixedCandidates.first(where: { $0.id == targetID }),
-                  let rect = candidate.rect else {
-                Diagnostics.record("vision.result", details: [
-                    ("mode", .code(response.result.mode)),
-                    ("highlight", .code(VisionHighlightOutcome.unresolvable)),
-                    ("candidates", .count(fixedCandidates.count)),
-                ])
-                throw ProviderError.decoding(
-                    "Vision selected a candidate without a usable capture rectangle."
-                )
-            }
+        if let targetID = response.result.targetCandidateID,
+           let candidate = fixedCandidates.first(where: { $0.id == targetID }),
+           let rect = candidate.rect {
             selectedCandidate = candidate
             screenshotHighlight = rect
+            publishAnswerHighlight(rect)
             highlight = .resolved
             if isCopilotActive { showLiveHighlight() }
+        } else if response.result.targetCandidateID != nil, !tolerant {
+            Diagnostics.record("vision.result", details: [
+                ("mode", .code(response.result.mode)),
+                ("highlight", .code(VisionHighlightOutcome.unresolvable)),
+                ("candidates", .count(fixedCandidates.count)),
+            ])
+            throw ProviderError.decoding(
+                "Vision selected a candidate without a usable capture rectangle."
+            )
+        } else if let box = response.result.annotations.first?.box {
+            // No measured rectangle, but the model drew one. Second choice by
+            // construction — an estimate rather than a measurement — and still
+            // the only way to mark body text, an image or a graph, none of which
+            // accessibility offers as a candidate at all.
+            selectedCandidate = nil
+            screenshotHighlight = box
+            publishAnswerHighlight(box)
+            highlight = .resolved
+            if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
         } else {
             selectedCandidate = nil
             screenshotHighlight = nil
+            publishAnswerHighlight(nil)
             highlight = .none
             if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
         }
@@ -966,6 +1033,11 @@ final class VisionSession: ObservableObject {
             mode: response.result.mode,
             uncertainties: response.result.uncertainties
         ))
+    }
+
+    private func publishAnswerHighlight(_ rect: CGRect?) {
+        answerHighlight = rect
+        onAnswerHighlight?(rect)
     }
 
     private func showLiveHighlight() {

@@ -220,11 +220,14 @@ final class VisionPointerTests: XCTestCase {
 
     // MARK: - Request contract
 
-    /// A pointing turn must be an ordinary Vision turn plus one field. The
-    /// selection extension is held to the same rule, for the same reason: the
-    /// moment a second thing changes, a difference in the answer stops being
-    /// attributable to the gesture.
-    func testPointingRequestDiffersOnlyByThePointerField() throws {
+    /// A pointing turn is an ordinary Vision turn plus the gesture and a request
+    /// for a box — and nothing else. Those two travel together on purpose: the
+    /// box is what lets the frame land on whatever the answer turned out to be
+    /// about, which is the only way the mark and the sentence can be seen to
+    /// agree. Anything beyond these two changing would make a difference in the
+    /// answer unattributable, which is the same rule the selection extension is
+    /// held to.
+    func testPointingRequestDiffersOnlyByTheGestureAndItsBox() throws {
         let attachment = ScreenshotAttachment(
             url: URL(fileURLWithPath: "/tmp/pointer.png"),
             pixelWidth: 800,
@@ -252,15 +255,16 @@ final class VisionPointerTests: XCTestCase {
             pointer: VisionPointer(kind: .point(CGPoint(x: 0.5, y: 0.5)))
         )
         let pointerPayload = pointing.removeValue(forKey: "pointer")
+        let wantsAnnotations = pointing.removeValue(forKey: "wants_annotations")
 
         XCTAssertNotNil(pointerPayload)
+        XCTAssertEqual(wantsAnnotations as? Bool, true)
         XCTAssertTrue(NSDictionary(dictionary: ordinary).isEqual(to: pointing))
         XCTAssertNil(ordinary["pointer"])
-        // Annotations stay off: this client has AX-measured rectangles, and
-        // asking for the model's estimate as well would change the prompt and
-        // the schema for every other turn.
+        // An ordinary turn's prompt and schema stay byte-identical to what every
+        // shipped client already gets: asking for boxes is what changes them, and
+        // only a pointing turn asks.
         XCTAssertNil(ordinary["wants_annotations"])
-        XCTAssertNil(pointerPayload as? Bool)
     }
 
     /// The hand-drawn path shapes the burned mark and must never reach the

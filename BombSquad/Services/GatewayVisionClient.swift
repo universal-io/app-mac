@@ -20,6 +20,24 @@ struct ScreenGuidanceContext: Equatable {
     }
 }
 
+/// A box the answer itself points at, in the image's own normalized space
+/// (0-1, top-left origin).
+///
+/// The model's own estimate, which is why it is second choice: a candidate the
+/// model names is measured by accessibility, and a measured rectangle beats an
+/// estimated one. It is asked for anyway because accessibility covers thirteen
+/// operable roles and nothing else — body text, images, graphs and canvases
+/// produce no candidate at all, and on those screens this is the only way
+/// anything can be pointed at.
+struct VisionAnnotation: Equatable {
+    let id: String
+    let kind: String
+    /// Normalized to the image, top-left origin. The Gateway clamps it inside
+    /// the image, so it never arrives outside.
+    let box: CGRect
+    let label: String
+}
+
 struct VisionResult: Equatable {
     enum Mode: String {
         case observation
@@ -33,6 +51,8 @@ struct VisionResult: Equatable {
     let observations: [String]
     let uncertainties: [String]
     let targetCandidateID: String?
+    /// Empty unless the request asked for boxes.
+    let annotations: [VisionAnnotation]
 }
 
 struct VisionMetadata: Equatable {
@@ -277,6 +297,16 @@ struct GatewayVisionClient {
         // cross-check for a mark it cannot find.
         if let pointer {
             input["pointer"] = pointer.wirePayload
+            // Ask for a box on pointing turns only.
+            //
+            // Accessibility gives measured rectangles and they win whenever one
+            // exists, but it covers thirteen operable roles: point at body text,
+            // an image, a graph or a canvas and there is no candidate to name. On
+            // those screens the model's own estimate is the only thing that can
+            // mark what the answer is talking about, and a mark that agrees with
+            // the answer is worth more than a mark that is precisely on the pixel
+            // the answer is not about.
+            input["wants_annotations"] = true
         }
         if let guidanceContext {
             input["guidance"] = guidanceContext.wirePayload
@@ -443,6 +473,31 @@ struct GatewayVisionClient {
     /// One contract check for both transports. The streamed `result` event and
     /// the non-streaming body are the same JSON by construction on the server,
     /// so validating them in two places could only let them drift.
+    /// Boxes the answer points at. Absent unless they were asked for, and a
+    /// malformed one is dropped rather than failing the turn: the sentence is
+    /// the contract, a box is a bonus, and losing an answer over a bad rectangle
+    /// would be paying the wrong price.
+    private static func annotations(in result: [String: Any]) -> [VisionAnnotation] {
+        guard let raw = result["annotations"] as? [[String: Any]] else { return [] }
+        return raw.compactMap { item in
+            guard let id = item["id"] as? String,
+                  let kind = item["kind"] as? String,
+                  let box = item["box"] as? [String: Any],
+                  let x = box["x"] as? Double,
+                  let y = box["y"] as? Double,
+                  let width = box["w"] as? Double,
+                  let height = box["h"] as? Double,
+                  width > 0, height > 0
+            else { return nil }
+            return VisionAnnotation(
+                id: id,
+                kind: kind,
+                box: CGRect(x: x, y: y, width: width, height: height),
+                label: (item["label"] as? String) ?? ""
+            )
+        }
+    }
+
     private static func decode(
         _ root: [String: Any],
         expectedCaptureID: UUID
@@ -520,7 +575,8 @@ struct GatewayVisionClient {
                 message: message,
                 observations: observations,
                 uncertainties: uncertainties,
-                targetCandidateID: targetCandidateID
+                targetCandidateID: targetCandidateID,
+                annotations: Self.annotations(in: resultObject)
             ),
             skillName: (skillName?.isEmpty ?? true) ? nil : skillName,
             metadata: VisionMetadata(

@@ -1047,12 +1047,39 @@ final class SessionCoordinator {
         pointingOverlay.onClose = { [weak self] in
             self?.close(reason: .closeRequested)
         }
+        session.onAnswerHighlight = { [weak self] box in
+            self?.markWhatTheAnswerIsAbout(box, session: session)
+        }
         pointingOverlay.present(
             on: screen,
             bubble: VisionBubbleView(
                 session: session,
                 hasPointed: session.pointer != nil,
                 onClose: { [weak self] in self?.close(reason: .closeRequested) }
+            )
+        )
+    }
+
+    /// Puts the frame where the answer is actually pointing.
+    ///
+    /// The place the user clicked and the thing the answer explains are not
+    /// always the same: the model reaches for the nearest meaningful element when
+    /// the exact pixel falls between things. Of the two, the one worth marking is
+    /// the one being explained — a mark on the click beside an answer about
+    /// something else tells the user they were misunderstood, while a mark on the
+    /// neighbour tells them what was understood, which they can accept or
+    /// correct. When no box comes back, their own mark stays: then the gesture is
+    /// the only thing that says what the question was about.
+    private func markWhatTheAnswerIsAbout(_ box: CGRect?, session: VisionSession) {
+        guard pointingOverlay.isVisible,
+              let box,
+              let captureRect = session.attachment.captureRect else { return }
+        pointingOverlay.showAnswerFrame(
+            VisionPointerResolver.screenLocalRect(
+                normalized: box,
+                captureRect: captureRect,
+                mainDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height,
+                screenFrame: pointingOverlay.coveredScreenFrame
             )
         )
     }
@@ -1071,6 +1098,10 @@ final class SessionCoordinator {
     /// used to be under their finger.
     private func point(at screenLocal: CGPoint, session: VisionSession) {
         pointingOverlay.setMark(point: screenLocal, frame: nil)
+        // Before anything is awaited: the previous answer describes a different
+        // place, and leaving it beside this one asserts something false about
+        // what the user just pointed at.
+        session.beginPointing()
         pointingTask?.cancel()
         let screenFrame = pointingOverlay.coveredScreenFrame
         let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
@@ -1083,7 +1114,7 @@ final class SessionCoordinator {
                 try Task.checkCancellation()
                 guard let captureRect = capture.captureRect else {
                     try? FileManager.default.removeItem(at: capture.url)
-                    session.errorMessage = "画面のどこを指したか分からなくなりました。もう一度クリックしてください。"
+                    session.failPointing("画面のどこを指したか分からなくなりました。もう一度クリックしてください。")
                     return
                 }
                 let global = VisionPointerResolver.globalCGPoint(
@@ -1099,7 +1130,7 @@ final class SessionCoordinator {
                     // A click on a display this capture does not cover. Saying
                     // so beats answering about the captured screen's edge.
                     try? FileManager.default.removeItem(at: capture.url)
-                    session.errorMessage = "この画面は読み取り対象に入っていません。もう一度呼び出してください。"
+                    session.failPointing("この画面は読み取り対象に入っていません。もう一度呼び出してください。")
                     return
                 }
                 let snapshot = await VisionObservationCaptureService.captureTask(
@@ -1135,7 +1166,7 @@ final class SessionCoordinator {
             } catch is CancellationError {
                 return
             } catch {
-                session.errorMessage = UserFacingError.message(for: error)
+                session.failPointing(UserFacingError.message(for: error))
             }
         }
     }
