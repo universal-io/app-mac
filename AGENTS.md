@@ -80,9 +80,10 @@ Rules:
 - If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `feat/vision-selection-extension`（復帰点は
-  `pre-vision-selection-extension-20260731` / `dcac535`。Focused Visionを
-  通常Visionへの純粋なselection extensionへ改修する短命ブランチ）
+- `main`（`v0.2.2` build `8`を公開済み、`main`は`0.2.3`を開いている）。
+  次の作業はR14（実画面の上で指して聞くVision）で、要件は
+  `docs/universal-io-master-plan.md` のR14節が正本。実装に入る時は
+  短命ブランチと復帰点tagをここへ書く。
 
 Current operational note:
 - 2026-07-18: Vision/Copilotを単一の本番経路へ統合。旧Navigator、実験名、
