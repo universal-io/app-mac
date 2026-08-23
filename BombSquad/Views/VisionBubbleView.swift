@@ -18,6 +18,16 @@ struct VisionBubbleView: View {
     let hasPointed: Bool
     let onClose: () -> Void
 
+    /// How tall the answer may grow before it scrolls instead.
+    ///
+    /// An answer has no length limit, so something has to give: either the text
+    /// is cut, or the bubble is. Cutting the text loses the sentence the user is
+    /// reading — which is what was happening, with SwiftUI quietly appending an
+    /// ellipsis — while cutting the bubble only means scrolling. `ViewThatFits`
+    /// keeps short answers short: the plain text is used whenever it fits, and
+    /// the scrolling copy takes over only when it would not.
+    static let maxAnswerHeight: CGFloat = 360
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             handle
@@ -31,16 +41,26 @@ struct VisionBubbleView: View {
                         .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8))
                         .accessibilityLabel("送信した質問: \(question)")
                 }
-                answer
+                ViewThatFits(in: .vertical) {
+                    answer
+                    ScrollView { answer }
+                }
+                .frame(maxHeight: Self.maxAnswerHeight)
                 ask
             }
             .padding(12)
         }
         .frame(width: VisionPointingOverlay.bubbleWidth, alignment: .leading)
-        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 16))
+        // Opaque, and deliberately not a material. A material samples what is
+        // behind it *within the same window*, and what is behind this one is the
+        // wash — so the bubble came out tinted purple, sitting in the colour it
+        // is supposed to be readable against. `windowBackgroundColor` also keeps
+        // the default label colours legible in both appearances, which a fixed
+        // dark card would not.
+        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
     }
@@ -77,14 +97,17 @@ struct VisionBubbleView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(.orange)
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         } else if let streaming = session.streamingMessage, !streaming.isEmpty {
             Text(streaming)
                 .font(.system(size: 13))
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         } else if let answered = latestAnswer {
             Text(answered)
                 .font(.system(size: 13))
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         } else if session.isLoading {
             // Named, not spun: a spinner says work is happening, this says what
             // the work is.
