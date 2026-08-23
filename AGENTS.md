@@ -55,6 +55,41 @@
 
 **6か月使われないOAuthクライアントは削除対象**（Googleの通知あり、削除後30日は復元可）。
 
+## 🔑 起動時に「キーチェーンへのアクセス」を何度も聞かれる時（毎回再発見していた）
+
+**署名設定は正しい。** `project.yml`のDebugは安定した`Apple Development`＋`DEVELOPMENT_TEAM:
+TG68TFXG88`で、そこにコメントで経緯も書いてある。**プロンプトの原因はそこではない。**
+
+**原因は旧来型キーチェーンのACL。** macOSは項目ごとに「どのアプリが触れるか」をACLで持ち、それは
+**項目を作ったアプリの署名**に紐づく。Supabase SDKは`kSecUseDataProtectionKeychain`を使わないので
+（`Sources/Auth/Internal/Keychain.swift`で確認済み）、セッションは旧来型に入りACLの支配を受ける。
+さらに**読み取りと書き込みでACLの許可が別**なので、1項目でも「起動時の読み」と「トークン更新の
+書き込み」で2回聞かれる。
+
+**2026-08-23に構造的な原因を1つ潰した。** サービス名が全configで`com.universal-io.mac.supabase`に
+ハードコードされていたため、インストール済み本番アプリ（Developer ID署名）と開発ビルド
+（Apple Development署名）が**同じ1項目を共有し、ACLの所有権を取り合っていた**。行き来するたびに
+再発する。現在はbundle idから導出するので、本番は同じ文字列のまま（既存セッションは無傷）、
+開発は`com.universal-io.mac.dev.supabase`を単独で持つ。
+
+診断の順序:
+
+1. `security dump-keychain 2>/dev/null | grep '"svce"'` で**項目を数える**（秘密は読まないので
+   プロンプトは出ない）。現行の生きた項目は`com.universal-io.mac[.dev].supabase`の1件だけ。
+   `com.universal-io.mac`と`com.heywatchme.bombsquad`の`*-api-key`はBYOK時代の残骸で、
+   現行コードは読まない
+2. `codesign -dvvv <app>` で**Authorityが`Apple Development`**であること、
+   `TeamIdentifier=TG68TFXG88`を確認する。`adhoc`や署名なしなら毎ビルド必ず再発する
+3. **CLI検証ビルド（`CODE_SIGNING_ALLOWED=NO`）で作った`.app`を起動しない。** あれは署名が無く、
+   TCC許可もキーチェーンACLも成立しない。実機確認はXcodeから起動する
+
+**「許可しない」を押しても壊れない**（未ログイン扱いになるだけ）。プロンプトは無限ではなく
+「項目数×操作種別」で有限。
+
+**それでも同一署名のビルド間で再発する場合**、残る手はデータ保護キーチェーンへの移行
+（`kSecUseDataProtectionKeychain`）で、これは`keychain-access-groups`エンタイトルメントと
+プロビジョニングプロファイルを要するため、リリース手順にも影響する別判断とする。
+
 ## Session Start Protocol（必読・毎セッション）
 
 1. コードやドキュメントに触る前に **[docs/README.md](docs/README.md)（ドキュメント索引）を読む**。

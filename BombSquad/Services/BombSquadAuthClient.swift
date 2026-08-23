@@ -1,49 +1,53 @@
 import Foundation
 import Supabase
 
-/// Keeps the Supabase session in a Universal I/O-specific Keychain service.
-/// Older builds used the SDK-wide default item; import it at most once, then
-/// never consult it again so signing in/out cannot resurrect a stale session.
+/// Keeps the Supabase session in a Keychain item belonging to *this build*.
+///
+/// **Why the bundle identifier is in the service name.** macOS protects a
+/// legacy Keychain item with an ACL that names the application allowed to touch
+/// it, and that name is the app's code signature. The Supabase SDK does not opt
+/// into the data-protection keychain, so its items land in the legacy one and
+/// inherit that behaviour.
+///
+/// This service string used to be the literal `com.universal-io.mac.supabase`
+/// for every configuration, which meant the installed production app (signed
+/// Developer ID) and a development build (signed Apple Development) shared one
+/// item and took turns owning its ACL. The visible symptom was the one that
+/// kept coming back: run the dev build after the production app and macOS asks
+/// for the login password, once for reading and again when a token refresh
+/// writes — every rebuild, forever, because whichever app wrote last is the one
+/// the ACL trusts.
+///
+/// Deriving the service from the bundle identifier ends that: production keeps
+/// the exact string it has always used (`com.universal-io.mac` + `.supabase`),
+/// so no shipped session is lost, and the dev build gets an item of its own to
+/// own outright.
+///
+/// This does not make the prompt impossible — a change of signing identity
+/// still invalidates an ACL — but it removes the one cause that fired on every
+/// build. If it is ever seen again on a build signed the same way as the last
+/// one, the remaining fix is to leave the legacy keychain entirely
+/// (`kSecUseDataProtectionKeychain`), which needs a provisioning profile and is
+/// therefore a separate decision.
 private struct UniversalIOAuthLocalStorage: AuthLocalStorage {
     static let storageKey = "com.universal-io.mac.auth.skcsbcyivjcvevxntvqa"
 
-    private static let migrationFlag = "auth.keychainScopedMigration.v1"
-    private let scoped = KeychainLocalStorage(service: "com.universal-io.mac.supabase")
-    private let legacy = KeychainLocalStorage()
+    private static var service: String {
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.universal-io.mac"
+        return "\(bundleID).supabase"
+    }
+
+    private let scoped = KeychainLocalStorage(service: UniversalIOAuthLocalStorage.service)
 
     func store(key: String, value: Data) throws {
         try scoped.store(key: key, value: value)
-        if key == Self.storageKey {
-            UserDefaults.standard.set(true, forKey: Self.migrationFlag)
-        }
     }
 
     func retrieve(key: String) throws -> Data? {
-        if let data = try? scoped.retrieve(key: key) {
-            return data
-        }
-        guard key == Self.storageKey,
-              !UserDefaults.standard.bool(forKey: Self.migrationFlag)
-        else { return nil }
-
-        // Current SDK default first, then the oldest pre-migration key.
-        for legacyKey in ["supabase.auth.token", "supabase.session"] {
-            if let data = try? legacy.retrieve(key: legacyKey) {
-                try scoped.store(key: key, value: data)
-                UserDefaults.standard.set(true, forKey: Self.migrationFlag)
-                return data
-            }
-        }
-        UserDefaults.standard.set(true, forKey: Self.migrationFlag)
-        return nil
+        try? scoped.retrieve(key: key)
     }
 
     func remove(key: String) throws {
-        // Mark first: even if the scoped item is already absent, sign-out must
-        // never fall back to the old shared SDK item on the next launch.
-        if key == Self.storageKey {
-            UserDefaults.standard.set(true, forKey: Self.migrationFlag)
-        }
         try? scoped.remove(key: key)
     }
 }
