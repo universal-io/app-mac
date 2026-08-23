@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Supabase
 
 /// Keeps the Supabase session in a Keychain item belonging to *this build*.
@@ -44,12 +45,67 @@ private struct UniversalIOAuthLocalStorage: AuthLocalStorage {
     }
 
     func retrieve(key: String) throws -> Data? {
-        try? scoped.retrieve(key: key)
+        do {
+            let data = try scoped.retrieve(key: key)
+            Diagnostics.record("auth.keychain", details: [
+                ("read", .code(data == nil ? KeychainReadOutcome.absent : .restored)),
+            ])
+            return data
+        } catch {
+            // A failed read means one of two different things and the app used
+            // to treat them identically: there is no saved session (ordinary
+            // first run), or there is one and the system would not hand it over
+            // (the item belongs to a differently signed build, or the login
+            // keychain is locked, or the user pressed Deny). Only the second is
+            // worth saying out loud, and the app was saying nothing at all —
+            // showing a sign-in screen as though the user had never signed in
+            // (docs/reliability-hardening-plan.md「無音で終わらない」).
+            let outcome: KeychainReadOutcome = Self.itemExists(key: key) ? .refused : .absent
+            Diagnostics.record("auth.keychain", details: [("read", .code(outcome))])
+            if outcome == .refused {
+                Task { @MainActor in
+                    OperationalNoticeCenter.shared.publish(
+                        code: "KEYCHAIN_REFUSED",
+                        message: "保存されたログイン情報を読み取れませんでした。もう一度サインインしてください。"
+                    )
+                }
+            }
+            return nil
+        }
     }
 
     func remove(key: String) throws {
         try? scoped.remove(key: key)
     }
+
+    /// Whether the item is there at all, asked without reading it.
+    ///
+    /// An attributes-only query needs no ACL authorisation, which is the whole
+    /// point: it separates "nothing saved" from "saved but not handed over"
+    /// without itself becoming the thing that asks for a password.
+    private static func itemExists(key: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess
+    }
+}
+
+/// What became of an attempt to read the saved session.
+private enum KeychainReadOutcome: String, DiagnosticCode {
+    /// A session was there and came back.
+    case restored
+    /// Nothing is saved. The ordinary state before a first sign-in.
+    case absent
+    /// Something is saved and the system would not hand it over.
+    case refused
+
+    var diagnosticCode: String { rawValue }
 }
 
 enum BombSquadAuthError: UserPresentableError {
