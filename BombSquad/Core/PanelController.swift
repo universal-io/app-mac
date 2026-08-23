@@ -28,7 +28,20 @@ struct PanelSpec: Equatable {
                 placement: .centered,
                 closesOnResignActive: true
             )
-        case .vision, .navigator:
+        case .vision:
+            // Vision no longer draws in this window — it puts a wash over the
+            // real screen (R14) — but this spec still answers "does losing
+            // app-active end the session", and for pointing the answer has to
+            // be no. Measured 2026-08-23: another application can hold
+            // frontmost while every click on the covered display still arrives
+            // here, so a session that closed on resign-active would end itself
+            // while the user was still pointing at things.
+            return PanelSpec(
+                size: CGSize(width: 960, height: 640),
+                placement: .centered,
+                closesOnResignActive: false
+            )
+        case .navigator:
             return PanelSpec(
                 size: CGSize(width: 960, height: 640),
                 placement: .centered,

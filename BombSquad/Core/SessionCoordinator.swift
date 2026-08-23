@@ -54,7 +54,10 @@ final class SessionCoordinator {
     private let recorder = AudioRecorder()
     private let screenshotCapture = ScreenshotCaptureService()
     private let screenshotCaptureCue = ScreenshotCaptureCuePresenter()
-    private let screenshotSelection = ScreenshotSelectionOverlay()
+    /// Vision's surface: the real screen with a wash over it, rather than a
+    /// panel holding a picture of it (R14).
+    private let pointingOverlay = VisionPointingOverlay()
+    private var pointingTask: Task<Void, Never>?
     private var composeSession: ComposeSession?
     private var visionSession: VisionSession?
     private var summonTargetApp: NSRunningApplication?
@@ -391,7 +394,6 @@ final class SessionCoordinator {
         stopActiveWork()
         discardComposePreCapture()
         visionIdentityTask = nil
-        screenshotSelection.cancel()
         composeSession?.tearDown()
         composeSession = nil
         visionSession?.tearDown()
@@ -940,30 +942,31 @@ final class SessionCoordinator {
         return stateMachine.transition(to: target, reason: reason)
     }
 
+    /// The shot Vision opens with.
+    ///
+    /// This used to put a selection overlay up and wait: the whole screen was
+    /// pre-selected, Enter confirmed it, dragging took a region instead. The
+    /// wait is gone (R14). Entering Vision now reads the screen immediately and
+    /// the first sentence is already on its way, because a confirmation step in
+    /// front of an explanation nobody asked to confirm is a step that only ever
+    /// gets pressed.
+    ///
+    /// Choosing a smaller area comes back as a gesture on the pointing overlay,
+    /// where drawing a ring around something already means "this part" — the
+    /// same operation without a mode in front of it.
     private func captureAttachment(
         on screen: NSScreen?,
         displayID: CGDirectDisplayID?
     ) async throws -> ScreenshotAttachment {
-        guard let screen else { throw ScreenshotCaptureError.noCaptureTarget }
-        let outcome = await screenshotSelection.present(on: screen)
-        try? await Task.sleep(nanoseconds: 150_000_000)
-
+        guard screen != nil else { throw ScreenshotCaptureError.noCaptureTarget }
         do {
-            switch outcome {
-            case .cancelled:
-                throw ScreenshotCaptureError.cancelled
-            case .fullScreen:
-                return try await screenshotCapture.captureFullScreen(displayID: displayID)
-            case .region(let rect):
-                return try await screenshotCapture.captureRegion(rect, displayID: displayID)
-            }
+            return try await screenshotCapture.captureFullScreen(displayID: displayID)
         } catch ScreenshotCaptureError.cancelled {
             throw ScreenshotCaptureError.cancelled
         } catch {
             NSLog(
-                "Vision capture failed (display=%@ outcome=%@): %@",
+                "Vision capture failed (display=%@): %@",
                 displayID.map(String.init) ?? "nil",
-                String(describing: outcome),
                 String(describing: error)
             )
             OperationalNoticeCenter.shared.publish(
@@ -999,10 +1002,22 @@ final class SessionCoordinator {
                     for: mode
                 )
             } else if mode == .vision, let visionSession {
-                panelController.present(
-                    VisionRootView(session: visionSession),
-                    for: mode
-                )
+                presentPointing(for: visionSession)
+            } else if mode == .navigator || mode == .copilot, let visionSession {
+                // Guidance keeps the panel for now: the strip carries its own
+                // controls and its own progress, and the overlay would have to
+                // hand the screen back for every click the user is being asked
+                // to make. Closing the overlay here is what makes that handover
+                // happen at all.
+                pointingOverlay.close()
+                if panelController.isVisible {
+                    panelController.applyMode(mode)
+                } else {
+                    panelController.present(
+                        VisionRootView(session: visionSession),
+                        for: mode
+                    )
+                }
             } else if panelController.isVisible {
                 panelController.applyMode(mode)
             } else {
@@ -1014,7 +1029,114 @@ final class SessionCoordinator {
         } else if case .capturing = mode {
             panelController.hide()
         } else {
+            pointingTask?.cancel()
+            pointingTask = nil
+            pointingOverlay.close()
             panelController.close()
+        }
+    }
+
+    // MARK: - Pointing
+
+    private func presentPointing(for session: VisionSession) {
+        guard let screen = ActiveDisplay.screen() else { return }
+        panelController.close()
+        pointingOverlay.onPoint = { [weak self] point in
+            self?.point(at: point, session: session)
+        }
+        pointingOverlay.onClose = { [weak self] in
+            self?.close(reason: .closeRequested)
+        }
+        pointingOverlay.present(
+            on: screen,
+            bubble: VisionBubbleView(
+                session: session,
+                hasPointed: session.pointer != nil,
+                onClose: { [weak self] in self?.close(reason: .closeRequested) }
+            )
+        )
+    }
+
+    /// A click on the covered screen, turned into a question about that place.
+    ///
+    /// The mark goes up first, before anything is awaited. The first evidence
+    /// that a gesture was heard has to appear where the gesture happened — the
+    /// bubble is somewhere else, and a screen that does nothing for half a
+    /// second reads as a click that missed.
+    ///
+    /// The still is taken here, at the gesture, rather than reused from when the
+    /// overlay opened. Seconds pass in between, and notifications, animations
+    /// and work on another display move the screen in them; burning the mark
+    /// into a picture the user has stopped looking at answers about whatever
+    /// used to be under their finger.
+    private func point(at screenLocal: CGPoint, session: VisionSession) {
+        pointingOverlay.setMark(point: screenLocal, frame: nil)
+        pointingTask?.cancel()
+        let screenFrame = pointingOverlay.coveredScreenFrame
+        let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+        pointingTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let capture = try await self.screenshotCapture.captureMatchingScope(
+                    of: session.attachment
+                )
+                try Task.checkCancellation()
+                guard let captureRect = capture.captureRect else {
+                    try? FileManager.default.removeItem(at: capture.url)
+                    session.errorMessage = "画面のどこを指したか分からなくなりました。もう一度クリックしてください。"
+                    return
+                }
+                let global = VisionPointerResolver.globalCGPoint(
+                    cocoaGlobal: CGPoint(
+                        x: screenLocal.x + screenFrame.minX,
+                        y: screenLocal.y + screenFrame.minY
+                    ),
+                    mainDisplayHeight: mainHeight
+                )
+                guard let normalized = VisionPointerResolver.normalized(
+                    global, within: captureRect
+                ) else {
+                    // A click on a display this capture does not cover. Saying
+                    // so beats answering about the captured screen's edge.
+                    try? FileManager.default.removeItem(at: capture.url)
+                    session.errorMessage = "この画面は読み取り対象に入っていません。もう一度呼び出してください。"
+                    return
+                }
+                let snapshot = await VisionObservationCaptureService.captureTask(
+                    preferredPID: self.summonTargetApp?.processIdentifier,
+                    attachment: capture
+                ).value
+                try Task.checkCancellation()
+                let hit = VisionPointerResolver.candidate(
+                    at: normalized, in: snapshot.axCandidates
+                )
+                Diagnostics.record("vision.point", details: [
+                    ("candidates", .count(snapshot.axCandidates.count)),
+                    ("hit", .flag(hit != nil)),
+                ])
+                if let rect = hit?.rect {
+                    self.pointingOverlay.setMark(
+                        point: screenLocal,
+                        frame: VisionPointerResolver.screenLocalRect(
+                            normalized: rect,
+                            captureRect: captureRect,
+                            mainDisplayHeight: mainHeight,
+                            screenFrame: screenFrame
+                        )
+                    )
+                }
+                session.point(
+                    pointer: VisionPointer(kind: .point(normalized)),
+                    capture: capture,
+                    candidates: snapshot.axCandidates,
+                    diagnostics: snapshot.diagnostics,
+                    hit: hit
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                session.errorMessage = UserFacingError.message(for: error)
+            }
         }
     }
 

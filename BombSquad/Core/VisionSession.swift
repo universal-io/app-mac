@@ -57,6 +57,14 @@ final class VisionSession: ObservableObject {
     /// Display name of the skill the gateway applied to the latest turn. Always
     /// shown: knowledge the user cannot see is knowledge they cannot correct.
     @Published private(set) var activeSkillName: String?
+    /// Where the user pointed on the real screen, in the current capture's own
+    /// normalized space. Trusted intent: it decides what this turn is about.
+    @Published private(set) var pointer: VisionPointer?
+    /// What the app measured at that spot, when accessibility had something
+    /// there. Used to frame it on screen and to keep the bubble off it — never
+    /// as the answer's justification, because the Gateway strips candidate
+    /// rectangles before the model sees them.
+    @Published private(set) var pointedCandidate: VisionObservation.Candidate?
     @Published private(set) var selectedCandidate: VisionObservation.Candidate?
     @Published private(set) var screenshotHighlight: CGRect?
     @Published private(set) var isCopilotActive = false
@@ -224,6 +232,70 @@ final class VisionSession: ObservableObject {
         run(question: nil, priorTurns: [])
     }
 
+    /// What the user's side of a pointing turn is recorded as.
+    ///
+    /// The gesture has to appear in the history: a conversation of nothing but
+    /// assistant messages reads as the model talking to itself, and it answers
+    /// accordingly. The bubble does not show this line back to the user — the
+    /// mark on the screen already says where they pointed.
+    static let pointedHereText = "ここについて"
+
+    /// The user pointed at a place on the real screen.
+    ///
+    /// A new place is a new subject, so the conversation so far is dropped: the
+    /// exchange was about something else, and carrying it forward is how a
+    /// model ends up confidently answering the previous question again. The web
+    /// client shipped the version that kept the history, and every tap returned
+    /// the first answer.
+    ///
+    /// The capture is taken by the caller at the instant of the gesture and
+    /// adopted here, because the thing being pointed at is the thing that was
+    /// there when the finger went down — not the thing that was there when the
+    /// overlay appeared, seconds and one notification ago.
+    func point(
+        pointer: VisionPointer,
+        capture: ScreenshotAttachment,
+        candidates: [VisionObservation.Candidate],
+        diagnostics: VisionObservationCaptureService.Diagnostics?,
+        hit: VisionObservation.Candidate?
+    ) {
+        askClock = SummonClock()
+        adopt(capture: capture, candidates: candidates, diagnostics: diagnostics)
+        self.pointer = pointer
+        pointedCandidate = hit
+        selectedCandidate = nil
+        screenshotHighlight = nil
+        turns = [VisionDisplayTurn(
+            role: .user,
+            text: Self.pointedHereText,
+            mode: nil,
+            uncertainties: []
+        )]
+        errorMessage = nil
+        run(question: nil, priorTurns: [], pointer: pointer)
+    }
+
+    /// Swap in a capture taken after this session started.
+    ///
+    /// The previous file goes now rather than at teardown: pointing takes a
+    /// fresh shot per gesture, so keeping them all would leave a session's worth
+    /// of full-screen images in the temporary directory.
+    private func adopt(
+        capture: ScreenshotAttachment,
+        candidates: [VisionObservation.Candidate],
+        diagnostics: VisionObservationCaptureService.Diagnostics?
+    ) {
+        let previous = attachment
+        attachment = capture
+        resolveScreenshotImage()
+        self.candidates = candidates
+        candidateDiagnostics = diagnostics
+        candidatesReady = true
+        if previous.id != capture.id {
+            try? FileManager.default.removeItem(at: previous.url)
+        }
+    }
+
     func sendQuestion() {
         let question = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isLoading else { return }
@@ -349,8 +421,15 @@ final class VisionSession: ObservableObject {
         targetIdentity = nil
     }
 
-    private func run(question: String?, priorTurns: [VisionTurn]) {
-        let turnKind: VisionTurnKind = question == nil ? .first : .question
+    private func run(
+        question: String?,
+        priorTurns: [VisionTurn],
+        pointer: VisionPointer? = nil
+    ) {
+        let turnKind: VisionTurnKind = {
+            if question != nil { return .question }
+            return pointer == nil ? .first : .pointing
+        }()
         requestCancellation?.cause = .supersededByNewerRequest
         requestTask?.cancel()
         OperationalNoticeCenter.shared.beginOperation()
@@ -405,7 +484,13 @@ final class VisionSession: ObservableObject {
             do {
                 let fixedCandidates: [VisionObservation.Candidate]
                 let fixedDiagnostics: VisionObservationCaptureService.Diagnostics?
-                if question != nil {
+                // The opening turn deliberately sends none: waiting for a cold
+                // browser's accessibility tree is the slowest thing in the
+                // product and the first answer needs none of it. A pointing
+                // turn is the exception — it is the one turn with no question
+                // that still needs them, to put a frame around what was
+                // pointed at.
+                if question != nil || pointer != nil {
                     if self.candidatesReady {
                         fixedCandidates = self.candidates
                         fixedDiagnostics = self.candidateDiagnostics
@@ -452,6 +537,7 @@ final class VisionSession: ObservableObject {
                     candidateDiagnostics: fixedDiagnostics,
                     identity: identity,
                     selection: self.selection,
+                    pointer: pointer,
                     language: self.outputLanguage
                 )
                 var streamed: VisionResponse?
@@ -948,6 +1034,9 @@ enum VisionHighlightOutcome: String, DiagnosticCode {
 enum VisionTurnKind: String, DiagnosticCode {
     case first
     case question
+    /// The user pointed at a place on the screen and asked nothing in words —
+    /// which is how somebody asks about a thing whose name they do not know.
+    case pointing
     case copilot
 
     var diagnosticCode: String { rawValue }

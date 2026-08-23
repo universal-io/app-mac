@@ -102,6 +102,35 @@ enum VisionPointerResolver {
         return normalized
     }
 
+    /// A normalized capture rectangle placed back onto the real screen, in the
+    /// coordinates of a window covering `screenFrame`.
+    ///
+    /// The way back out. Candidate rectangles are fractions of the capture, so
+    /// drawing one on the live screen means undoing the same two steps in the
+    /// same order — capture space to CG global, CG global to Cocoa — and
+    /// subtracting the screen the overlay covers. Written here beside the
+    /// forward conversion so the pair can be read at once; a frame drawn by
+    /// some other arithmetic is how a highlight ends up one row off.
+    static func screenLocalRect(
+        normalized rect: CGRect,
+        captureRect: CGRect,
+        mainDisplayHeight: CGFloat,
+        screenFrame: CGRect
+    ) -> CGRect {
+        let global = CGRect(
+            x: captureRect.minX + rect.minX * captureRect.width,
+            y: captureRect.minY + rect.minY * captureRect.height,
+            width: rect.width * captureRect.width,
+            height: rect.height * captureRect.height
+        )
+        return CGRect(
+            x: global.minX - screenFrame.minX,
+            y: (mainDisplayHeight - global.maxY) - screenFrame.minY,
+            width: global.width,
+            height: global.height
+        )
+    }
+
     /// The one candidate the user pointed at: the smallest whose rectangle
     /// contains the point.
     ///

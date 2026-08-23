@@ -94,6 +94,65 @@ final class VisionPointerTests: XCTestCase {
         )
     }
 
+    // MARK: - Back onto the screen
+
+    /// The round trip has to close. A point converted in and a rectangle
+    /// converted out must agree about where the thing is, or the frame lands
+    /// beside the mark and the user is told to look at the wrong control.
+    func testAPointConvertedInComesBackToTheSamePlaceOnScreen() throws {
+        let captureRect = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        let screenFrame = CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        let clickedScreenLocal = CGPoint(x: 400, y: 700)
+
+        let normalized = try XCTUnwrap(
+            VisionPointerResolver.normalized(
+                VisionPointerResolver.globalCGPoint(
+                    cocoaGlobal: clickedScreenLocal,
+                    mainDisplayHeight: 1000
+                ),
+                within: captureRect
+            )
+        )
+        // A candidate exactly one point across, centred on the click.
+        let back = VisionPointerResolver.screenLocalRect(
+            normalized: CGRect(x: normalized.x, y: normalized.y, width: 0, height: 0),
+            captureRect: captureRect,
+            mainDisplayHeight: 1000,
+            screenFrame: screenFrame
+        )
+        XCTAssertEqual(back.minX, clickedScreenLocal.x, accuracy: 0.001)
+        XCTAssertEqual(back.minY, clickedScreenLocal.y, accuracy: 0.001)
+    }
+
+    func testARectangleKeepsItsHeightAndLandsWithItsTopEdgeUp() {
+        // Top-left origin going in, bottom-left coming out: a band across the
+        // top of the capture must come out near the top of the screen.
+        let rect = VisionPointerResolver.screenLocalRect(
+            normalized: CGRect(x: 0.1, y: 0, width: 0.2, height: 0.05),
+            captureRect: CGRect(x: 0, y: 0, width: 1600, height: 1000),
+            mainDisplayHeight: 1000,
+            screenFrame: CGRect(x: 0, y: 0, width: 1600, height: 1000)
+        )
+        XCTAssertEqual(rect.minX, 160, accuracy: 0.001)
+        XCTAssertEqual(rect.width, 320, accuracy: 0.001)
+        XCTAssertEqual(rect.height, 50, accuracy: 0.001)
+        XCTAssertEqual(rect.maxY, 1000, accuracy: 0.001)
+    }
+
+    func testASecondaryDisplaysOffsetIsSubtractedOnTheWayOut() {
+        // Secondary 1440x900 left of and above the main display: CG origin
+        // (-1440, -200), so Cocoa origin y = 1080 - 700 = 380.
+        let rect = VisionPointerResolver.screenLocalRect(
+            normalized: CGRect(x: 0.5, y: 0.5, width: 0, height: 0),
+            captureRect: CGRect(x: -1440, y: -200, width: 1440, height: 900),
+            mainDisplayHeight: 1080,
+            screenFrame: CGRect(x: -1440, y: 380, width: 1440, height: 900)
+        )
+        // Centre of that display, expressed inside a window covering it.
+        XCTAssertEqual(rect.minX, 720, accuracy: 0.001)
+        XCTAssertEqual(rect.minY, 450, accuracy: 0.001)
+    }
+
     // MARK: - Hit test
 
     func testSmallestContainingCandidateWins() throws {
