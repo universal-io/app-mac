@@ -303,18 +303,19 @@ private final class PointingCanvas: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// The question is asked on release, not on the press.
+    /// Nothing is decided or drawn on the press.
     ///
     /// A press that turns into a stroke is one gesture about one place, so
     /// firing at the press would spend a request on the point where a ring
-    /// happened to start — and every request costs the user a unit. The mark
-    /// still appears at once: the ring is drawn here, before anything is asked,
-    /// so a screen that does nothing never reads as a click that missed.
+    /// happened to start — and every request costs the user a unit. Drawing the
+    /// ring here has the same problem in the other direction: on every drag the
+    /// user saw a ring flash and then turn into a line, which shows them the
+    /// product guessing at a gesture they had not finished making. The press
+    /// only starts collecting the path; what it meant is known on release, and
+    /// the press-to-release of an ordinary click is too short to read as a
+    /// screen that did nothing.
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        path = [point]
-        wash?.stroke = nil
-        wash?.mark = point
+        path = [convert(event.locationInWindow, from: nil)]
     }
 
     override func mouseDragged(with event: NSEvent) {

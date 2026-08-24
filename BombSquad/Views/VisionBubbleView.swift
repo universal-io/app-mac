@@ -16,9 +16,26 @@ struct VisionBubbleView: View {
     /// Whether the user has pointed at something yet. Before that, the bubble
     /// waits in the corner and says what pointing does.
     let hasPointed: Bool
+    /// How much room the answer may take, decided by the caller from the screen
+    /// this is being shown on. Passed in rather than read here: a view that
+    /// measured the screen itself could disagree with the one the overlay
+    /// covers, and on two displays those are different heights.
+    let answerHeightBudget: CGFloat
     let onClose: () -> Void
 
-    /// How tall the answer may grow before it scrolls instead.
+    private static let answerFontSize: CGFloat = 13
+
+    /// One line of the answer, in the answer's own font.
+    ///
+    /// Ascender to descender plus leading is what text layout uses for a line
+    /// box, so this is the unit the answer is actually built from — not an
+    /// estimate of it.
+    static let answerLineHeight: CGFloat = {
+        let font = NSFont.systemFont(ofSize: answerFontSize)
+        return font.ascender - font.descender + font.leading
+    }()
+
+    /// How tall the answer may grow before it scrolls instead, in whole lines.
     ///
     /// An answer has no length limit, so something has to give: either the text
     /// is cut, or the bubble is. Cutting the text loses the sentence the user is
@@ -26,7 +43,17 @@ struct VisionBubbleView: View {
     /// ellipsis — while cutting the bubble only means scrolling. `ViewThatFits`
     /// keeps short answers short: the plain text is used whenever it fits, and
     /// the scrolling copy takes over only when it would not.
-    static let maxAnswerHeight: CGFloat = 360
+    ///
+    /// **The height has to land on a line boundary.** An arbitrary height cuts
+    /// the last visible line through the middle of its glyphs, which reads as a
+    /// broken renderer rather than as more text below — the answer looked
+    /// damaged even though scrolling reached all of it.
+    ///
+    /// Four lines is the floor: below that the scroll view shows too little for
+    /// its own scrolling to make sense, and no real display is that small.
+    static func answerHeight(within budget: CGFloat) -> CGFloat {
+        max(4, (budget / answerLineHeight).rounded(.down)) * answerLineHeight
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -41,11 +68,22 @@ struct VisionBubbleView: View {
                         .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8))
                         .accessibilityLabel("送信した質問: \(question)")
                 }
+                // Two surfaces, because there are two jobs: this is the place to
+                // read, the field below is the place to type. Both sat directly
+                // on the card, which made the answer, the empty space and the
+                // input box one undifferentiated area — there was nothing to
+                // tell the user where a click would put a cursor.
                 ViewThatFits(in: .vertical) {
                     answer
                     ScrollView { answer }
                 }
-                .frame(maxHeight: Self.maxAnswerHeight)
+                .frame(maxHeight: Self.answerHeight(within: answerHeightBudget))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(
+                    Color(nsColor: .controlBackgroundColor),
+                    in: RoundedRectangle(cornerRadius: 10)
+                )
                 ask
             }
             .padding(12)
@@ -94,35 +132,38 @@ struct VisionBubbleView: View {
     private var answer: some View {
         if let error = session.errorMessage {
             Text(error)
-                .font(.system(size: 13))
+                .font(.system(size: Self.answerFontSize))
                 .foregroundStyle(.orange)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let streaming = session.streamingMessage, !streaming.isEmpty {
             Text(streaming)
-                .font(.system(size: 13))
+                .font(.system(size: Self.answerFontSize))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         } else if let answered = latestAnswer {
             Text(answered)
-                .font(.system(size: 13))
+                .font(.system(size: Self.answerFontSize))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         } else if session.isLoading {
             // Named, not spun: a spinner says work is happening, this says what
             // the work is.
             Label(hasPointed ? "ここを読んでいます…" : "画面を読んでいます…", systemImage: "eye")
-                .font(.system(size: 13))
+                .font(.system(size: Self.answerFontSize))
                 .foregroundStyle(.secondary)
         } else {
             Text("画面のどこかをクリックすると、その場所について説明します。")
-                .font(.system(size: 13))
+                .font(.system(size: Self.answerFontSize))
                 .foregroundStyle(.secondary)
         }
     }
 
     private var ask: some View {
         HStack(alignment: .bottom, spacing: 8) {
+            // A real field surface, which is what macOS uses to say "text goes
+            // in here" — the editor draws no background of its own, so without
+            // this it is an invisible box on the card.
             SendableTextEditor(
                 text: $session.input,
                 focusedField: $session.focusedField,
@@ -131,6 +172,14 @@ struct VisionBubbleView: View {
                 onEscape: onClose
             )
             .frame(minHeight: 34, maxHeight: 72)
+            .background(
+                Color(nsColor: .textBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
+            )
 
             PanelSendButton(
                 accessibilityLabel: "Visionへの質問を送信",

@@ -1058,6 +1058,12 @@ final class SessionCoordinator {
             bubble: VisionBubbleView(
                 session: session,
                 hasPointed: session.pointer != nil,
+                // Half the screen the overlay covers. An answer of any length
+                // has to be readable without scrolling in a hurry, and this is
+                // the only place that knows which display it is on — but the
+                // other half stays the screen, which is the thing the answer is
+                // about and the reason this is not a window.
+                answerHeightBudget: screen.visibleFrame.height / 2,
                 onClose: { [weak self] in self?.close(reason: .closeRequested) }
             )
         )
