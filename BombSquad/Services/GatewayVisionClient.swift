@@ -439,10 +439,17 @@ struct GatewayVisionClient {
         // rather than failing the turn — the Gateway's prompt still has the
         // coordinates, so the answer degrades instead of disappearing.
         if resized == nil, marked == nil, source.count <= maxRawImageBytes {
+            dumpWireImage(
+                source,
+                fileExtension: sourceType == "image/jpeg" ? "jpg" : "png",
+                pointer: pointer,
+                burned: false
+            )
             return (source.base64EncodedString(), sourceType, width, height)
         }
         if let png = outgoing.representation(using: .png, properties: [:]),
            png.count <= maxRawImageBytes {
+            dumpWireImage(png, fileExtension: "png", pointer: pointer, burned: marked != nil)
             return (png.base64EncodedString(), "image/png", width, height)
         }
         guard let jpeg = outgoing.representation(
@@ -451,7 +458,63 @@ struct GatewayVisionClient {
         ) else {
             throw ProviderError.decoding("The captured image exceeds the Gateway limit.")
         }
+        dumpWireImage(jpeg, fileExtension: "jpg", pointer: pointer, burned: marked != nil)
         return (jpeg.base64EncodedString(), "image/jpeg", width, height)
+    }
+
+    /// Debug builds only: writes the exact bytes leaving for the Gateway on a
+    /// pointing turn, so a human can open the file and see whether the mark
+    /// sits where the user clicked.
+    ///
+    /// This is the tool the iOS investigation proved decisive — one look at
+    /// what the model actually received settled a question that three rounds
+    /// of hypothesis-driven fixes had not
+    /// (`../app-ios/docs/investigation-highlight-offset.md` §3, §7). The
+    /// filename carries the pointer position and whether the burn succeeded,
+    /// so the picture can be checked against `vision.mark` without tooling.
+    ///
+    /// Compiled out of Release entirely: shipped builds keep captures in
+    /// temporary files only (README「データ保存」), and this would be a second
+    /// copy nothing cleans up.
+    private static func dumpWireImage(
+        _ data: Data,
+        fileExtension: String,
+        pointer: VisionPointer?,
+        burned: Bool
+    ) {
+        #if DEBUG
+        guard let pointer else { return }
+        // Unit tests exercise this path with fixture images; their dumps would
+        // sit beside real-machine evidence and look like runs that never
+        // happened.
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+            return
+        }
+        let directory = URL(fileURLWithPath: "/tmp/universal-io-wire-dumps", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true
+            )
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            let position: String
+            switch pointer.kind {
+            case .point(let point):
+                position = "x\(Int((point.x * 1000).rounded()))-y\(Int((point.y * 1000).rounded()))"
+            case .region(let region):
+                position = "x\(Int((region.midX * 1000).rounded()))-y\(Int((region.midY * 1000).rounded()))-region"
+            }
+            let name = "wire-\(formatter.string(from: Date()))-\(position)-"
+                + (burned ? "burned" : "unburned")
+                + ".\(fileExtension)"
+            let url = directory.appendingPathComponent(name)
+            try data.write(to: url)
+            NSLog("Vision wire dump: %@", url.path)
+        } catch {
+            NSLog("Vision wire dump failed: %@", String(describing: error))
+        }
+        #endif
     }
 
     /// The capture's size in points, when the capture is known to be denser than

@@ -168,6 +168,12 @@ struct ScreenshotCaptureService {
             ("px", .count(width * height / 1000)),
             ("excluded", .count(excludedCount)),
             ("menu", .flag(menuWasOpen)),
+            // Which display this shot is of. Pointing re-captures derive the
+            // display from the original attachment's rect while the overlay
+            // covers `ActiveDisplay.screen()` — on a two-display machine those
+            // can in principle disagree, and every coordinate downstream would
+            // be off by a whole screen. This makes that case visible.
+            ("display", .count(Int(display.displayID))),
         ])
         return (image, CGSize(width: display.width, height: display.height), display.displayID)
     }
