@@ -5,35 +5,46 @@ import ApplicationServices
 ///
 /// The pointing overlay swallows every click, so the application under it
 /// never sees the drag and never shows an I-beam or a selection of its own.
-/// What the user sweeps has to be resolved by us: position → character index
-/// (`AXRangeForPosition`), index range → string (`AXStringForRange`) and
-/// on-screen rectangle (`AXBoundsForRange`). The application's own selection
-/// state and the clipboard stay untouched throughout.
+/// What the user sweeps has to be resolved by us — and the obvious API for
+/// position → character index is a lie in the engine that matters most:
+/// **Blink stubs `AXRangeForPosition` to zero.** Chrome and Electron return
+/// index 0 for every point on every text run, and `AXNumberOfCharacters`
+/// returns 0 against a run whose value holds fourteen characters (probed on
+/// this machine, 2026-08-24; the first probe read "success" out of it because
+/// every run's answer, 0, is also a valid index).
 ///
-/// Probed on this machine before being built (2026-08-24): Chrome (Gmail) and
-/// VS Code answer the whole chain in sub-millisecond calls, returning real
-/// glyphs («わ», 17×20px) — but only from text-bearing roles. A hit that stops
-/// at `AXWebArea` answers `AXRangeForPosition` with index 0 and degenerate
-/// 0×0 bounds, which is why the role gate and the bounds validation below are
-/// not defensive extras: the probe saw both failure shapes.
+/// What Blink does implement, correctly and per character, is
+/// `AXBoundsForRange`: the rectangle of any range, growing monotonically,
+/// sub-millisecond («組» = 13×15px at the right screen position). So the
+/// caret is found the other way around — binary-searching character
+/// rectangles against the pointer — and the characters themselves come from
+/// the run's `AXValue`, the one text attribute Blink fills in. The
+/// application's own selection state and the clipboard stay untouched
+/// throughout.
 @MainActor
 enum VisionTextRangeReader {
-    /// Where a text gesture is anchored: the element whose text it is, and the
-    /// character index under the point where the press happened.
+    /// Where a text gesture is anchored: the run whose text it is, that text
+    /// read once at the press, and the caret the press landed on.
+    ///
+    /// The text is captured at the press on purpose: the run's value cannot
+    /// change under the sweep without the user seeing the screen change, and
+    /// slicing what was measured is the only way the swept string cannot
+    /// disagree with the highlight that was shown.
     struct Anchor {
         let element: AXUIElement
-        let index: Int
+        let text: String
+        let caret: Int
     }
 
-    /// Roles whose text these APIs answer for. A hit on a container (web area,
-    /// group) can still return an index, but it indexes the wrong document and
-    /// its bounds come back degenerate — measured, not assumed.
+    /// Roles whose text these APIs answer for. A hit that stops at a container
+    /// (web area, group) indexes the wrong document and measures degenerate
+    /// 0×0 bounds — both shapes seen in the probe, not assumed.
     private static let textRoles: Set<String> = ["AXStaticText", "AXTextArea", "AXTextField"]
 
-    /// A sweep cannot mean more than this many UTF-16 units; the wire encoder
-    /// bounds what travels anyway, and an unbounded `AXStringForRange` against
-    /// a whole document is the one call in this chain that could stall.
-    private static let maxSweepUnits = 12_000
+    /// A run longer than this is not something a hand sweeps across; the wire
+    /// encoder bounds what travels anyway, and binary-searching a document-
+    /// sized value would spend its calls on nothing the user meant.
+    private static let maxRunUnits = 12_000
 
     /// The application, wrapped once per pointing session.
     ///
@@ -48,7 +59,7 @@ enum VisionTextRangeReader {
     }
 
     /// The text anchor at a point (CG global, top-left origin), or nil when
-    /// what is under the point is not text these APIs can index.
+    /// what is under the point is not text whose characters can be measured.
     static func anchor(at point: CGPoint, in application: AXUIElement) -> Anchor? {
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(
@@ -56,25 +67,41 @@ enum VisionTextRangeReader {
         ) == .success, let hit else { return nil }
         guard let role = copyAttribute(hit, kAXRoleAttribute) as? String,
               textRoles.contains(role) else { return nil }
-        guard let index = characterIndex(at: point, in: hit) else { return nil }
-        return Anchor(element: hit, index: index)
+        guard let text = copyAttribute(hit, kAXValueAttribute) as? String,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.utf16.count <= maxRunUnits else { return nil }
+        guard let caret = caretIndex(at: point, in: hit, units: text.utf16.count) else {
+            return nil
+        }
+        return Anchor(element: hit, text: text, caret: caret)
     }
 
-    /// The swept range from the anchor to the current point, on the anchor's
-    /// own element. Nil when the current point no longer resolves to an index
-    /// there — sweeping off the paragraph keeps the last resolvable range
-    /// alive at the call site rather than snapping the highlight away.
+    /// The swept range from the anchor's caret to the caret under the current
+    /// point, on the anchor's own run. A point past the run's edges clamps to
+    /// its nearest end — the comparator sends it there — so sweeping off the
+    /// text keeps selecting to the boundary instead of snapping away.
     static func range(from anchor: Anchor, to point: CGPoint) -> CFRange? {
-        guard let current = characterIndex(at: point, in: anchor.element) else { return nil }
-        let location = min(anchor.index, current)
-        let length = min(abs(current - anchor.index), maxSweepUnits)
-        return CFRange(location: location, length: length)
+        guard let caret = caretIndex(
+            at: point, in: anchor.element, units: anchor.text.utf16.count
+        ) else { return nil }
+        return CFRange(
+            location: min(anchor.caret, caret),
+            length: abs(caret - anchor.caret)
+        )
     }
 
-    /// The exact characters in a range.
-    static func text(of range: CFRange, in element: AXUIElement) -> String? {
+    /// The exact characters of a swept range, sliced from the text measured at
+    /// the press — the source the highlight was computed from, so the two
+    /// cannot disagree.
+    static func text(of range: CFRange, in anchor: Anchor) -> String? {
         guard range.length > 0 else { return nil }
-        return copyParameterized(element, "AXStringForRange", axValue(range)) as? String
+        let units = Array(anchor.text.utf16)
+        guard range.location >= 0, range.location + range.length <= units.count else {
+            return nil
+        }
+        return String(utf16CodeUnits: Array(
+            units[range.location ..< range.location + range.length]
+        ), count: range.length)
     }
 
     /// Where a range sits on screen (CG global), or nil when the answer is
@@ -90,12 +117,65 @@ enum VisionTextRangeReader {
         return rect
     }
 
-    private static func characterIndex(at point: CGPoint, in element: AXUIElement) -> Int? {
-        guard let value = copyParameterized(element, "AXRangeForPosition", axValue(point))
-        else { return nil }
-        var range = CFRange()
-        guard AXValueGetValue(value as! AXValue, .cfRange, &range) else { return nil }
-        return range.location
+    /// The caret position (0...units) nearest a point, found by binary search
+    /// over per-character rectangles.
+    ///
+    /// Characters are ordered by line and then left to right, so one 2D
+    /// comparator — later line means later index, same line falls back to the
+    /// glyph's horizontal middle — keeps the search sound across wrapped runs.
+    /// About log₂(units) calls at sub-millisecond each. A character whose
+    /// rectangle cannot be measured (collapsed whitespace) borrows the nearest
+    /// measurable neighbour's; a run where nothing measures returns nil and
+    /// the gesture stays what it looked like.
+    private static func caretIndex(
+        at point: CGPoint,
+        in element: AXUIElement,
+        units: Int
+    ) -> Int? {
+        guard units > 0 else { return nil }
+        var low = 0
+        var high = units - 1
+        var resolvedAny = false
+        while low <= high {
+            let middle = (low + high) / 2
+            guard let (index, rect) = measurableCharacter(
+                near: middle, within: low...high, in: element
+            ) else { break }
+            resolvedAny = true
+            if point.y < rect.minY {
+                high = index - 1
+            } else if point.y > rect.maxY {
+                low = index + 1
+            } else if point.x < rect.midX {
+                high = index - 1
+            } else {
+                low = index + 1
+            }
+        }
+        return resolvedAny ? low : nil
+    }
+
+    /// The nearest character to `index` inside `window` whose rectangle
+    /// actually measures.
+    ///
+    /// The scan is capped: eight unmeasurable characters in a row is not
+    /// collapsed whitespace, it is an element that does not really answer this
+    /// call, and against a hung one each failed attempt costs the messaging
+    /// timeout. Giving up ends the search with whatever it has.
+    private static func measurableCharacter(
+        near index: Int,
+        within window: ClosedRange<Int>,
+        in element: AXUIElement
+    ) -> (Int, CGRect)? {
+        let reach = min(8, max(index - window.lowerBound, window.upperBound - index))
+        for offset in 0...reach {
+            for candidate in [index + offset, index - offset] where window.contains(candidate) {
+                if let rect = bounds(of: CFRange(location: candidate, length: 1), in: element) {
+                    return (candidate, rect)
+                }
+            }
+        }
+        return nil
     }
 
     private static func copyAttribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -114,11 +194,6 @@ enum VisionTextRangeReader {
             element, name as CFString, parameter, &value
         )
         return error == .success ? value : nil
-    }
-
-    private static func axValue(_ point: CGPoint) -> AXValue {
-        var value = point
-        return AXValueCreate(.cgPoint, &value)!
     }
 
     private static func axValue(_ range: CFRange) -> AXValue {

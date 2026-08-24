@@ -76,13 +76,17 @@ AXヒット率をunified logから集計）。
 回答対象になる。** 文字でない場所は従来どおりタップ／フリーハンド。文字の上でも反転せずタップすれば
 従来のタップ。
 
-事前に短命probeで実測してから作った（scratchpad、コミットしない）:
+事前に短命probeで実測してから作った（scratchpad、コミットしない）。**最初の実装は1回外している**:
 
-- **Chrome（Gmail）とVS Codeで全チェーン成立**: 点→`AXUIElementCopyElementAtPosition`→
-  `AXRangeForPosition`→`AXStringForRange`（「わ」等の実グリフ）→`AXBoundsForRange`
-  （グリフ単位の矩形）。**全呼び出しサブms**
-- **失敗の形も2つ実測**: ヒットが`AXWebArea`止まりだとindexは返るが矩形が0×0に縮退／空白文字も0×0。
-  だからロールゲート（StaticText/TextArea/TextField限定）と矩形検証は防御ではなく実測に基づく
+- **`AXRangeForPosition`はBlinkではスタブで、どの座標にも0を返す**（`AXNumberOfCharacters`も0）。
+  最初のprobeは「成功」と読み違えた — 0はどのrunでも妥当なindexに見え、先頭文字が毎回違うので
+  動いているように見えた。実機で「Iビームは出るがドラッグが選択にならない」となって発覚
+- **効いた経路は`AXBoundsForRange`の二分探索**。文字単位の矩形は正確・単調・サブmsで返る
+  （「組」=13×15px）。座標→キャレットは文字矩形を二分探索して自前解決し、本文は`AXValue`から読む。
+  実画面Chromeのリハーサルで「組織によって管理されています」の20%→70%なぞり＝「よって管理され」、
+  折返しrunの2D比較（行→x）、範囲外の端へのクランプまで確認。両端解決で0.2〜0.4ms
+- **失敗の形も実測**: ヒットがコンテナ止まり／空白文字は矩形が0×0に縮退。ロールゲート
+  （StaticText/TextArea/TextField限定）と矩形検証は防御ではなく実測に基づく
 - **AXは現在のSpaceのウインドウしか見えない**（Chrome 18窓が全部別Spaceで`windows=0`だった）。
   製品では対象アプリが前面にいる時に呼ばれるので問題にならない
 
@@ -90,8 +94,10 @@ AXヒット率をunified logから集計）。
 
 - **下のアプリには一切選択させない**（覆いはクリックを飲んだまま）。Iビームも反転も自前で描き、
   文字列と矩形だけAXから実測する。アプリの選択状態とclipboardは無傷
-- `VisionTextRangeReader`（新規）: anchor/range/text/bounds。**messaging timeout 0.1秒**
-  （ハングしたアプリにホバーを人質に取らせない）。ホバーは6pt以上動いた時だけ問い合わせ
+- `VisionTextRangeReader`（新規）: anchor（要素＋押下時に読んだ全文＋キャレット）/range/text/bounds。
+  **messaging timeout 0.1秒**（ハングしたアプリにホバーを人質に取らせない）。ホバーは6pt以上
+  動いた時だけ問い合わせ。なぞった文字列は押下時に読んだ`AXValue`のスライス — 計測した本文と
+  送る本文が食い違えない
 - 押下で文字に当たればテキストモード（当たらなければ従来の線）。**離した時に読み戻せなければ
   タップへ退化** — 壊れる方向がない
 - 送信は既存の`selection`フィールド（pointerなし・焼き込みなし）。Gatewayは既存の

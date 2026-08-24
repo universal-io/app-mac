@@ -1370,7 +1370,7 @@ final class SessionCoordinator {
         guard let range = VisionTextRangeReader.range(
             from: anchor, to: globalCGPoint(fromScreenLocal: released)
         ), range.length > 0,
-        let text = VisionTextRangeReader.text(of: range, in: anchor.element),
+        let text = VisionTextRangeReader.text(of: range, in: anchor),
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             point(at: released, session: session)
