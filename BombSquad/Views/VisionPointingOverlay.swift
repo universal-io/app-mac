@@ -99,19 +99,35 @@ final class VisionPointingOverlay {
 
     /// What the user pointed at, and what the app measured there.
     ///
-    /// Both are drawn on the live screen in the same colour, because both mean
-    /// "this one". The magenta burned into the image is a different audience —
-    /// that one is for the model, and is chosen to be absent from real interface
-    /// chrome rather than to look like the product.
+    /// Both mean "this one", and only one of them is shown at a time. The ring
+    /// answers "was my click heard" and is all there is until the element is
+    /// known; the moment a measured frame exists it says the same thing more
+    /// precisely — around the whole element rather than at a pixel inside it —
+    /// so the ring retracts. Drawing both puts a ring on top of a frame it sits
+    /// inside, which reads as two marks disagreeing rather than one becoming
+    /// certain. Same rule as the answer's frame: what survives is the mark
+    /// carrying the newer information.
+    ///
+    /// The magenta burned into the image is a different audience — that one is
+    /// for the model, and is chosen to be absent from real interface chrome
+    /// rather than to look like the product.
     func setMark(point: CGPoint?, frame: CGRect?) {
         anchor = point
         // A new gesture starts a new subject: whatever the previous answer
         // pointed at no longer decides where this answer appears.
         answerAnchorFrame = nil
-        canvas?.wash?.mark = point
+        canvas?.wash?.mark = Self.drawnMark(point: point, frame: frame)
         canvas?.wash?.hitFrame = frame
         canvas?.wash?.pulse(around: frame)
         placeBubble()
+    }
+
+    /// Which of the two marks is drawn. A rule with no failure mode of its own —
+    /// nothing throws when both appear, it just looks like the product is
+    /// pointing at two things — so it is pinned here rather than left to the
+    /// next edit of `setMark`.
+    nonisolated static func drawnMark(point: CGPoint?, frame: CGRect?) -> CGPoint? {
+        frame == nil ? point : nil
     }
 
     /// The answer has pointed at something, so the user's own mark steps back.

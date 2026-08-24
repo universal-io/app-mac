@@ -158,6 +158,28 @@ final class VisionBubblePlacementTests: XCTestCase {
         XCTAssertEqual(origin.y, 24, accuracy: 0.001)
     }
 
+    // MARK: - One mark at a time
+
+    /// The ring and the measured frame both say "this one", so only the more
+    /// precise of the two is drawn. A ring inside the frame it belongs to reads
+    /// as two marks disagreeing rather than as one becoming certain — and
+    /// nothing fails when both appear, which is why the rule is pinned here.
+    func testTheRingRetractsOnceTheMeasuredFrameIsKnown() {
+        let point = CGPoint(x: 400, y: 700)
+        let frame = CGRect(x: 380, y: 680, width: 60, height: 40)
+        XCTAssertNil(VisionPointingOverlay.drawnMark(point: point, frame: frame))
+    }
+
+    /// Until the element is known the ring is the only evidence the click was
+    /// heard, so it has to be there — the screen doing nothing reads as a miss.
+    func testWithNoMeasuredFrameTheRingIsWhatIsDrawn() {
+        let point = CGPoint(x: 400, y: 700)
+        XCTAssertEqual(
+            VisionPointingOverlay.drawnMark(point: point, frame: nil),
+            point
+        )
+    }
+
     /// The bounds are the visible frame, not the whole display, so a secondary
     /// screen's origin and a reserved menu bar both have to survive the maths.
     func testItRespectsAnOffsetVisibleFrame() {
