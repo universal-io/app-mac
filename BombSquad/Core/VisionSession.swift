@@ -45,6 +45,15 @@ final class VisionSession: ObservableObject {
     /// Where the user pointed on the real screen, in the current capture's own
     /// normalized space. Trusted intent: it decides what this turn is about.
     @Published private(set) var pointer: VisionPointer?
+    /// Whether the user has aimed at something during this session.
+    ///
+    /// Known at the gesture, not when the shot comes back, which is why
+    /// `pointer` cannot answer it: `beginPointing()` clears the pointer on
+    /// purpose — a stale one would describe the previous place — so it is nil
+    /// for the whole of the wait the bubble is labelling. The bubble says
+    /// "reading here" rather than "reading the screen" during that wait, and
+    /// with the pointer as its source it said "the screen" every time.
+    @Published private(set) var isPointing = false
     /// What the app measured at that spot, when accessibility had something
     /// there. Used to frame it on screen and to keep the bubble off it — never
     /// as the answer's justification, because the Gateway strips candidate
@@ -235,6 +244,7 @@ final class VisionSession: ObservableObject {
         clearStreamingText()
         turns = []
         errorMessage = nil
+        isPointing = true
         pointer = nil
         pointedCandidate = nil
         // A new gesture retires every earlier statement of scope, the

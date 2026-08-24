@@ -13,15 +13,17 @@ import SwiftUI
 /// and the frame belong to the overlay; the turn belongs to the session.
 struct VisionBubbleView: View {
     @ObservedObject var session: VisionSession
-    /// Whether the user has pointed at something yet. Before that, the bubble
-    /// waits in the corner and says what pointing does.
-    let hasPointed: Bool
     /// How much room the answer may take, decided by the caller from the screen
     /// this is being shown on. Passed in rather than read here: a view that
     /// measured the screen itself could disagree with the one the overlay
     /// covers, and on two displays those are different heights.
     let answerHeightBudget: CGFloat
     let onClose: () -> Void
+
+    /// What the question being typed currently needs. The field grows with it:
+    /// a fixed box shows the user three lines of their own sentence and hides
+    /// the rest of what they are about to send.
+    @State private var inputContentHeight: CGFloat = VisionBubbleView.inputMinHeight
 
     private static let answerFontSize: CGFloat = 13
 
@@ -53,6 +55,45 @@ struct VisionBubbleView: View {
     /// its own scrolling to make sense, and no real display is that small.
     static func answerHeight(within budget: CGFloat) -> CGFloat {
         max(4, (budget / answerLineHeight).rounded(.down)) * answerLineHeight
+    }
+
+    /// Everything in the bubble that is not the answer, at its tallest.
+    ///
+    /// Derived from the layout below rather than guessed: the handle (32), the
+    /// body's own padding (24), the gaps between its rows (30), the sent
+    /// question's chip (25), the answer surface's padding (20), the input at
+    /// its ceiling (160), the guidance button (22) and the margin the placement
+    /// keeps on both edges (24). It exists so the answer can be told how much
+    /// of the screen is left, instead of being given a share of it and letting
+    /// the total run off the top — the placement can move a bubble that is too
+    /// tall, but it cannot shrink one.
+    static let chromeHeight: CGFloat = 340
+
+    /// How much of the covered screen the answer may take.
+    ///
+    /// This used to be half the screen, and half was not enough: answers were
+    /// scrolling with two thirds of the display standing empty. The rule is now
+    /// "as much as is left", with two thirds as the ceiling so a large display
+    /// does not get a bubble running from the Dock to the menu bar — the rest
+    /// of the screen is the thing the answer is about, which is the reason this
+    /// is a bubble on the picture and not a window beside it.
+    static func answerHeightBudget(visibleHeight: CGFloat) -> CGFloat {
+        min(visibleHeight * 2 / 3, visibleHeight - chromeHeight)
+    }
+
+    /// One line plus the field's own insets: what an empty question box is.
+    static let inputMinHeight: CGFloat = 34
+
+    /// How tall the question box may be for the height its text needs.
+    ///
+    /// It follows the text, because the sentence being sent is the one thing in
+    /// the bubble the user wrote and cannot re-read anywhere else. The ceiling
+    /// is ten lines, and never more than a third of the answer's budget: on a
+    /// small display an input taller than the answer would leave the reply with
+    /// nothing, and the point of the bubble is the reply.
+    static func inputHeight(content: CGFloat, within budget: CGFloat) -> CGFloat {
+        let ceiling = max(inputMinHeight, min(160, budget / 3))
+        return min(max(content, inputMinHeight), ceiling)
     }
 
     var body: some View {
@@ -161,7 +202,7 @@ struct VisionBubbleView: View {
         } else if session.isLoading {
             // Named, not spun: a spinner says work is happening, this says what
             // the work is.
-            Label(hasPointed ? "ここを読んでいます…" : "画面を読んでいます…", systemImage: "eye")
+            Label(session.isPointing ? "ここを読んでいます…" : "画面を読んでいます…", systemImage: "eye")
                 .font(.system(size: Self.answerFontSize))
                 .foregroundStyle(.secondary)
         } else {
@@ -204,9 +245,22 @@ struct VisionBubbleView: View {
                 focusedField: $session.focusedField,
                 field: .navigator,
                 onSend: session.sendQuestion,
-                onEscape: onClose
+                onEscape: onClose,
+                onContentHeightChange: { height in
+                    // Compared before it is assigned: the editor reports on
+                    // every update as well as on every keystroke, and an
+                    // unconditional write would restart the update it was
+                    // reported from.
+                    guard abs(height - inputContentHeight) > 0.5 else { return }
+                    inputContentHeight = height
+                }
             )
-            .frame(minHeight: 34, maxHeight: 72)
+            .frame(
+                height: Self.inputHeight(
+                    content: inputContentHeight,
+                    within: answerHeightBudget
+                )
+            )
             .background(
                 Color(nsColor: .textBackgroundColor),
                 in: RoundedRectangle(cornerRadius: 8)

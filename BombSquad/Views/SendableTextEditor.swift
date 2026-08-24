@@ -15,8 +15,33 @@ struct SendableTextEditor: NSViewRepresentable {
     let field: FocusField
     var onSend: () -> Void
     var onEscape: (() -> Void)? = nil
+    /// The height the typed text currently needs, insets included, so a caller
+    /// can let the field grow with what is being written instead of giving it a
+    /// fixed box. Optional, because a fixed box is right where the surrounding
+    /// layout owns the height.
+    var onContentHeightChange: ((CGFloat) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    private func reportContentHeight(of textView: NSTextView, after deferred: Bool) {
+        guard let onContentHeightChange else { return }
+        let measure = { onContentHeightChange(Self.contentHeight(of: textView)) }
+        if deferred {
+            DispatchQueue.main.async(execute: measure)
+        } else {
+            measure()
+        }
+    }
+
+    /// What the text occupies right now, in the width it is actually wrapping
+    /// at. `usedRect` is the laid-out text rather than an estimate of it, so a
+    /// field sized from this holds exactly the lines that exist.
+    static func contentHeight(of textView: NSTextView) -> CGFloat {
+        guard let container = textView.textContainer,
+              let layout = textView.layoutManager else { return 0 }
+        layout.ensureLayout(for: container)
+        return layout.usedRect(for: container).height + textView.textContainerInset.height * 2
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = SendingTextView()
@@ -40,6 +65,10 @@ struct SendableTextEditor: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
+        // After this returns, because nothing is laid out yet: measuring here
+        // reports the height of an unwrapped line and the field opens at the
+        // wrong size for text it was created with.
+        reportContentHeight(of: textView, after: true)
         return scroll
     }
 
@@ -49,6 +78,11 @@ struct SendableTextEditor: NSViewRepresentable {
         if textView.string != text {
             textView.string = text
         }
+        // Asynchronously, and only ever a value: a caller that stores this in
+        // SwiftUI state would otherwise be changing state during an update.
+        // Reporting an unchanged height is harmless — the caller compares
+        // before it assigns, so this settles rather than loops.
+        reportContentHeight(of: textView, after: true)
         // Drive first responder from SwiftUI focus state.
         if focusedField == field, textView.window?.firstResponder !== textView {
             DispatchQueue.main.async {
@@ -64,6 +98,9 @@ struct SendableTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             parent.text = tv.string
+            // Directly: this is a keystroke, not a view update, and the field
+            // has to have grown by the time the newly wrapped line is drawn.
+            parent.onContentHeightChange?(SendableTextEditor.contentHeight(of: tv))
         }
 
         /// Intercept command selectors. This delegate is IME-aware: while
