@@ -57,6 +57,22 @@ struct VisionBubbleView: View {
         max(4, (budget / answerLineHeight).rounded(.down)) * answerLineHeight
     }
 
+    /// The smallest the answer area gets, whatever is in it.
+    ///
+    /// A box that hugs its content is why raising the ceiling changed nothing
+    /// visible: most answers never reached it, so the reading area was two and a
+    /// half lines of a sentence still arriving and the bubble was a sliver. An
+    /// explanation is longer than that, and the first delta of a streaming one
+    /// is a single character — sizing to it means the bubble grows under the
+    /// reader's eyes on every answer.
+    ///
+    /// Ten lines, so the pane is a place to read before there is anything in it
+    /// — never more than the ceiling, which is what a display too small for ten
+    /// lines gets instead.
+    static func answerMinHeight(within budget: CGFloat) -> CGFloat {
+        min(10 * answerLineHeight, answerHeight(within: budget))
+    }
+
     /// Everything in the bubble that is not the answer, at its tallest.
     ///
     /// Derived from the layout below rather than guessed: the handle (32), the
@@ -118,8 +134,15 @@ struct VisionBubbleView: View {
                     answer
                     ScrollView { answer }
                 }
-                .frame(maxHeight: Self.answerHeight(within: answerHeightBudget))
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // Top-left, not centre: with a floor under it a short answer
+                // would otherwise sit in the middle of its own box, which reads
+                // as a caption rather than as the start of an explanation.
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: Self.answerMinHeight(within: answerHeightBudget),
+                    maxHeight: Self.answerHeight(within: answerHeightBudget),
+                    alignment: .topLeading
+                )
                 .padding(10)
                 .background(
                     Color(nsColor: .controlBackgroundColor),
@@ -235,48 +258,48 @@ struct VisionBubbleView: View {
         }
     }
 
+    /// Enter sends, Shift+Enter breaks the line, and there is no button.
+    ///
+    /// The editor has behaved this way since it was written, so the button was
+    /// a second way to do the one thing the keyboard already did — and it took
+    /// width from the field on the narrowest surface in the product. Messenger
+    /// apps settled this convention long ago; the help text on the field is
+    /// what carries it for somebody who has not met it.
     private var ask: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            // A real field surface, which is what macOS uses to say "text goes
-            // in here" — the editor draws no background of its own, so without
-            // this it is an invisible box on the card.
-            SendableTextEditor(
-                text: $session.input,
-                focusedField: $session.focusedField,
-                field: .navigator,
-                onSend: session.sendQuestion,
-                onEscape: onClose,
-                onContentHeightChange: { height in
-                    // Compared before it is assigned: the editor reports on
-                    // every update as well as on every keystroke, and an
-                    // unconditional write would restart the update it was
-                    // reported from.
-                    guard abs(height - inputContentHeight) > 0.5 else { return }
-                    inputContentHeight = height
-                }
+        // A real field surface, which is what macOS uses to say "text goes in
+        // here" — the editor draws no background of its own, so without this it
+        // is an invisible box on the card.
+        SendableTextEditor(
+            text: $session.input,
+            focusedField: $session.focusedField,
+            field: .navigator,
+            onSend: session.sendQuestion,
+            onEscape: onClose,
+            onContentHeightChange: { height in
+                // Compared before it is assigned: the editor reports on
+                // every update as well as on every keystroke, and an
+                // unconditional write would restart the update it was
+                // reported from.
+                guard abs(height - inputContentHeight) > 0.5 else { return }
+                inputContentHeight = height
+            }
+        )
+        .frame(
+            height: Self.inputHeight(
+                content: inputContentHeight,
+                within: answerHeightBudget
             )
-            .frame(
-                height: Self.inputHeight(
-                    content: inputContentHeight,
-                    within: answerHeightBudget
-                )
-            )
-            .background(
-                Color(nsColor: .textBackgroundColor),
-                in: RoundedRectangle(cornerRadius: 8)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
-            )
-
-            PanelSendButton(
-                accessibilityLabel: "Visionへの質問を送信",
-                help: "質問を送信（Enter）",
-                isEnabled: session.canSend,
-                action: session.sendQuestion
-            )
-        }
+        )
+        .background(
+            Color(nsColor: .textBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
+        )
+        .accessibilityLabel("Visionへの質問")
+        .help("Enterで送信、Shift+Enterで改行")
     }
 
     /// The most recent thing the user said, unless it was the gesture itself.

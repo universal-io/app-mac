@@ -138,9 +138,9 @@ final class VisionPointingOverlay {
         // drawn for the previous question is not part of this one.
         frameAnchor = nil
         canvas?.wash?.stroke = nil
-        canvas?.wash?.mark = Self.drawnMark(point: point, frame: frame)
+        canvas?.wash?.markShape = frame.map(WashView.MarkShape.frame)
+            ?? Self.drawnMark(point: point, frame: frame).map(WashView.MarkShape.ring)
         canvas?.wash?.hitFrame = frame
-        canvas?.wash?.pulse(around: frame)
         placeBubble()
     }
 
@@ -159,10 +159,9 @@ final class VisionPointingOverlay {
     /// (`app-web/docs/pointing.md` §3). The frame it replaces belonged to an
     /// answer about somewhere else.
     func showStroke(_ path: [CGPoint]) {
-        canvas?.wash?.mark = nil
+        canvas?.wash?.markShape = nil
         canvas?.wash?.stroke = path
         canvas?.wash?.hitFrame = nil
-        canvas?.wash?.pulse(around: nil)
     }
 
     /// The finished enclosure stays on screen: it is the only thing saying what
@@ -175,10 +174,9 @@ final class VisionPointingOverlay {
     func setRegion(path: [CGPoint]) {
         anchor = nil
         frameAnchor = VisionPointerResolver.bounds(of: path)
-        canvas?.wash?.mark = nil
+        canvas?.wash?.markShape = nil
         canvas?.wash?.stroke = path
         canvas?.wash?.hitFrame = nil
-        canvas?.wash?.pulse(around: nil)
         placeBubble()
     }
 
@@ -189,10 +187,9 @@ final class VisionPointingOverlay {
     /// carrying new information — where the answer says to look — and the
     /// gesture's own mark has said everything it had to say by then.
     func showAnswerFrame(_ frame: CGRect) {
-        canvas?.wash?.mark = nil
+        canvas?.wash?.markShape = .frame(frame)
         canvas?.wash?.stroke = nil
         canvas?.wash?.hitFrame = frame
-        canvas?.wash?.pulse(around: frame)
         // The bubble follows the frame: from here on the words sit beside the
         // element they are about, which is not always the one under the click.
         frameAnchor = frame
@@ -355,7 +352,52 @@ private final class PointingCanvas: NSView {
 /// that swallowed clicks here would make the point of the whole surface — that a
 /// click is a question — depend on which subview happened to be on top.
 private final class WashView: NSView {
-    var mark: CGPoint? { didSet { needsDisplay = true } }
+    /// The one thing that says "this one".
+    ///
+    /// A ring at a point until the element is measured, then the element's own
+    /// frame — two shapes of the same object, so they are one type with one
+    /// drawing. They used to be two: a hand-drawn ring with a 3pt line and a
+    /// target cross, and a layer-drawn frame with a 2.5pt line and a beat. Two
+    /// marks that mean the same thing and do not look alike read as two
+    /// different features, and the cross in the middle claimed a precision the
+    /// mark does not have — the click is not a crosshair, it is a place.
+    enum MarkShape {
+        case ring(CGPoint)
+        case frame(CGRect)
+
+        /// The stroked outline, and — as `spread` grows — what a beat radiates
+        /// out to. Radiating a fixed distance rather than scaling: a frame can
+        /// be a button or an 800-point toolbar, and doubling the second one
+        /// throws a ring across half the screen.
+        func path(spread: CGFloat) -> NSBezierPath {
+            switch self {
+            case .ring(let centre):
+                let radius = WashView.ringRadius + spread
+                return NSBezierPath(ovalIn: CGRect(
+                    x: centre.x - radius, y: centre.y - radius,
+                    width: radius * 2, height: radius * 2
+                ))
+            case .frame(let rect):
+                return NSBezierPath(
+                    roundedRect: rect.insetBy(dx: -4 - spread, dy: -4 - spread),
+                    xRadius: 8 + spread,
+                    yRadius: 8 + spread
+                )
+            }
+        }
+    }
+
+    /// The ring's radius, which is also what the bubble's placement has to clear.
+    static let ringRadius: CGFloat = 22
+    /// The line every mark is drawn with, and the dark halo under it. Iris
+    /// nearly vanishes on a blue app, and a second colour would promise a
+    /// second meaning.
+    private static let markLineWidth: CGFloat = 2.5
+    private static let markHaloWidth: CGFloat = 6
+    /// How far a beat travels before it is gone.
+    private static let markBeatSpread: CGFloat = 14
+
+    var markShape: MarkShape? { didSet { renderMark() } }
     /// The line the user drew, in this view's coordinates.
     var stroke: [CGPoint]? { didSet { needsDisplay = true } }
     var hitFrame: CGRect? { didSet { needsDisplay = true } }
@@ -408,42 +450,38 @@ private final class WashView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    private var pulseLayer: CALayer?
+    private var markLayer: CALayer?
 
-    /// The beat on the answer's frame.
+    /// Draws whichever mark is current: dark halo, iris outline, and a beat
+    /// radiating out of it.
     ///
-    /// Radiating a fixed distance outward rather than scaling: a frame can be a
-    /// button or an 800-point toolbar, and doubling the second one throws a ring
-    /// across half the screen. The web client hit this and switched to a spread
-    /// for exactly that reason.
+    /// One implementation for the ring and the frame, because they are the same
+    /// statement — "this one" — and a user who sees them side by side across two
+    /// gestures should not be able to tell that two pieces of code drew them.
     ///
     /// A rest between beats is what makes it a beat. A pulse with no gap is a
     /// waiting spinner, which would say something about processing rather than
     /// about a place. Held still under Reduce Motion.
-    func pulse(around rect: CGRect?) {
-        pulseLayer?.removeFromSuperlayer()
-        pulseLayer = nil
-        guard let rect, let host = layer else { return }
+    private func renderMark() {
+        // One container so a new mark replaces the old one whole; loose
+        // sublayers are how a stale ring outlives the gesture it belonged to.
+        markLayer?.removeFromSuperlayer()
+        markLayer = nil
+        guard let markShape, let host = layer else { return }
 
-        // One container so a new beat replaces the old one whole; two loose
-        // sublayers is how a stale ring outlives the frame it belonged to.
         let container = CALayer()
         host.addSublayer(container)
-        pulseLayer = container
+        markLayer = container
 
-        let inner = NSBezierPath(roundedRect: rect.insetBy(dx: -4, dy: -4), xRadius: 8, yRadius: 8)
-        let shape = CAShapeLayer()
-        shape.path = inner.cgPath
-        shape.fillColor = nil
-        shape.strokeColor = Self.iris.cgColor
-        shape.lineWidth = 2.5
-        container.addSublayer(shape)
+        let outline = markShape.path(spread: 0)
+        container.addSublayer(Self.stroked(outline, NSColor.black.withAlphaComponent(0.45), Self.markHaloWidth))
+        container.addSublayer(Self.stroked(outline, Self.iris, Self.markLineWidth))
 
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
 
-        let outer = NSBezierPath(roundedRect: rect.insetBy(dx: -18, dy: -18), xRadius: 20, yRadius: 20)
+        let spread = markShape.path(spread: Self.markBeatSpread)
         let grow = CAKeyframeAnimation(keyPath: "path")
-        grow.values = [inner.cgPath, outer.cgPath, outer.cgPath]
+        grow.values = [outline.cgPath, spread.cgPath, spread.cgPath]
         grow.keyTimes = [0, 0.58, 1]
         let fade = CAKeyframeAnimation(keyPath: "opacity")
         fade.values = [0.61, 0, 0]
@@ -454,21 +492,29 @@ private final class WashView: NSView {
         group.repeatCount = .infinity
         group.timingFunction = CAMediaTimingFunction(name: .easeOut)
 
-        let halo = CAShapeLayer()
-        halo.path = inner.cgPath
-        halo.fillColor = nil
-        halo.strokeColor = Self.iris.cgColor
-        halo.lineWidth = 2.5
-        halo.add(group, forKey: "beat")
-        container.addSublayer(halo)
+        let beat = Self.stroked(outline, Self.iris, Self.markLineWidth)
+        beat.add(group, forKey: "beat")
+        container.addSublayer(beat)
+    }
+
+    private static func stroked(
+        _ path: NSBezierPath,
+        _ color: NSColor,
+        _ width: CGFloat
+    ) -> CAShapeLayer {
+        let layer = CAShapeLayer()
+        layer.path = path.cgPath
+        layer.fillColor = nil
+        layer.strokeColor = color.cgColor
+        layer.lineWidth = width
+        return layer
     }
 
     override func draw(_ dirtyRect: NSRect) {
         drawWash()
-        // The frame itself is a layer, not a drawing: it beats, and a beat drawn
+        // The mark itself is a layer, not a drawing: it beats, and a beat drawn
         // by hand would repaint the whole wash and its lattice thirty times a
         // second to move one ring.
-        if let mark { draw(mark: mark) }
         if let stroke, stroke.count > 1 { draw(stroke: stroke) }
     }
 
@@ -548,40 +594,4 @@ private final class WashView: NSView {
 
     /// A ring with a crosshair, never a filled dot: what was pointed at has to
     /// stay visible, or the mark hides the answer's subject.
-    private func draw(mark point: CGPoint) {
-        let radius: CGFloat = 22
-        let tick = radius * 0.4
-        // A dark halo rather than a second colour: iris nearly vanishes on a
-        // blue app, and adding a colour would promise a second meaning.
-        for (color, width) in [
-            (NSColor.black.withAlphaComponent(0.45), CGFloat(6)),
-            (Self.iris, CGFloat(3)),
-        ] {
-            color.setStroke()
-            let circle = NSBezierPath(ovalIn: CGRect(
-                x: point.x - radius, y: point.y - radius,
-                width: radius * 2, height: radius * 2
-            ))
-            circle.lineWidth = width
-            circle.stroke()
-
-            let cross = NSBezierPath()
-            cross.move(to: CGPoint(x: point.x - tick, y: point.y))
-            cross.line(to: CGPoint(x: point.x + tick, y: point.y))
-            cross.move(to: CGPoint(x: point.x, y: point.y - tick))
-            cross.line(to: CGPoint(x: point.x, y: point.y + tick))
-            cross.lineWidth = width
-            cross.stroke()
-        }
-    }
-
-    private func draw(frame rect: CGRect) {
-        let path = NSBezierPath(roundedRect: rect.insetBy(dx: -4, dy: -4), xRadius: 8, yRadius: 8)
-        NSColor.black.withAlphaComponent(0.45).setStroke()
-        path.lineWidth = 6
-        path.stroke()
-        Self.iris.setStroke()
-        path.lineWidth = 2.5
-        path.stroke()
-    }
 }
