@@ -25,6 +25,12 @@ struct VisionSelectionContext: Equatable {
     enum Acquisition: String, Equatable {
         case axDocumentSelection = "ax_document_selection"
         case axSelectedText = "ax_selected_text"
+        /// Swept on the pointing overlay: the range was resolved from the
+        /// pointer through the accessibility text APIs while the application's
+        /// own selection state stayed untouched. Its own value because calling
+        /// it `ax_selected_text` would claim the application had a selection
+        /// it never had.
+        case axRangeAtPointer = "ax_range_at_pointer"
     }
 
     enum CaptureVisibility: String, Equatable {
