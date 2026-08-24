@@ -400,6 +400,40 @@ struct GatewayVisionClient {
         let width = outgoing.pixelsWide
         let height = outgoing.pixelsHigh
 
+        // Whether the mark actually reached the image, and where the app thought
+        // the user pointed.
+        //
+        // A failed burn falls through to the unmarked image on purpose — the
+        // coordinates still travel and the Gateway's prompt can still use them,
+        // so the answer degrades instead of disappearing. But degrading silently
+        // is how "the answer lands somewhere else entirely" becomes
+        // unattributable: sending numbers with no mark is exactly the condition
+        // the web client measured when a tap on a centre button was answered
+        // with the close button in the corner. If that is what is happening
+        // here, this line says so; if the mark is present, the fault is
+        // downstream and this line rules the client out.
+        //
+        // The position is geometry, not content: a fraction of the picture,
+        // which is what the model was told and therefore what has to be
+        // checkable against where the answer landed.
+        if let pointer {
+            var details: [(StaticString, DiagnosticValue)] = [
+                ("burned", .flag(marked != nil)),
+                ("width", .count(width)),
+                ("height", .count(height)),
+            ]
+            switch pointer.kind {
+            case .point(let point):
+                details.append(("xPerMille", .count(Int((point.x * 1000).rounded()))))
+                details.append(("yPerMille", .count(Int((point.y * 1000).rounded()))))
+            case .region(let region):
+                details.append(("xPerMille", .count(Int((region.midX * 1000).rounded()))))
+                details.append(("yPerMille", .count(Int((region.midY * 1000).rounded()))))
+                details.append(("region", .flag(true)))
+            }
+            Diagnostics.record("vision.mark", details: details)
+        }
+
         // Passing the original bytes through is only honest when nothing was
         // drawn on them. A failed burn falls through to the unmarked image
         // rather than failing the turn — the Gateway's prompt still has the
