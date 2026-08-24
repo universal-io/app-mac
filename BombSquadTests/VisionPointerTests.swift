@@ -277,6 +277,26 @@ final class VisionPointerTests: XCTestCase {
         XCTAssertEqual(payload.keys.sorted(), ["kind", "region"])
     }
 
+    /// The mark says where; the hit id says what the OS measured there. It
+    /// names an entry in the candidates list that travels with the same
+    /// request, so the Gateway can pin the model to the element under the mark
+    /// rather than a lookalike elsewhere (2026-08-24: GitLab's two "+" buttons
+    /// traded places while the burned mark sat exactly on the clicked one).
+    func testTheMeasuredHitTravelsInsideThePointer() throws {
+        let payload = VisionPointer(
+            kind: .point(CGPoint(x: 0.87, y: 0.16)),
+            hitCandidateID: "ax:7"
+        ).wirePayload
+        XCTAssertEqual(payload["hit_candidate_id"] as? String, "ax:7")
+    }
+
+    /// No hit is not an empty hit: the key must be absent so the Gateway's
+    /// validator never sees an empty string where an id was promised.
+    func testWithoutAHitThePointerCarriesNoHitKey() throws {
+        let payload = VisionPointer(kind: .point(CGPoint(x: 0.5, y: 0.5))).wirePayload
+        XCTAssertEqual(payload.keys.sorted(), ["kind", "point"])
+    }
+
     // MARK: - Helpers
 
     private func candidate(id: String, rect: CGRect) -> VisionObservation.Candidate {

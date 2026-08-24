@@ -1157,7 +1157,13 @@ final class SessionCoordinator {
                     )
                 }
                 session.point(
-                    pointer: VisionPointer(kind: .point(normalized)),
+                    // The hit travels inside the pointer: the Gateway tells the
+                    // model which candidate the OS measured under the mark, so
+                    // two similar-looking controls cannot trade places.
+                    pointer: VisionPointer(
+                        kind: .point(normalized),
+                        hitCandidateID: hit?.id
+                    ),
                     capture: capture,
                     candidates: snapshot.axCandidates,
                     diagnostics: snapshot.diagnostics,

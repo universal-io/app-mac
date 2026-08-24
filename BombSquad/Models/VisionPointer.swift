@@ -30,20 +30,34 @@ struct VisionPointer: Equatable {
     /// the same normalized space as `kind`.
     let stroke: [CGPoint]?
 
-    init(kind: Kind, stroke: [CGPoint]? = nil) {
+    /// The candidate accessibility measured at the pointed spot, when there
+    /// was one — the smallest candidate rectangle containing the point.
+    ///
+    /// The mark says where the user pointed; this says what the OS found
+    /// there. Without it the model matches the mark against the picture alone
+    /// and can settle on a semantically similar control elsewhere: on
+    /// 2026-08-24 a click on GitLab's toolbar "+" was answered with the
+    /// repository "+" while the burned mark sat exactly on the clicked
+    /// element. An id, not a role or label, because the candidate list already
+    /// travels with every request and the Gateway joins the two.
+    let hitCandidateID: String?
+
+    init(kind: Kind, stroke: [CGPoint]? = nil, hitCandidateID: String? = nil) {
         self.kind = kind
         self.stroke = stroke
+        self.hitCandidateID = hitCandidateID
     }
 
     var wirePayload: [String: Any] {
+        var payload: [String: Any]
         switch kind {
         case .point(let point):
-            return [
+            payload = [
                 "kind": "point",
                 "point": ["x": Double(point.x), "y": Double(point.y)],
             ]
         case .region(let rect):
-            return [
+            payload = [
                 "kind": "region",
                 "region": [
                     "x": Double(rect.minX),
@@ -53,6 +67,10 @@ struct VisionPointer: Equatable {
                 ],
             ]
         }
+        if let hitCandidateID {
+            payload["hit_candidate_id"] = hitCandidateID
+        }
+        return payload
     }
 }
 
