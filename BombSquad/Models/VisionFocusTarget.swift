@@ -123,8 +123,8 @@ struct VisionSelectionContext: Equatable {
     }
 
     /// Selection frames clipped to the captured image and normalized to the
-    /// preview's top-left 0...1 coordinate space. Each frame stays separate;
-    /// the UI must not replace multiple selected regions with one union box.
+    /// capture's top-left 0...1 coordinate space. Each frame stays separate;
+    /// nothing may replace multiple selected regions with one union box.
     func visibleNormalizedFrames(in attachment: ScreenshotAttachment) -> [CGRect] {
         guard let captureRect = attachment.captureRect,
               captureRect.width > 0,
@@ -142,31 +142,6 @@ struct VisionSelectionContext: Equatable {
                 width: visible.width / captureRect.width,
                 height: visible.height / captureRect.height
             )
-        }
-    }
-}
-
-/// User-facing selection presentation derived without changing the Vision
-/// request. Text selections always show the selected text itself; supporting
-/// structure labels can name an explicitly selected UI element, but can never
-/// replace text selection content.
-struct VisionSelectionPresentation: Equatable {
-    let title: String
-    let bodyText: String?
-    let positionText: String?
-    let visibleFrames: [CGRect]
-
-    init(selection: VisionSelectionContext, attachment: ScreenshotAttachment) {
-        visibleFrames = selection.visibleNormalizedFrames(in: attachment)
-        title = "選択した内容"
-        bodyText = selection.text
-
-        if !visibleFrames.isEmpty {
-            positionText = "\(visibleFrames.count)か所の選択位置を表示中"
-        } else if selection.captureVisibility == .offCapture {
-            positionText = "選択位置はこのスクリーンショットの範囲外です"
-        } else {
-            positionText = "スクリーンショット上の位置は取得できませんでした"
         }
     }
 }

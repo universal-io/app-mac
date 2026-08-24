@@ -349,7 +349,7 @@ final class VisionSelectionContextTests: XCTestCase {
         )
     }
 
-    func testTextSelectionPresentationShowsFullTextAndEveryVisibleFrame() {
+    func testTextSelectionKeepsItsFullTextAndOnlyTheFramesTheCaptureHolds() {
         let selection = VisionSelectionContext(
             kind: .text,
             text: "件名と、ユーザーが明示的に選択した本文全体",
@@ -376,19 +376,13 @@ final class VisionSelectionContextTests: XCTestCase {
             captureVisibility: .partial
         )
 
-        let presentation = VisionSelectionPresentation(
-            selection: selection,
-            attachment: attachment()
-        )
-
-        XCTAssertEqual(presentation.title, "選択した内容")
-        XCTAssertEqual(presentation.bodyText, selection.text)
-        XCTAssertNotEqual(presentation.bodyText, "短い件名")
-        XCTAssertEqual(presentation.visibleFrames.count, 2)
-        XCTAssertEqual(presentation.positionText, "2か所の選択位置を表示中")
+        // The full text stays the subject, and only the frames the capture
+        // actually contains are visible ones.
+        XCTAssertNotEqual(selection.text, "短い件名")
+        XCTAssertEqual(selection.visibleNormalizedFrames(in: attachment()).count, 2)
     }
 
-    func testOffCapturePresentationDoesNotClaimAVisiblePosition() {
+    func testASelectionOutsideTheCaptureHasNoVisibleFrames() {
         let selection = VisionSelectionContext(
             kind: .text,
             text: "画面外の選択",
@@ -398,16 +392,7 @@ final class VisionSelectionContextTests: XCTestCase {
             acquisition: .axSelectedText,
             captureVisibility: .offCapture
         )
-        let presentation = VisionSelectionPresentation(
-            selection: selection,
-            attachment: attachment()
-        )
-
-        XCTAssertTrue(presentation.visibleFrames.isEmpty)
-        XCTAssertEqual(
-            presentation.positionText,
-            "選択位置はこのスクリーンショットの範囲外です"
-        )
+        XCTAssertTrue(selection.visibleNormalizedFrames(in: attachment()).isEmpty)
     }
 
     private func selectionCandidate(
