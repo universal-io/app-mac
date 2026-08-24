@@ -14,20 +14,6 @@ enum CopilotState: Equatable {
     case stepLimit
 }
 
-/// Where the panel's screenshot stands. Three states rather than an optional,
-/// because "not yet" and "never" must look different to the user: an empty box
-/// with no explanation is the symptom this project exists to remove.
-enum ScreenshotImageState {
-    case loading
-    case ready(NSImage)
-    case failed
-
-    var image: NSImage? {
-        if case .ready(let image) = self { return image }
-        return nil
-    }
-}
-
 struct VisionDisplayTurn: Identifiable, Equatable {
     let id = UUID()
     let role: VisionTurn.Role
@@ -42,7 +28,6 @@ final class VisionSession: ObservableObject {
     /// The screenshot as pixels, resolved by this session rather than by the
     /// view that draws it. `.failed` is a state the panel can explain; an image
     /// that silently never arrives is not (docs/reliability-hardening-plan.md D3).
-    @Published private(set) var screenshotImage: ScreenshotImageState = .loading
     @Published private(set) var turns: [VisionDisplayTurn] = []
     /// The answer being written, shown while it is still arriving. Nil once the
     /// validated result has taken its place in `turns`, so the panel never holds
@@ -80,7 +65,6 @@ final class VisionSession: ObservableObject {
     /// observation — the overlay draws on the real screen and has no view here.
     var onAnswerHighlight: ((CGRect?) -> Void)?
     @Published private(set) var selectedCandidate: VisionObservation.Candidate?
-    @Published private(set) var screenshotHighlight: CGRect?
     @Published private(set) var isCopilotActive = false
     @Published private(set) var copilotGoal: String?
     @Published private(set) var isCopilotChecking = false
@@ -125,7 +109,6 @@ final class VisionSession: ObservableObject {
     /// question was asked" are different facts, and on 2026-08-03 only the
     /// first was true.
     private(set) var hasIssuedRequest = false
-    private var screenshotImageTask: Task<Void, Never>?
     private var requestCancellation: CancellationLedger?
     private var copilotCancellation: CancellationLedger?
     private var visionTurnDeadline: Task<Void, Never>?
@@ -180,27 +163,8 @@ final class VisionSession: ObservableObject {
         // overlaps the transition and the panel setup instead of waiting for
         // the view to appear and then blocking the main thread on a 2560x1600
         // PNG.
-        resolveScreenshotImage()
     }
 
-    /// Reads the capture into memory. The only trigger is this session's own
-    /// lifecycle: creation, and adopting a new capture during copilot.
-    private func resolveScreenshotImage() {
-        let expected = attachment.id
-        let url = attachment.url
-        screenshotImageTask?.cancel()
-        screenshotImage = .loading
-        screenshotImageTask = Task { [weak self] in
-            let image = await Task.detached(priority: .userInitiated) {
-                NSImage(contentsOf: url)
-            }.value
-            guard let self, !Task.isCancelled, self.attachment.id == expected else { return }
-            self.screenshotImage = image.map { .ready($0) } ?? .failed
-            if image == nil {
-                Diagnostics.record("vision.screenshotUnreadable")
-            }
-        }
-    }
 
     var canSend: Bool {
         !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLoading
@@ -274,7 +238,6 @@ final class VisionSession: ObservableObject {
         pointer = nil
         pointedCandidate = nil
         selectedCandidate = nil
-        screenshotHighlight = nil
         publishAnswerHighlight(nil)
         isLoading = true
     }
@@ -309,7 +272,6 @@ final class VisionSession: ObservableObject {
         self.pointer = pointer
         pointedCandidate = hit
         selectedCandidate = nil
-        screenshotHighlight = nil
         publishAnswerHighlight(nil)
         turns = [VisionDisplayTurn(
             role: .user,
@@ -333,7 +295,6 @@ final class VisionSession: ObservableObject {
     ) {
         let previous = attachment
         attachment = capture
-        resolveScreenshotImage()
         self.candidates = candidates
         candidateDiagnostics = diagnostics
         candidatesReady = true
@@ -420,8 +381,6 @@ final class VisionSession: ObservableObject {
         copilotCancellation?.cause = .sessionTornDown
         copilotProgressTask?.cancel()
         copilotProgressTask = nil
-        screenshotImageTask?.cancel()
-        screenshotImageTask = nil
         clearStreamingText()
         visionTurnDeadline?.cancel()
         visionTurnDeadline = nil
@@ -911,8 +870,7 @@ final class VisionSession: ObservableObject {
                 }
             }
             attachment = newAttachment
-            resolveScreenshotImage()
-            candidates = snapshot.axCandidates
+                candidates = snapshot.axCandidates
             candidateDiagnostics = snapshot.diagnostics
             candidatesReady = true
             try apply(response, candidates: snapshot.axCandidates)
@@ -948,8 +906,7 @@ final class VisionSession: ObservableObject {
         } catch {
             if attachment.id == newAttachment.id {
                 attachment = previousAttachment
-                resolveScreenshotImage()
-                candidates = previousCandidates
+                        candidates = previousCandidates
                 candidateDiagnostics = previousDiagnostics
             }
             try? FileManager.default.removeItem(at: newAttachment.url)
@@ -982,7 +939,6 @@ final class VisionSession: ObservableObject {
            let candidate = fixedCandidates.first(where: { $0.id == targetID }),
            let rect = candidate.rect {
             selectedCandidate = candidate
-            screenshotHighlight = rect
             publishAnswerHighlight(rect)
             highlight = .resolved
             if isCopilotActive { showLiveHighlight() }
@@ -1001,13 +957,11 @@ final class VisionSession: ObservableObject {
             // the only way to mark body text, an image or a graph, none of which
             // accessibility offers as a candidate at all.
             selectedCandidate = nil
-            screenshotHighlight = box
             publishAnswerHighlight(box)
             highlight = .resolved
             if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
         } else {
             selectedCandidate = nil
-            screenshotHighlight = nil
             publishAnswerHighlight(nil)
             highlight = .none
             if isCopilotActive { HighlightOverlayPresenter.shared.hide() }

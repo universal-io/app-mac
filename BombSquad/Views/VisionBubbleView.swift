@@ -85,6 +85,7 @@ struct VisionBubbleView: View {
                     in: RoundedRectangle(cornerRadius: 10)
                 )
                 ask
+                startGuidance
             }
             .padding(12)
         }
@@ -108,10 +109,21 @@ struct VisionBubbleView: View {
     /// sentence.
     private var handle: some View {
         HStack(spacing: 8) {
-            if let skill = session.activeSkillName {
-                ActiveSkillLabel(
-                    skillName: skill,
-                    help: "この画面に「\(skill)」の知識を適用しています"
+            // Skill and processing info, the same pair Compose shows. The info
+            // button came from the panel that used to hold it: what model, what
+            // route, what the accessibility walk found and what was captured is
+            // how an operator tells a wrong answer from a broken pipeline, and
+            // the bubble is the only place the product speaks now.
+            PanelToolInfo(
+                toolName: session.activeSkillName,
+                toolHelp: session.activeSkillName.map {
+                    "この画面に「\($0)」の知識を適用しています"
+                } ?? "検出されたツールはありません",
+                informationHelp: "処理情報を表示",
+                informationAccessibilityLabel: "Visionの処理情報"
+            ) {
+                VisionDiagnosticsPopover(
+                    report: VisionDiagnosticsReport.text(for: session)
                 )
             }
             Spacer(minLength: 0)
@@ -156,6 +168,29 @@ struct VisionBubbleView: View {
             Text("画面のどこかをクリックすると、その場所について説明します。")
                 .font(.system(size: Self.answerFontSize))
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The way into guidance, which used to live in the static panel.
+    ///
+    /// It had to move here, and not as a tidy-up: the panel it was in is only
+    /// presented once guidance has already started, so from the moment pointing
+    /// replaced the panel this button was the only entrance to Copilot and
+    /// nothing could reach it. Starting guidance closes the overlay, because
+    /// being told "click this" is useless while a wash is swallowing clicks.
+    @ViewBuilder
+    private var startGuidance: some View {
+        if session.canStartCopilot {
+            Button {
+                session.startCopilot()
+            } label: {
+                Label("案内を開始", systemImage: "location.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .accessibilityLabel("この画面での操作案内を開始")
+            .accessibilityHint("同じ会話の内容を引き継いで操作案内を開始します")
         }
     }
 
