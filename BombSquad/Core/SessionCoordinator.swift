@@ -1044,6 +1044,9 @@ final class SessionCoordinator {
         pointingOverlay.onPoint = { [weak self] point in
             self?.point(at: point, session: session)
         }
+        pointingOverlay.onRegion = { [weak self] path in
+            self?.region(around: path, session: session)
+        }
         pointingOverlay.onClose = { [weak self] in
             self?.close(reason: .closeRequested)
         }
@@ -1168,6 +1171,90 @@ final class SessionCoordinator {
                     candidates: snapshot.axCandidates,
                     diagnostics: snapshot.diagnostics,
                     hit: hit
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                session.failPointing(UserFacingError.message(for: error))
+            }
+        }
+    }
+
+    /// A ring drawn on the covered screen, turned into a question about that
+    /// area.
+    ///
+    /// The same shape as `point(at:)` and deliberately not folded into it: the
+    /// two differ in what the answer is about — one element, or an area as a
+    /// whole — and every difference between them is in this method rather than
+    /// in branches threaded through one.
+    ///
+    /// No candidate is resolved. Accessibility measures elements, and a ring is
+    /// what somebody draws around things that are not one element; naming the
+    /// smallest candidate under some point of the path would answer about a
+    /// part of what they enclosed.
+    private func region(around screenLocalPath: [CGPoint], session: VisionSession) {
+        pointingOverlay.setRegion(path: screenLocalPath)
+        session.beginPointing()
+        pointingTask?.cancel()
+        let screenFrame = pointingOverlay.coveredScreenFrame
+        let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+        pointingTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let capture = try await self.screenshotCapture.captureMatchingScope(
+                    of: session.attachment
+                )
+                try Task.checkCancellation()
+                guard let captureRect = capture.captureRect else {
+                    try? FileManager.default.removeItem(at: capture.url)
+                    session.failPointing("画面のどこを指したか分からなくなりました。もう一度囲んでください。")
+                    return
+                }
+                // The same two conversions the tap uses, applied to every point
+                // of the path. A point that falls outside the captured display
+                // is dropped rather than clamped: pulling it to the edge would
+                // widen the enclosure to include something never enclosed.
+                let normalizedPath = screenLocalPath.compactMap { local in
+                    VisionPointerResolver.normalized(
+                        VisionPointerResolver.globalCGPoint(
+                            cocoaGlobal: CGPoint(
+                                x: local.x + screenFrame.minX,
+                                y: local.y + screenFrame.minY
+                            ),
+                            mainDisplayHeight: mainHeight
+                        ),
+                        within: captureRect
+                    )
+                }
+                guard let region = VisionPointerResolver.normalizedRegion(
+                    from: normalizedPath
+                ) else {
+                    try? FileManager.default.removeItem(at: capture.url)
+                    session.failPointing("この画面は読み取り対象に入っていません。もう一度呼び出してください。")
+                    return
+                }
+                let snapshot = await VisionObservationCaptureService.captureTask(
+                    preferredPID: self.summonTargetApp?.processIdentifier,
+                    attachment: capture
+                ).value
+                try Task.checkCancellation()
+                // How much of the drawn path survived the conversion, so a ring
+                // that ran off the captured display is separable from one the
+                // model simply read differently.
+                Diagnostics.record("vision.region", details: [
+                    ("drawn", .count(screenLocalPath.count)),
+                    ("kept", .count(normalizedPath.count)),
+                    ("candidates", .count(snapshot.axCandidates.count)),
+                ])
+                session.point(
+                    // The path travels for the burn only — the contract carries
+                    // the rectangle — so the model sees the ring the user drew
+                    // rather than the box around it.
+                    pointer: VisionPointer(kind: .region(region), stroke: normalizedPath),
+                    capture: capture,
+                    candidates: snapshot.axCandidates,
+                    diagnostics: snapshot.diagnostics,
+                    hit: nil
                 )
             } catch is CancellationError {
                 return

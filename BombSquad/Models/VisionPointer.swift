@@ -74,6 +74,19 @@ struct VisionPointer: Equatable {
     }
 }
 
+/// What one finished hand gesture meant.
+///
+/// A press that stayed put is a tap; one that travelled is an enclosure. The
+/// two are told apart by geometry alone — never by whether the shape looks
+/// deliberate. Dragging straight across a line of text is a legitimate way to
+/// say "this line", so a straightness test would reject the gesture people
+/// actually make (`app-web/docs/solo-mode.md` §1).
+enum VisionGesture: Equatable {
+    case point(CGPoint)
+    /// The path as drawn, in the order it was drawn.
+    case region([CGPoint])
+}
+
 /// Turns a mouse location into a pointer, and a pointer into the element it
 /// landed on.
 ///
@@ -178,5 +191,71 @@ enum VisionPointerResolver {
     private static func area(of candidate: VisionObservation.Candidate) -> CGFloat {
         guard let rect = candidate.rect else { return .greatestFiniteMagnitude }
         return rect.width * rect.height
+    }
+
+    // MARK: - Gestures
+
+    /// How far the hand has to travel before a click becomes an enclosure.
+    ///
+    /// Screen points, so it means the same distance on any display. Measured
+    /// across the path's own bounds rather than from where the press began: a
+    /// ring comes back near its start, and asking "how far is the cursor from
+    /// the start" would call a completed circle a click.
+    static let enclosureThreshold: CGFloat = 8
+
+    /// What a finished path meant. Nil for an empty path.
+    static func gesture(from path: [CGPoint]) -> VisionGesture? {
+        guard let first = path.first else { return nil }
+        let box = bounds(of: path)
+        guard max(box.width, box.height) >= enclosureThreshold else {
+            return .point(first)
+        }
+        return .region(path)
+    }
+
+    static func bounds(of path: [CGPoint]) -> CGRect {
+        guard let first = path.first else { return .zero }
+        var minX = first.x, maxX = first.x, minY = first.y, maxY = first.y
+        for point in path.dropFirst() {
+            minX = min(minX, point.x)
+            maxX = max(maxX, point.x)
+            minY = min(minY, point.y)
+            maxY = max(maxY, point.y)
+        }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    /// The enclosed area, as the wire contract requires it: inside the unit
+    /// square with both sides greater than zero.
+    ///
+    /// A drag straight across a line of text — the gesture that says "this
+    /// line" — encloses a rectangle zero points tall, and the Gateway rejects a
+    /// zero-area region as a click that dragged nowhere. That is the right rule
+    /// for a stray event and the wrong answer for a deliberate stroke, so the
+    /// degenerate axis is opened to a floor around its own centre instead. The
+    /// burned mark is the path itself, so this rectangle only has to state
+    /// which part of the picture the question is about.
+    static func normalizedRegion(from path: [CGPoint]) -> CGRect? {
+        guard path.count > 1 else { return nil }
+        // A thousandth of the image is invisible in the mark and enough to be
+        // an area rather than a line.
+        let floorExtent: CGFloat = 0.004
+        var rect = bounds(of: path)
+        if rect.width < floorExtent {
+            rect.origin.x = rect.midX - floorExtent / 2
+            rect.size.width = floorExtent
+        }
+        if rect.height < floorExtent {
+            rect.origin.y = rect.midY - floorExtent / 2
+            rect.size.height = floorExtent
+        }
+        // Widening can push a stroke drawn at the very edge outside the image.
+        rect.origin.x = min(max(rect.minX, 0), 1 - rect.width)
+        rect.origin.y = min(max(rect.minY, 0), 1 - rect.height)
+        guard rect.minX >= 0, rect.minY >= 0,
+              rect.maxX <= 1, rect.maxY <= 1,
+              rect.width > 0, rect.height > 0
+        else { return nil }
+        return rect
     }
 }

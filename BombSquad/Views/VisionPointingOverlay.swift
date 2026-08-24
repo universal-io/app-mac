@@ -20,6 +20,10 @@ final class VisionPointingOverlay {
     /// Where the user pointed, in the covered screen's own coordinates
     /// (Cocoa, bottom-left origin).
     var onPoint: ((CGPoint) -> Void)?
+    /// The path the user drew around something, same coordinates. A ring around
+    /// several things is how somebody asks about a group they have no name for,
+    /// so it arrives as its own gesture rather than as a click at its centre.
+    var onRegion: (([CGPoint]) -> Void)?
     /// Esc, or any other request to leave pointing.
     var onClose: (() -> Void)?
 
@@ -31,12 +35,16 @@ final class VisionPointingOverlay {
     /// answer's own frame is up the mark retracts, but the bubble keeps a place
     /// on the picture rather than retreating to the corner.
     private var anchor: CGPoint?
-    /// The frame the answer pointed at, once there is one. From that moment it
-    /// is what the bubble anchors to: the words and the frame are one claim
-    /// about one element, and showing them in two places — the frame on the
-    /// answer's subject, the words beside the click — reads as the product
-    /// disagreeing with itself.
-    private var answerAnchorFrame: CGRect?
+    /// A rectangle the bubble sits beside rather than a point it sits below.
+    ///
+    /// Two things claim it. The frame the answer pointed at: the words and the
+    /// frame are one claim about one element, and showing them in two places —
+    /// the frame on the answer's subject, the words beside the click — reads as
+    /// the product disagreeing with itself. And the area the user enclosed: a
+    /// bubble placed against the middle of a ring covers what the ring was
+    /// drawn around, so it goes outside the edge (`app-web/docs/pointing.md`
+    /// §2.2).
+    private var frameAnchor: CGRect?
     /// Kept so the bubble can be re-placed when its own size changes.
     private var placedSize: CGSize = .zero
     private var reflow: Timer?
@@ -56,7 +64,19 @@ final class VisionPointingOverlay {
         let canvas = PointingCanvas(
             frame: NSRect(origin: .zero, size: screen.frame.size)
         )
-        canvas.onPoint = { [weak self] point in self?.onPoint?(point) }
+        // The canvas reports the path it collected; what that path meant is
+        // geometry, decided in one place beside the other conversions.
+        canvas.onPath = { [weak self] path in
+            guard let self else { return }
+            switch VisionPointerResolver.gesture(from: path) {
+            case .point(let point): onPoint?(point)
+            case .region(let drawn): onRegion?(drawn)
+            case nil: break
+            }
+        }
+        // Drawn while the hand is still moving, so the line appears under the
+        // cursor rather than after the gesture ends.
+        canvas.onPathChanged = { [weak self] path in self?.showStroke(path) }
         canvas.onClose = { [weak self] in self?.onClose?() }
 
         // Two siblings rather than "paint the wash, then add a subview": the
@@ -114,8 +134,10 @@ final class VisionPointingOverlay {
     func setMark(point: CGPoint?, frame: CGRect?) {
         anchor = point
         // A new gesture starts a new subject: whatever the previous answer
-        // pointed at no longer decides where this answer appears.
-        answerAnchorFrame = nil
+        // pointed at no longer decides where this answer appears, and a line
+        // drawn for the previous question is not part of this one.
+        frameAnchor = nil
+        canvas?.wash?.stroke = nil
         canvas?.wash?.mark = Self.drawnMark(point: point, frame: frame)
         canvas?.wash?.hitFrame = frame
         canvas?.wash?.pulse(around: frame)
@@ -130,6 +152,36 @@ final class VisionPointingOverlay {
         frame == nil ? point : nil
     }
 
+    /// The line as it is being drawn.
+    ///
+    /// Always drawn, even while a previous answer's frame is still up: the line
+    /// is the *next* question, not the leftovers of the last one
+    /// (`app-web/docs/pointing.md` §3). The frame it replaces belonged to an
+    /// answer about somewhere else.
+    func showStroke(_ path: [CGPoint]) {
+        canvas?.wash?.mark = nil
+        canvas?.wash?.stroke = path
+        canvas?.wash?.hitFrame = nil
+        canvas?.wash?.pulse(around: nil)
+    }
+
+    /// The finished enclosure stays on screen: it is the only thing saying what
+    /// the question was about, and unlike a tap it cannot be re-stated by a
+    /// measured frame — accessibility measures elements, and a ring is drawn
+    /// around whatever the user could not name.
+    ///
+    /// The bubble goes outside its edge rather than beside its centre, so it
+    /// cannot cover the thing the ring was drawn around.
+    func setRegion(path: [CGPoint]) {
+        anchor = nil
+        frameAnchor = VisionPointerResolver.bounds(of: path)
+        canvas?.wash?.mark = nil
+        canvas?.wash?.stroke = path
+        canvas?.wash?.hitFrame = nil
+        canvas?.wash?.pulse(around: nil)
+        placeBubble()
+    }
+
     /// The answer has pointed at something, so the user's own mark steps back.
     ///
     /// Two marks in almost the same place stop reading as two marks: the web
@@ -138,17 +190,18 @@ final class VisionPointingOverlay {
     /// gesture's own mark has said everything it had to say by then.
     func showAnswerFrame(_ frame: CGRect) {
         canvas?.wash?.mark = nil
+        canvas?.wash?.stroke = nil
         canvas?.wash?.hitFrame = frame
         canvas?.wash?.pulse(around: frame)
         // The bubble follows the frame: from here on the words sit beside the
         // element they are about, which is not always the one under the click.
-        answerAnchorFrame = frame
+        frameAnchor = frame
         placeBubble()
     }
 
     func close() {
         anchor = nil
-        answerAnchorFrame = nil
+        frameAnchor = nil
         reflow?.invalidate()
         reflow = nil
         panel?.orderOut(nil)
@@ -202,9 +255,9 @@ final class VisionPointingOverlay {
             height: visible.height
         )
         let origin: CGPoint
-        if let answerAnchorFrame {
+        if let frameAnchor {
             origin = VisionBubblePlacement.origin(
-                besideFrame: answerAnchorFrame,
+                besideFrame: frameAnchor,
                 size: size,
                 in: bounds
             )
@@ -226,9 +279,16 @@ final class VisionPointingOverlay {
 /// middle of the picture covers the place they are trying to look at, which the
 /// web client established the hard way.
 private final class PointingCanvas: NSView {
-    var onPoint: ((CGPoint) -> Void)?
+    /// The finished path, from the press to the release. One point when the
+    /// hand stayed put — what it meant is not decided here.
+    var onPath: (([CGPoint]) -> Void)?
+    /// The same path while it is still being drawn.
+    var onPathChanged: (([CGPoint]) -> Void)?
     var onClose: (() -> Void)?
     weak var wash: WashView?
+
+    /// Collected in the covered screen's coordinates, in the order drawn.
+    private var path: [CGPoint] = []
 
     override var acceptsFirstResponder: Bool { true }
     /// Without this the first click on a window whose app is not active is spent
@@ -243,8 +303,35 @@ private final class PointingCanvas: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// The question is asked on release, not on the press.
+    ///
+    /// A press that turns into a stroke is one gesture about one place, so
+    /// firing at the press would spend a request on the point where a ring
+    /// happened to start — and every request costs the user a unit. The mark
+    /// still appears at once: the ring is drawn here, before anything is asked,
+    /// so a screen that does nothing never reads as a click that missed.
     override func mouseDown(with event: NSEvent) {
-        onPoint?(convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        path = [point]
+        wash?.stroke = nil
+        wash?.mark = point
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !path.isEmpty else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        path.append(point)
+        // The spotlight follows the hand while it draws; without this it stays
+        // where the press began and the line is drawn in the dark.
+        wash?.cursor = point
+        onPathChanged?(path)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard !path.isEmpty else { return }
+        let finished = path
+        path = []
+        onPath?(finished)
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -268,6 +355,8 @@ private final class PointingCanvas: NSView {
 /// click is a question — depend on which subview happened to be on top.
 private final class WashView: NSView {
     var mark: CGPoint? { didSet { needsDisplay = true } }
+    /// The line the user drew, in this view's coordinates.
+    var stroke: [CGPoint]? { didSet { needsDisplay = true } }
     var hitFrame: CGRect? { didSet { needsDisplay = true } }
     var cursor: CGPoint? { didSet { needsDisplay = true } }
 
@@ -379,6 +468,28 @@ private final class WashView: NSView {
         // by hand would repaint the whole wash and its lattice thirty times a
         // second to move one ring.
         if let mark { draw(mark: mark) }
+        if let stroke, stroke.count > 1 { draw(stroke: stroke) }
+    }
+
+    /// The line as drawn, left open.
+    ///
+    /// Closing it on screen would show the user a shape they did not draw. The
+    /// burn closes it for the model, which needs to read an enclosure rather
+    /// than follow a hand — same split the web client makes.
+    private func draw(stroke points: [CGPoint]) {
+        for (color, width) in [
+            (NSColor.black.withAlphaComponent(0.45), CGFloat(6)),
+            (Self.iris, CGFloat(3)),
+        ] {
+            color.setStroke()
+            let path = NSBezierPath()
+            path.lineJoinStyle = .round
+            path.lineCapStyle = .round
+            path.move(to: points[0])
+            for point in points.dropFirst() { path.line(to: point) }
+            path.lineWidth = width
+            path.stroke()
+        }
     }
 
     /// The wash, with a soft hole around the cursor.

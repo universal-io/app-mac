@@ -194,6 +194,91 @@ final class VisionPointerTests: XCTestCase {
         )
     }
 
+    // MARK: - Gestures
+
+    func testAPressThatStayedPutIsATap() throws {
+        let gesture = VisionPointerResolver.gesture(from: [
+            CGPoint(x: 400, y: 700),
+            CGPoint(x: 402, y: 703),
+            CGPoint(x: 401, y: 701),
+        ])
+        XCTAssertEqual(gesture, .point(CGPoint(x: 400, y: 700)))
+    }
+
+    /// A ring ends near where it began, so distance from the start would call a
+    /// finished circle a click. The path's own bounds are what separates them.
+    func testACircleBackToItsStartIsStillAnEnclosure() throws {
+        let radius: CGFloat = 40
+        let centre = CGPoint(x: 500, y: 500)
+        let circle = (0...36).map { step -> CGPoint in
+            let angle = CGFloat(step) * .pi / 18
+            return CGPoint(
+                x: centre.x + cos(angle) * radius,
+                y: centre.y + sin(angle) * radius
+            )
+        }
+        guard case .region(let path) = VisionPointerResolver.gesture(from: circle) else {
+            return XCTFail("a drawn circle was read as a tap")
+        }
+        XCTAssertEqual(path.count, circle.count)
+    }
+
+    /// Dragging along a line of text is how somebody says "this line". Judging
+    /// intent by whether the shape looks deliberate would reject it.
+    func testAStraightDragIsAnEnclosureNotAStrayClick() throws {
+        let gesture = VisionPointerResolver.gesture(from: [
+            CGPoint(x: 300, y: 500),
+            CGPoint(x: 380, y: 500),
+            CGPoint(x: 460, y: 500),
+        ])
+        guard case .region = gesture else {
+            return XCTFail("a deliberate horizontal stroke was read as a tap")
+        }
+    }
+
+    func testAnEmptyPathMeansNothing() {
+        XCTAssertNil(VisionPointerResolver.gesture(from: []))
+    }
+
+    /// The Gateway rejects a zero-area region as a click that dragged nowhere —
+    /// right for a stray event, wrong for the stroke that says "this line". The
+    /// degenerate axis opens around its own centre instead.
+    func testAFlatStrokeBecomesARegionTheGatewayAccepts() throws {
+        let region = try XCTUnwrap(VisionPointerResolver.normalizedRegion(from: [
+            CGPoint(x: 0.20, y: 0.50),
+            CGPoint(x: 0.60, y: 0.50),
+        ]))
+        XCTAssertGreaterThan(region.height, 0)
+        XCTAssertEqual(region.midY, 0.50, accuracy: 0.0001)
+        XCTAssertEqual(region.minX, 0.20, accuracy: 0.0001)
+        XCTAssertEqual(region.width, 0.40, accuracy: 0.0001)
+        XCTAssertTrue(CGRect(x: 0, y: 0, width: 1, height: 1).contains(region))
+    }
+
+    /// Opening a flat stroke drawn along the very edge must not push the
+    /// rectangle outside the image, which the contract refuses.
+    func testAStrokeAlongTheEdgeStaysInsideTheImage() throws {
+        for y in [CGFloat(0), CGFloat(1)] {
+            let region = try XCTUnwrap(VisionPointerResolver.normalizedRegion(from: [
+                CGPoint(x: 0.1, y: y),
+                CGPoint(x: 0.4, y: y),
+            ]))
+            XCTAssertTrue(
+                CGRect(x: 0, y: 0, width: 1, height: 1).contains(region),
+                "region left the image for a stroke at y=\(y): \(region)"
+            )
+            XCTAssertGreaterThan(region.height, 0)
+        }
+    }
+
+    /// Every point of the path can fall outside the captured display, which
+    /// leaves nothing to enclose. Saying so beats sending a rectangle nobody
+    /// drew.
+    func testAPathWithNothingLeftIsNoRegion() {
+        XCTAssertNil(VisionPointerResolver.normalizedRegion(from: []))
+        XCTAssertNil(VisionPointerResolver.normalizedRegion(from: [CGPoint(x: 0.5, y: 0.5)]))
+    }
+
     // MARK: - Wire format
 
     func testPointWirePayloadMatchesTheGatewayContract() throws {
