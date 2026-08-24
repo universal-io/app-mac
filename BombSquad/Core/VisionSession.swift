@@ -239,8 +239,8 @@ final class VisionSession: ObservableObject {
         pointedCandidate = nil
         // A new gesture retires every earlier statement of scope, the
         // launch-time selection included. Selection outranks geometry in the
-        // prompt, so a stale one would keep every later tap answering about
-        // text the user has moved on from.
+        // Gateway's prompt, so a stale one is not clutter — it would keep
+        // every later tap answering about text the user has moved on from.
         selection = nil
         selectedCandidate = nil
         publishAnswerHighlight(nil)
@@ -286,43 +286,6 @@ final class VisionSession: ObservableObject {
         )]
         errorMessage = nil
         run(question: nil, priorTurns: [], pointer: pointer)
-    }
-
-    /// What the user's side of a sweep turn is recorded as. Like the pointing
-    /// line, it exists for the history; the highlight on the screen already
-    /// shows which text it was.
-    static let sweptTextHereText = "この文について"
-
-    /// The user swept across text on the real screen.
-    ///
-    /// The same shape as `point(...)`: a new subject, a capture from the
-    /// instant of the gesture, the conversation so far dropped. What differs
-    /// is what states the scope — the exact swept string, which outranks any
-    /// geometry, so no pointer travels and no mark is burned. The Gateway
-    /// resolves acquired text to the same explain-the-selection intent the
-    /// launch-time selection uses; this turn adds nothing to that contract
-    /// beyond its honest acquisition value.
-    func select(
-        selection: VisionSelectionContext,
-        capture: ScreenshotAttachment,
-        candidates: [VisionObservation.Candidate],
-        diagnostics: VisionObservationCaptureService.Diagnostics?
-    ) {
-        askClock = SummonClock()
-        adopt(capture: capture, candidates: candidates, diagnostics: diagnostics)
-        self.selection = selection.resolvingCaptureVisibility(for: capture)
-        pointer = nil
-        pointedCandidate = nil
-        selectedCandidate = nil
-        publishAnswerHighlight(nil)
-        turns = [VisionDisplayTurn(
-            role: .user,
-            text: Self.sweptTextHereText,
-            mode: nil,
-            uncertainties: []
-        )]
-        errorMessage = nil
-        run(question: nil, priorTurns: [], pointer: nil)
     }
 
     /// Swap in a capture taken after this session started.

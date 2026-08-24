@@ -226,13 +226,11 @@ struct VisionBubbleView: View {
     }
 
     /// The most recent thing the user said, unless it was the gesture itself.
-    /// Pointing is shown by the mark and a sweep by its own highlight;
-    /// repeating either as a chip would be the bubble telling the user what
-    /// they just did.
+    /// Pointing is already shown by the mark on the screen; repeating it as a
+    /// chip would be the bubble telling the user what they just did.
     private var latestQuestion: String? {
         guard let turn = session.turns.last(where: { $0.role == .user }) else { return nil }
-        guard turn.text != VisionSession.pointedHereText,
-              turn.text != VisionSession.sweptTextHereText else { return nil }
+        guard turn.text != VisionSession.pointedHereText else { return nil }
         return turn.text
     }
 

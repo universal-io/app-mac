@@ -58,13 +58,6 @@ final class SessionCoordinator {
     /// panel holding a picture of it (R14).
     private let pointingOverlay = VisionPointingOverlay()
     private var pointingTask: Task<Void, Never>?
-    /// The summon target's application element, alive while pointing so hover
-    /// and sweeps can read text under the pointer. Carries the short messaging
-    /// timeout `VisionTextRangeReader.application` sets.
-    private var pointingAXApp: AXUIElement?
-    /// Where the current text sweep is anchored: set at the press that landed
-    /// on resolvable text, consumed at release.
-    private var textAnchor: VisionTextRangeReader.Anchor?
     private var composeSession: ComposeSession?
     private var visionSession: VisionSession?
     private var summonTargetApp: NSRunningApplication?
@@ -1048,38 +1041,11 @@ final class SessionCoordinator {
     private func presentPointing(for session: VisionSession) {
         guard let screen = ActiveDisplay.screen() else { return }
         panelController.close()
-        // The application whose text the overlay can read. Wrapped once per
-        // pointing session, with the short messaging timeout — these reads run
-        // between mouse events, where the default timeout would let a hung
-        // application hold the whole overlay.
-        pointingAXApp = summonTargetApp.map {
-            VisionTextRangeReader.application(pid: $0.processIdentifier)
-        }
-        textAnchor = nil
         pointingOverlay.onPoint = { [weak self] point in
             self?.point(at: point, session: session)
         }
         pointingOverlay.onRegion = { [weak self] path in
             self?.region(around: path, session: session)
-        }
-        pointingOverlay.onHoverText = { [weak self] point in
-            guard let self, let app = pointingAXApp else { return false }
-            return VisionTextRangeReader.anchor(
-                at: globalCGPoint(fromScreenLocal: point), in: app
-            ) != nil
-        }
-        pointingOverlay.onTextAnchor = { [weak self] point in
-            guard let self, let app = pointingAXApp else { return false }
-            textAnchor = VisionTextRangeReader.anchor(
-                at: globalCGPoint(fromScreenLocal: point), in: app
-            )
-            return textAnchor != nil
-        }
-        pointingOverlay.onTextDrag = { [weak self] point in
-            self?.sweepMoved(to: point)
-        }
-        pointingOverlay.onTextGesture = { [weak self] path in
-            self?.sweepEnded(path: path, session: session)
         }
         pointingOverlay.onClose = { [weak self] in
             self?.close(reason: .closeRequested)
@@ -1295,125 +1261,6 @@ final class SessionCoordinator {
                     candidates: snapshot.axCandidates,
                     diagnostics: snapshot.diagnostics,
                     hit: nil
-                )
-            } catch is CancellationError {
-                return
-            } catch {
-                session.failPointing(UserFacingError.message(for: error))
-            }
-        }
-    }
-
-    // MARK: - Text sweeps
-
-    /// Screen-local (Cocoa, the overlay's coordinates) → CG global, through
-    /// the same two values every pointing conversion uses.
-    private func globalCGPoint(fromScreenLocal point: CGPoint) -> CGPoint {
-        let screenFrame = pointingOverlay.coveredScreenFrame
-        return VisionPointerResolver.globalCGPoint(
-            cocoaGlobal: CGPoint(
-                x: point.x + screenFrame.minX,
-                y: point.y + screenFrame.minY
-            ),
-            mainDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height
-        )
-    }
-
-    /// CG global rect → the overlay's screen-local coordinates. The unit
-    /// rectangle rides through `screenLocalRect`, so this is the resolver's
-    /// existing conversion and not a new formula — the rule that has bitten
-    /// twice on secondary displays.
-    private func screenLocalRect(fromGlobal rect: CGRect) -> CGRect {
-        VisionPointerResolver.screenLocalRect(
-            normalized: CGRect(x: 0, y: 0, width: 1, height: 1),
-            captureRect: rect,
-            mainDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height,
-            screenFrame: pointingOverlay.coveredScreenFrame
-        )
-    }
-
-    /// The sweep's live highlight. Reads the range from the anchor to the
-    /// pointer and paints its measured bounds; a point that no longer resolves
-    /// leaves the last highlight standing rather than snapping it away.
-    private func sweepMoved(to screenLocal: CGPoint) {
-        guard let anchor = textAnchor else { return }
-        guard let range = VisionTextRangeReader.range(
-            from: anchor, to: globalCGPoint(fromScreenLocal: screenLocal)
-        ), range.length > 0,
-        let bounds = VisionTextRangeReader.bounds(of: range, in: anchor.element)
-        else { return }
-        pointingOverlay.showTextHighlight([screenLocalRect(fromGlobal: bounds)])
-    }
-
-    /// A finished sweep, turned into a question whose scope is the exact swept
-    /// string.
-    ///
-    /// Same shape as `point(at:)` and `region(around:)`, and the third
-    /// deliberate non-fold: what states the scope differs in each. Here it is
-    /// the characters themselves — no pointer travels and no mark is burned,
-    /// because the text outranks any statement of where it was. The Gateway
-    /// resolves acquired text to the same explain-the-selection intent the
-    /// launch-time selection uses.
-    ///
-    /// A sweep that stayed a tap, or whose characters cannot be read back at
-    /// release, degrades to the tap it visually was: the gesture still
-    /// deserves an answer, and the pointing turn is the one that never depends
-    /// on the text APIs cooperating.
-    private func sweepEnded(path: [CGPoint], session: VisionSession) {
-        let anchor = textAnchor
-        textAnchor = nil
-        guard let anchor, let released = path.last else { return }
-        if case .point(let tap) = VisionPointerResolver.gesture(from: path) {
-            point(at: tap, session: session)
-            return
-        }
-        guard let range = VisionTextRangeReader.range(
-            from: anchor, to: globalCGPoint(fromScreenLocal: released)
-        ), range.length > 0,
-        let text = VisionTextRangeReader.text(of: range, in: anchor),
-        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            point(at: released, session: session)
-            return
-        }
-        let bounds = VisionTextRangeReader.bounds(of: range, in: anchor.element)
-        if let bounds {
-            pointingOverlay.setSweptText([screenLocalRect(fromGlobal: bounds)])
-        }
-        session.beginPointing()
-        pointingTask?.cancel()
-        pointingTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let capture = try await self.screenshotCapture.captureMatchingScope(
-                    of: session.attachment
-                )
-                try Task.checkCancellation()
-                let snapshot = await VisionObservationCaptureService.captureTask(
-                    preferredPID: self.summonTargetApp?.processIdentifier,
-                    attachment: capture
-                ).value
-                try Task.checkCancellation()
-                // Volume only — how long, whether a rectangle was measurable,
-                // never the characters (README「データ保存」).
-                Diagnostics.record("vision.textSweep", details: [
-                    ("chars", .count(text.utf16.count)),
-                    ("bounded", .flag(bounds != nil)),
-                    ("candidates", .count(snapshot.axCandidates.count)),
-                ])
-                session.select(
-                    selection: VisionSelectionContext(
-                        kind: .text,
-                        text: text,
-                        structures: [],
-                        frames: bounds.map { [$0] } ?? [],
-                        acquisitionCompleteness: .complete,
-                        acquisition: .axRangeAtPointer,
-                        captureVisibility: .unknown
-                    ),
-                    capture: capture,
-                    candidates: snapshot.axCandidates,
-                    diagnostics: snapshot.diagnostics
                 )
             } catch is CancellationError {
                 return

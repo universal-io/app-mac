@@ -24,17 +24,6 @@ final class VisionPointingOverlay {
     /// several things is how somebody asks about a group they have no name for,
     /// so it arrives as its own gesture rather than as a click at its centre.
     var onRegion: (([CGPoint]) -> Void)?
-    /// Whether the point is over text whose characters can be resolved. Asked
-    /// on hover (throttled) so the cursor can say "this is text" the way the
-    /// application under the wash would if it could see the mouse.
-    var onHoverText: ((CGPoint) -> Bool)?
-    /// The press landed on resolvable text: true anchors a text sweep there,
-    /// and the drag that follows selects characters instead of drawing a line.
-    var onTextAnchor: ((CGPoint) -> Bool)?
-    /// The sweep's current end while the hand is still moving.
-    var onTextDrag: ((CGPoint) -> Void)?
-    /// The finished sweep: the whole path, for the tap-versus-sweep decision.
-    var onTextGesture: (([CGPoint]) -> Void)?
     /// Esc, or any other request to leave pointing.
     var onClose: (() -> Void)?
 
@@ -88,10 +77,6 @@ final class VisionPointingOverlay {
         // Drawn while the hand is still moving, so the line appears under the
         // cursor rather than after the gesture ends.
         canvas.onPathChanged = { [weak self] path in self?.showStroke(path) }
-        canvas.onHoverText = { [weak self] point in self?.onHoverText?(point) ?? false }
-        canvas.onTextAnchor = { [weak self] point in self?.onTextAnchor?(point) ?? false }
-        canvas.onTextDrag = { [weak self] point in self?.onTextDrag?(point) }
-        canvas.onTextGesture = { [weak self] path in self?.onTextGesture?(path) }
         canvas.onClose = { [weak self] in self?.onClose?() }
 
         // Two siblings rather than "paint the wash, then add a subview": the
@@ -153,7 +138,6 @@ final class VisionPointingOverlay {
         // drawn for the previous question is not part of this one.
         frameAnchor = nil
         canvas?.wash?.stroke = nil
-        canvas?.wash?.selectionRects = nil
         canvas?.wash?.mark = Self.drawnMark(point: point, frame: frame)
         canvas?.wash?.hitFrame = frame
         canvas?.wash?.pulse(around: frame)
@@ -177,7 +161,6 @@ final class VisionPointingOverlay {
     func showStroke(_ path: [CGPoint]) {
         canvas?.wash?.mark = nil
         canvas?.wash?.stroke = path
-        canvas?.wash?.selectionRects = nil
         canvas?.wash?.hitFrame = nil
         canvas?.wash?.pulse(around: nil)
     }
@@ -194,30 +177,8 @@ final class VisionPointingOverlay {
         frameAnchor = VisionPointerResolver.bounds(of: path)
         canvas?.wash?.mark = nil
         canvas?.wash?.stroke = path
-        canvas?.wash?.selectionRects = nil
         canvas?.wash?.hitFrame = nil
         canvas?.wash?.pulse(around: nil)
-        placeBubble()
-    }
-
-    /// The sweep's highlight while the hand is still moving. Painted by us
-    /// because the application under the wash never sees the drag: the glyphs
-    /// stay its, the selection look is ours.
-    func showTextHighlight(_ rects: [CGRect]) {
-        canvas?.wash?.mark = nil
-        canvas?.wash?.stroke = nil
-        canvas?.wash?.hitFrame = nil
-        canvas?.wash?.selectionRects = rects
-        canvas?.wash?.pulse(around: nil)
-    }
-
-    /// The finished sweep stays highlighted — like the drawn ring, it is what
-    /// says which text the question was about — and the bubble sits beside the
-    /// swept area rather than over it.
-    func setSweptText(_ rects: [CGRect]) {
-        showTextHighlight(rects)
-        anchor = nil
-        frameAnchor = rects.dropFirst().reduce(rects.first ?? .zero) { $0.union($1) }
         placeBubble()
     }
 
@@ -230,7 +191,6 @@ final class VisionPointingOverlay {
     func showAnswerFrame(_ frame: CGRect) {
         canvas?.wash?.mark = nil
         canvas?.wash?.stroke = nil
-        canvas?.wash?.selectionRects = nil
         canvas?.wash?.hitFrame = frame
         canvas?.wash?.pulse(around: frame)
         // The bubble follows the frame: from here on the words sit beside the
@@ -324,25 +284,11 @@ private final class PointingCanvas: NSView {
     var onPath: (([CGPoint]) -> Void)?
     /// The same path while it is still being drawn.
     var onPathChanged: (([CGPoint]) -> Void)?
-    /// Text hooks: see `VisionPointingOverlay`. The canvas only asks and
-    /// routes; whether a point is text is somebody else's knowledge.
-    var onHoverText: ((CGPoint) -> Bool)?
-    var onTextAnchor: ((CGPoint) -> Bool)?
-    var onTextDrag: ((CGPoint) -> Void)?
-    var onTextGesture: (([CGPoint]) -> Void)?
     var onClose: (() -> Void)?
     weak var wash: WashView?
 
     /// Collected in the covered screen's coordinates, in the order drawn.
     private var path: [CGPoint] = []
-    /// Whether the current press anchored on text, decided once at the press:
-    /// a gesture that changed its meaning midway would change what the user
-    /// sees it painting.
-    private var isTextGesture = false
-    /// Where the last hover probe ran. Probing costs an accessibility round
-    /// trip per call, so the cursor is only re-decided after real movement.
-    private var lastHoverProbe: CGPoint?
-    private var hoverIsText = false
 
     override var acceptsFirstResponder: Bool { true }
     /// Without this the first click on a window whose app is not active is spent
@@ -369,13 +315,7 @@ private final class PointingCanvas: NSView {
     /// the press-to-release of an ordinary click is too short to read as a
     /// screen that did nothing.
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        path = [point]
-        // Decided once, at the press. Pressing on resolvable text makes the
-        // drag a character sweep; anywhere else it stays a drawn line. A tap
-        // is unaffected either way — the tap-versus-drag decision still
-        // happens at release, on the path's own bounds.
-        isTextGesture = onTextAnchor?(point) ?? false
+        path = [convert(event.locationInWindow, from: nil)]
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -385,40 +325,18 @@ private final class PointingCanvas: NSView {
         // The spotlight follows the hand while it draws; without this it stays
         // where the press began and the line is drawn in the dark.
         wash?.cursor = point
-        if isTextGesture {
-            NSCursor.iBeam.set()
-            onTextDrag?(point)
-        } else {
-            onPathChanged?(path)
-        }
+        onPathChanged?(path)
     }
 
     override func mouseUp(with event: NSEvent) {
         guard !path.isEmpty else { return }
         let finished = path
         path = []
-        if isTextGesture {
-            isTextGesture = false
-            onTextGesture?(finished)
-        } else {
-            onPath?(finished)
-        }
+        onPath?(finished)
     }
 
     override func mouseMoved(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        wash?.cursor = point
-        // The application under the wash cannot see the mouse, so it cannot
-        // show the I-beam that says "this is text". We say it instead, from
-        // the same accessibility reading the sweep would use. Re-decided only
-        // after real movement — each probe is an accessibility round trip.
-        if let last = lastHoverProbe, hypot(point.x - last.x, point.y - last.y) < 6 {
-            (hoverIsText ? NSCursor.iBeam : NSCursor.arrow).set()
-            return
-        }
-        lastHoverProbe = point
-        hoverIsText = onHoverText?(point) ?? false
-        (hoverIsText ? NSCursor.iBeam : NSCursor.arrow).set()
+        wash?.cursor = convert(event.locationInWindow, from: nil)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -440,10 +358,6 @@ private final class WashView: NSView {
     var mark: CGPoint? { didSet { needsDisplay = true } }
     /// The line the user drew, in this view's coordinates.
     var stroke: [CGPoint]? { didSet { needsDisplay = true } }
-    /// The swept text's highlight, in this view's coordinates. Ours to paint:
-    /// the application never sees the drag, so the familiar selection look has
-    /// to come from the same hand that swallowed the mouse.
-    var selectionRects: [CGRect]? { didSet { needsDisplay = true } }
     var hitFrame: CGRect? { didSet { needsDisplay = true } }
     var cursor: CGPoint? { didSet { needsDisplay = true } }
 
@@ -556,17 +470,6 @@ private final class WashView: NSView {
         // second to move one ring.
         if let mark { draw(mark: mark) }
         if let stroke, stroke.count > 1 { draw(stroke: stroke) }
-        if let selectionRects, !selectionRects.isEmpty { draw(selection: selectionRects) }
-    }
-
-    /// The selection look: a translucent fill in the same iris that means
-    /// "this", light enough that the glyphs underneath stay readable — the
-    /// point of selecting text is to keep looking at it.
-    private func draw(selection rects: [CGRect]) {
-        Self.iris.withAlphaComponent(0.30).setFill()
-        for rect in rects {
-            NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
-        }
     }
 
     /// The line as drawn, left open.
