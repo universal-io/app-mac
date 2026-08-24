@@ -692,7 +692,8 @@ text上限、role／label上限、禁止制御文字、kind／sourceの組み合
 
 コミット境界: focus targetを注入したVisionを開けば完成体験になるが、Transformはまだ本番入口。
 
-完了（2026-07-30）: 既存`VisionSessionView`へfocus targetがある時だけ対象カードを追加した。
+完了（2026-07-30）: 既存`VisionSessionView`へfocus targetがある時だけ対象カードを追加した
+（**このカードとパネルはR14 F11で撤去した**。実画面の上では選択はその場に見えている）。
 カードは選択テキスト、role由来の中立名、AX label、取得元、capture上の位置有無を示し、長文は
 4行へ折りたたんだまま全文をスクロール表示できる。AXグローバルframeは同じcapture内の正規化座標へ
 投影し、system accent色の枠と「選択対象」ラベルを併用する。capture位置が不明または範囲外なら
