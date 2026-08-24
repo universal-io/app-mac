@@ -12,6 +12,7 @@
 
 | ドキュメント | 役割 |
 |---|---|
+| [../HANDOFF.md](../HANDOFF.md) | **次のセッションが最初に読む。いま何をすべきか。** 1本だけを保ち、役目を終えた記述は消す |
 | [../README.md](../README.md) | 現行機能、実行経路、開発手順 |
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョンとリリース・マイルストーン |
 | [manual-golden-paths.md](manual-golden-paths.md) | リリース前の手動検証 |
