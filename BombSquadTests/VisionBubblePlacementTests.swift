@@ -95,6 +95,63 @@ final class VisionBubblePlacementTests: XCTestCase {
         XCTAssertTrue(bounds.contains(rect))
     }
 
+    /// Once the answer has pointed at a frame, the words belong beside that
+    /// frame — the frame on one element and the bubble beside another is the
+    /// product disagreeing with itself (2026-08-24, GitLab's two "+" buttons).
+    func testBesideAFrameTheBubbleSitsToItsRightTopAligned() {
+        let frame = CGRect(x: 400, y: 650, width: 120, height: 50)
+        let origin = VisionBubblePlacement.origin(
+            besideFrame: frame,
+            size: size,
+            in: bounds
+        )
+        XCTAssertEqual(origin.x, frame.maxX + 20, accuracy: 0.001)
+        XCTAssertEqual(origin.y, frame.maxY - size.height, accuracy: 0.001)
+    }
+
+    func testBesideAFrameItNeverCoversTheFrame() {
+        let frame = CGRect(x: 400, y: 650, width: 120, height: 50)
+        let rect = CGRect(
+            origin: VisionBubblePlacement.origin(
+                besideFrame: frame, size: size, in: bounds
+            ),
+            size: size
+        )
+        XCTAssertFalse(rect.intersects(frame), "the bubble is sitting on the element it explains")
+    }
+
+    func testBesideAFrameItFlipsLeftRatherThanRunningOffTheRightEdge() {
+        // A frame against the right edge, like a toolbar button in a top-right
+        // corner — exactly where the GitLab "+" lives.
+        let frame = CGRect(x: 1450, y: 650, width: 120, height: 50)
+        let origin = VisionBubblePlacement.origin(
+            besideFrame: frame,
+            size: size,
+            in: bounds
+        )
+        XCTAssertEqual(origin.x, frame.minX - 20 - size.width, accuracy: 0.001)
+    }
+
+    func testBesideAFrameEveryCornerStaysOnScreen() {
+        for frame in [
+            CGRect(x: 4, y: 4, width: 80, height: 30),
+            CGRect(x: 1516, y: 4, width: 80, height: 30),
+            CGRect(x: 4, y: 966, width: 80, height: 30),
+            CGRect(x: 1516, y: 966, width: 80, height: 30),
+        ] {
+            let rect = CGRect(
+                origin: VisionBubblePlacement.origin(
+                    besideFrame: frame, size: size, in: bounds
+                ),
+                size: size
+            )
+            XCTAssertTrue(
+                bounds.contains(rect),
+                "bubble left the screen for frame \(frame): \(rect)"
+            )
+        }
+    }
+
     func testWithNothingPointedAtItWaitsInTheBottomRight() {
         let origin = VisionBubblePlacement.origin(for: nil, size: size, in: bounds)
         XCTAssertEqual(origin.x, 1600 - 360 - 24, accuracy: 0.001)

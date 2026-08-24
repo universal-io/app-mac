@@ -64,6 +64,40 @@ enum VisionBubblePlacement {
         return clamp(CGRect(origin: candidates[0], size: size), into: bounds).origin
     }
 
+    /// Where the answer sits when the answer itself has pointed at a frame.
+    ///
+    /// The frame is the thing being explained, so the bubble keeps to its side.
+    /// The click and the frame are not always the same place — the model
+    /// reaches for what it believes the subject is — and words anchored to the
+    /// click while the frame sits on another element read as two unrelated
+    /// claims about the screen (2026-08-24: GitLab has two "+" buttons; the
+    /// frame landed on one while the bubble stayed beside the other, and the
+    /// pair looked broken rather than merely mistaken).
+    ///
+    /// Right of the frame first, top edges aligned — after looking at the
+    /// frame the eye continues in reading order — then its three mirrors.
+    static func origin(
+        besideFrame frame: CGRect,
+        size: CGSize,
+        in bounds: CGRect
+    ) -> CGPoint {
+        let candidates = [
+            CGPoint(x: frame.maxX + gap, y: frame.maxY - size.height),
+            CGPoint(x: frame.minX - gap - size.width, y: frame.maxY - size.height),
+            CGPoint(x: frame.minX, y: frame.minY - gap - size.height),
+            CGPoint(x: frame.minX, y: frame.maxY + gap),
+        ]
+        for origin in candidates {
+            let rect = CGRect(origin: origin, size: size)
+            guard fits(rect, in: bounds) else { continue }
+            guard !rect.intersects(frame) else { continue }
+            return origin
+        }
+        // Same trade as the point placement: a bubble overlapping the frame is
+        // still readable, one pushed off the display is not.
+        return clamp(CGRect(origin: candidates[0], size: size), into: bounds).origin
+    }
+
     private static func fits(_ rect: CGRect, in bounds: CGRect) -> Bool {
         rect.minX >= bounds.minX + margin
             && rect.maxX <= bounds.maxX - margin

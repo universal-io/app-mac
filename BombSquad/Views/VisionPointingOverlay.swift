@@ -28,9 +28,15 @@ final class VisionPointingOverlay {
     private var bubble: NSHostingView<AnyView>?
     private var screenFrame: CGRect = .zero
     /// Where the bubble is anchored, which outlives the drawn mark: once the
-    /// answer's own frame is up the mark retracts, but the bubble stays beside
-    /// the place the user pointed at rather than jumping to the corner.
+    /// answer's own frame is up the mark retracts, but the bubble keeps a place
+    /// on the picture rather than retreating to the corner.
     private var anchor: CGPoint?
+    /// The frame the answer pointed at, once there is one. From that moment it
+    /// is what the bubble anchors to: the words and the frame are one claim
+    /// about one element, and showing them in two places — the frame on the
+    /// answer's subject, the words beside the click — reads as the product
+    /// disagreeing with itself.
+    private var answerAnchorFrame: CGRect?
     /// Kept so the bubble can be re-placed when its own size changes.
     private var placedSize: CGSize = .zero
     private var reflow: Timer?
@@ -99,6 +105,9 @@ final class VisionPointingOverlay {
     /// chrome rather than to look like the product.
     func setMark(point: CGPoint?, frame: CGRect?) {
         anchor = point
+        // A new gesture starts a new subject: whatever the previous answer
+        // pointed at no longer decides where this answer appears.
+        answerAnchorFrame = nil
         canvas?.wash?.mark = point
         canvas?.wash?.hitFrame = frame
         canvas?.wash?.pulse(around: frame)
@@ -115,11 +124,15 @@ final class VisionPointingOverlay {
         canvas?.wash?.mark = nil
         canvas?.wash?.hitFrame = frame
         canvas?.wash?.pulse(around: frame)
+        // The bubble follows the frame: from here on the words sit beside the
+        // element they are about, which is not always the one under the click.
+        answerAnchorFrame = frame
         placeBubble()
     }
 
     func close() {
         anchor = nil
+        answerAnchorFrame = nil
         reflow?.invalidate()
         reflow = nil
         panel?.orderOut(nil)
@@ -172,12 +185,21 @@ final class VisionPointingOverlay {
             width: visible.width,
             height: visible.height
         )
-        let origin = VisionBubblePlacement.origin(
-            for: anchor,
-            size: size,
-            in: bounds,
-            avoid: [canvas.wash?.hitFrame].compactMap { $0 }
-        )
+        let origin: CGPoint
+        if let answerAnchorFrame {
+            origin = VisionBubblePlacement.origin(
+                besideFrame: answerAnchorFrame,
+                size: size,
+                in: bounds
+            )
+        } else {
+            origin = VisionBubblePlacement.origin(
+                for: anchor,
+                size: size,
+                in: bounds,
+                avoid: [canvas.wash?.hitFrame].compactMap { $0 }
+            )
+        }
         bubble.frame = CGRect(origin: origin, size: size)
         placedSize = size
     }
