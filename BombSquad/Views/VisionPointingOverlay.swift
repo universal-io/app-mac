@@ -85,6 +85,12 @@ final class VisionPointingOverlay {
     /// The top rather than the origin, because the card grows downward.
     private var userTopLeft: CGPoint?
     private var bubbleMoveObserver: Any?
+    /// Whether the frame currently drawn is the answer's rather than the
+    /// user's own gesture. `clearAnswerFrame` is only entitled to take down the
+    /// first kind: guidance takes its frame off the moment the user clicks, and
+    /// the same call reaches here at the start of every pointing turn, where it
+    /// would wipe the ring drawn a moment earlier.
+    private var showsAnswerFrame = false
     /// True while `placeBubble` is setting the frame, so the move it causes is
     /// not mistaken for the user dragging the bubble there — that would pin it
     /// to wherever it was first placed and nothing would ever move it again.
@@ -95,20 +101,13 @@ final class VisionPointingOverlay {
 
     var isVisible: Bool { panel?.isVisible == true }
 
-    /// The card's own rectangle, in global Cocoa coordinates.
+    /// The bubble's rectangle, in global Cocoa coordinates.
     ///
-    /// The window is larger than the card by the shadow's margin, so this is
-    /// not its frame. Guidance needs it to tell a click on the bubble from a
-    /// click on the app it is guiding: the first is somebody moving the answer
-    /// out of the way or pressing 再確認, and counting it as progress spends a
-    /// capture and a request on nothing.
-    var bubbleCardFrame: CGRect? {
-        guard let bubblePanel else { return nil }
-        return bubblePanel.frame.insetBy(
-            dx: Self.bubbleShadowMargin,
-            dy: Self.bubbleShadowMargin
-        )
-    }
+    /// Guidance needs it to tell a click on the bubble from a click on the app
+    /// it is guiding: the first is somebody moving the answer out of the way or
+    /// pressing 再確認, and counting it as progress spends a capture and a
+    /// request on nothing.
+    var bubbleCardFrame: CGRect? { bubblePanel?.frame }
     /// The screen this overlay covers, so a click can be converted against the
     /// same frame the window was placed with.
     var coveredScreenFrame: CGRect { screenFrame }
@@ -156,6 +155,13 @@ final class VisionPointingOverlay {
         host.frame = NSRect(x: 0, y: 0, width: Self.bubbleWidth, height: 1)
 
         let bubblePanel = NonactivatingOverlayPanel()
+        // AppKit's shadow, not SwiftUI's. A shadow drawn inside the view needs
+        // the window to be bigger than the card to hold it, and every point of
+        // that margin is a point where a click lands on us instead of on the
+        // app being guided — an inch-wide ring around the bubble where pressing
+        // a button does nothing. A window shadow falls outside the frame and is
+        // click-through, so the window can be exactly the card.
+        bubblePanel.hasShadow = true
         let bubbleHost = BubbleHostView(frame: .zero)
         bubbleHost.onClose = { [weak self] in self?.onClose?() }
         bubbleHost.addSubview(host)
@@ -247,12 +253,37 @@ final class VisionPointingOverlay {
     /// The magenta burned into the image is a different audience — that one is
     /// for the model, and is chosen to be absent from real interface chrome
     /// rather than to look like the product.
+    /// The click, answered on the spot.
+    ///
+    /// **The bubble does not move for this.** A ring and the frame around the
+    /// element under it are rarely in the same place, so placing the bubble
+    /// twice — once beside the pixel, then again beside the element about half
+    /// a second later — reads as the card being shoved around rather than
+    /// arriving. The ring's job is to say the click was heard, which it does
+    /// where the hand already is; where the answer goes is settled once the
+    /// screen has been measured.
+    func showRing(at point: CGPoint) {
+        anchor = point
+        frameAnchor = nil
+        userTopLeft = nil
+        showsAnswerFrame = false
+        canvas?.wash?.stroke = nil
+        canvas?.wash?.markShape = .ring(point)
+        canvas?.wash?.hitFrame = nil
+    }
+
+    /// What the screen turned out to hold there, and the bubble's one move.
+    ///
+    /// Called once per gesture, after the accessibility walk, whether or not it
+    /// measured anything: with a frame the bubble goes beside the element, and
+    /// without one it goes beside the click the ring is already marking.
     func setMark(point: CGPoint?, frame: CGRect?) {
         anchor = point
         // A new subject re-places the bubble, so a position the user chose for
         // the last one is spent. Pointing somewhere else is the gesture that
         // says "put it where it belongs again".
         userTopLeft = nil
+        showsAnswerFrame = false
         // A new gesture starts a new subject: whatever the previous answer
         // pointed at no longer decides where this answer appears, and a line
         // drawn for the previous question is not part of this one.
@@ -294,6 +325,7 @@ final class VisionPointingOverlay {
     func setRegion(path: [CGPoint]) {
         anchor = nil
         userTopLeft = nil
+        showsAnswerFrame = false
         frameAnchor = VisionPointerResolver.bounds(of: path)
         canvas?.wash?.markShape = nil
         canvas?.wash?.stroke = path
@@ -311,6 +343,7 @@ final class VisionPointingOverlay {
     /// In guiding this is the whole display: the frame around the control to
     /// press, beating, until the press.
     func showAnswerFrame(_ frame: CGRect) {
+        showsAnswerFrame = true
         canvas?.wash?.markShape = .frame(frame)
         canvas?.wash?.stroke = nil
         canvas?.wash?.hitFrame = frame
@@ -329,6 +362,10 @@ final class VisionPointingOverlay {
     /// that jumps to the corner every time the user acts reads as the product
     /// resetting.
     func clearAnswerFrame() {
+        // Only the answer's own frame. Anything else on screen was put there by
+        // the user's last gesture and is not this call's to remove.
+        guard showsAnswerFrame else { return }
+        showsAnswerFrame = false
         canvas?.wash?.markShape = nil
         canvas?.wash?.hitFrame = nil
     }
@@ -400,11 +437,6 @@ final class VisionPointingOverlay {
     /// speaking. The view inside uses the same constant, so there is one width.
     static let bubbleWidth: CGFloat = 380
 
-    /// Room around the bubble inside its own window for the shadow SwiftUI
-    /// draws (radius 18, offset 6). A window cut to the card clips the shadow
-    /// flat on every side, and the card stops floating.
-    static let bubbleShadowMargin: CGFloat = 32
-
     private func placeBubbleIfResized() {
         guard let bubble else { return }
         guard abs(Self.height(of: bubble) - placedSize.height) > 0.5 else { return }
@@ -441,7 +473,6 @@ final class VisionPointingOverlay {
             width: visible.width,
             height: visible.height
         )
-        let margin = Self.bubbleShadowMargin
         let origin: CGPoint
         if let userTopLeft {
             origin = VisionBubblePlacement.origin(
@@ -463,29 +494,31 @@ final class VisionPointingOverlay {
                 avoid: [canvas.wash?.hitFrame].compactMap { $0 }
             )
         }
-        // The placement is screen-local, the window is global, and the card
-        // sits one margin in from the window's edge on every side.
+        // The placement is screen-local and the window is global.
         isPlacingBubble = true
         defer { isPlacingBubble = false }
         bubblePanel.setFrame(
             CGRect(
-                x: origin.x + screenFrame.minX - margin,
-                y: origin.y + screenFrame.minY - margin,
-                width: size.width + margin * 2,
-                height: size.height + margin * 2
+                origin: CGPoint(
+                    x: origin.x + screenFrame.minX,
+                    y: origin.y + screenFrame.minY
+                ),
+                size: size
             ),
             display: true
         )
-        bubble.frame = CGRect(x: margin, y: margin, width: size.width, height: size.height)
+        // The shadow is cast from the window's own alpha, and a borderless
+        // window keeps the shape it had before the resize until told.
+        bubblePanel.invalidateShadow()
+        bubble.frame = CGRect(origin: .zero, size: size)
         placedSize = size
     }
 
     private func noteBubbleMoved() {
         guard !isPlacingBubble, let bubblePanel else { return }
-        let margin = Self.bubbleShadowMargin
         userTopLeft = CGPoint(
-            x: bubblePanel.frame.minX + margin - screenFrame.minX,
-            y: bubblePanel.frame.maxY - margin - screenFrame.minY
+            x: bubblePanel.frame.minX - screenFrame.minX,
+            y: bubblePanel.frame.maxY - screenFrame.minY
         )
     }
 }
@@ -498,17 +531,6 @@ private final class BubbleHostView: NSView {
     var onClose: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
-
-    /// The shadow's margin is see-through, and while guiding what shows through
-    /// it is the app the user has just been asked to click. A view that spans
-    /// the whole window swallows those clicks — a ring of 32 points around the
-    /// bubble where pressing a button does nothing at all — so anything outside
-    /// the card belongs to whatever is underneath.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let card = subviews.first else { return super.hitTest(point) }
-        guard card.frame.contains(point) else { return nil }
-        return super.hitTest(point)
-    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Esc

@@ -1115,7 +1115,9 @@ final class SessionCoordinator {
     /// into a picture the user has stopped looking at answers about whatever
     /// used to be under their finger.
     private func point(at screenLocal: CGPoint, session: VisionSession) {
-        pointingOverlay.setMark(point: screenLocal, frame: nil)
+        // The ring only. Where the bubble goes is decided once, below, when the
+        // accessibility walk has said what is actually there.
+        pointingOverlay.showRing(at: screenLocal)
         // Before anything is awaited: the previous answer describes a different
         // place, and leaving it beside this one asserts something false about
         // what the user just pointed at.
@@ -1163,17 +1165,20 @@ final class SessionCoordinator {
                     ("candidates", .count(snapshot.axCandidates.count)),
                     ("hit", .flag(hit != nil)),
                 ])
-                if let rect = hit?.rect {
-                    self.pointingOverlay.setMark(
-                        point: screenLocal,
-                        frame: VisionPointerResolver.screenLocalRect(
+                // Once per gesture, hit or miss: with a frame the bubble sits
+                // beside the element, without one beside the click the ring is
+                // already marking. Either way it arrives, rather than moving.
+                self.pointingOverlay.setMark(
+                    point: screenLocal,
+                    frame: hit?.rect.map { rect in
+                        VisionPointerResolver.screenLocalRect(
                             normalized: rect,
                             captureRect: captureRect,
                             mainDisplayHeight: mainHeight,
                             screenFrame: screenFrame
                         )
-                    )
-                }
+                    }
+                )
                 session.point(
                     // The hit travels inside the pointer: the Gateway tells the
                     // model which candidate the OS measured under the mark, so

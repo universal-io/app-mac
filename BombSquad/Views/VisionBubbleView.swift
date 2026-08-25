@@ -215,7 +215,11 @@ struct VisionBubbleView: View {
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
                 .allowsHitTesting(false)
         )
-        .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+        // The shadow is the window's (`NonactivatingOverlayPanel.hasShadow`),
+        // not one drawn in here. A shadow inside the view needs the window to
+        // be larger than the card to hold it, and that margin swallows clicks
+        // meant for the app underneath.
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     /// Skill and close, on their own bar. A close button floating in the body
