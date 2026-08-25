@@ -13,6 +13,14 @@ import SwiftUI
 /// it swallows the click, so pointing at a button does not press it. That is why
 /// the overlay covers the display rather than floating in a corner.
 ///
+/// It has two states, and the wash is the difference between them (R15).
+/// **Pointing**: the wash is up, a click is a question. **Guiding**: the wash is
+/// gone, a click is an action on the app underneath, and the only thing this
+/// overlay still draws is the frame around the control the guidance named. The
+/// user in the first field test read the instruction and clicked the named
+/// control, and the wash swallowed it as a question — so the two cannot share a
+/// screen, and which one is up is what tells the user what a click will do.
+///
 /// Nothing here decides anything. It reports where the user pointed and shows
 /// what it is handed; the session owns the turn, the coordinator owns the mode.
 @MainActor
@@ -29,6 +37,16 @@ final class VisionPointingOverlay {
 
     private var panel: NonactivatingOverlayPanel?
     private var canvas: PointingCanvas?
+    /// The bubble's own window, a child of the cover.
+    ///
+    /// It used to be a subview of the canvas, which was the simplest thing that
+    /// worked while the cover always took clicks. Guiding needs the cover to
+    /// stop taking them (`ignoresMouseEvents`), and that is a property of a
+    /// whole window — a bubble inside it would go click-through too. A child
+    /// window keeps its own answer to that question, moves with its parent, and
+    /// was measured (R15 G1) to take clicks, commit Japanese IME text and hold
+    /// key while another application stays frontmost.
+    private var bubblePanel: NonactivatingOverlayPanel?
     private var bubble: NSHostingView<AnyView>?
     private var screenFrame: CGRect = .zero
     /// Where the bubble is anchored, which outlives the drawn mark: once the
@@ -48,6 +66,16 @@ final class VisionPointingOverlay {
     /// Kept so the bubble can be re-placed when its own size changes.
     private var placedSize: CGSize = .zero
     private var reflow: Timer?
+    /// Follows the pointer for the spotlight. A monitor rather than the canvas's
+    /// own `mouseMoved`, because the bubble is now a second window: moved events
+    /// over it never reach the canvas, and the light would stop at the bubble's
+    /// edge and stay there — a light that lies about where the pointer is reads
+    /// worse than no light (`app-web/docs/solo-mode.md` §1).
+    private var cursorMonitor: Any?
+    private var washFade: Timer?
+
+    /// Whether clicks currently belong to the app underneath.
+    private(set) var isGuiding = false
 
     var isVisible: Bool { panel?.isVisible == true }
     /// The screen this overlay covers, so a click can be converted against the
@@ -73,16 +101,15 @@ final class VisionPointingOverlay {
             case .region(let drawn): onRegion?(drawn)
             case nil: break
             }
+            // The click made the cover key. Typing right after pointing is the
+            // ordinary next move, so key goes back to the window with the field.
+            self.bubblePanel?.makeKey()
         }
         // Drawn while the hand is still moving, so the line appears under the
         // cursor rather than after the gesture ends.
         canvas.onPathChanged = { [weak self] path in self?.showStroke(path) }
         canvas.onClose = { [weak self] in self?.onClose?() }
 
-        // Two siblings rather than "paint the wash, then add a subview": the
-        // bubble has to be above the wash, and subview order is the only thing
-        // that says so without depending on how AppKit happens to compose a
-        // layer-backed view's own drawing against its children.
         let wash = WashView(frame: NSRect(origin: .zero, size: screen.frame.size))
         canvas.wash = wash
         canvas.addSubview(wash)
@@ -96,17 +123,32 @@ final class VisionPointingOverlay {
         // sizing one.
         host.sizingOptions = [.intrinsicContentSize]
         host.frame = NSRect(x: 0, y: 0, width: Self.bubbleWidth, height: 1)
-        canvas.addSubview(host)
+
+        let bubblePanel = NonactivatingOverlayPanel()
+        let bubbleHost = BubbleHostView(frame: .zero)
+        bubbleHost.onClose = { [weak self] in self?.onClose?() }
+        bubbleHost.addSubview(host)
+        bubblePanel.contentView = bubbleHost
 
         panel.contentView = canvas
         panel.orderFrontRegardless()
-        // Key without activating: see NonactivatingOverlayPanel.
-        panel.makeKey()
+        // A child, so it is ordered with the cover and never slips behind it.
+        panel.addChildWindow(bubblePanel, ordered: .above)
 
         self.panel = panel
         self.canvas = canvas
         self.bubble = host
+        self.bubblePanel = bubblePanel
+        isGuiding = false
         placeBubble()
+        // Key without activating: see NonactivatingOverlayPanel. The window with
+        // the field takes it, so the first keystroke lands in the question.
+        bubblePanel.makeKey()
+
+        cursorMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { [weak self] event in
+            MainActor.assumeIsolated { self?.trackCursor() }
+            return event
+        }
 
         // The bubble grows while an answer streams in, and AppKit does not tell
         // a superview that a hosting view's content got taller. Ten times a
@@ -116,6 +158,38 @@ final class VisionPointingOverlay {
             MainActor.assumeIsolated { self?.placeBubbleIfResized() }
         }
     }
+
+    // MARK: - The two states
+
+    /// Hands the screen back. The wash fades, clicks go to the app underneath,
+    /// and the frame around the named control stays.
+    ///
+    /// `ignoresMouseEvents` flips first, not after the fade: the instruction is
+    /// already on screen and the user is already reaching for the control. The
+    /// redraw is deliberate as well — the window server was measured to apply
+    /// the flag lazily, and a flush is the one thing known to accompany it
+    /// taking effect (R15 G1).
+    func enterGuiding() {
+        guard let panel, !isGuiding else { return }
+        isGuiding = true
+        canvas?.wash?.stroke = nil
+        panel.ignoresMouseEvents = true
+        fadeWash(to: 0)
+        panel.displayIfNeeded()
+    }
+
+    /// Takes the screen again: clicks are questions, the wash says so, and the
+    /// field is ready for the next one.
+    func enterPointing() {
+        guard let panel, isGuiding else { return }
+        isGuiding = false
+        panel.ignoresMouseEvents = false
+        fadeWash(to: 1)
+        panel.displayIfNeeded()
+        bubblePanel?.makeKey()
+    }
+
+    // MARK: - Marks
 
     /// What the user pointed at, and what the app measured there.
     ///
@@ -186,6 +260,9 @@ final class VisionPointingOverlay {
     /// client found they merge into one smear. The one that survives is the one
     /// carrying new information — where the answer says to look — and the
     /// gesture's own mark has said everything it had to say by then.
+    ///
+    /// In guiding this is the whole display: the frame around the control to
+    /// press, beating, until the press.
     func showAnswerFrame(_ frame: CGRect) {
         canvas?.wash?.markShape = .frame(frame)
         canvas?.wash?.stroke = nil
@@ -196,16 +273,74 @@ final class VisionPointingOverlay {
         placeBubble()
     }
 
+    /// The frame comes down without the bubble moving.
+    ///
+    /// Guidance takes the frame off the moment the user clicks — the screen is
+    /// about to change and a frame on the old control would be a claim about a
+    /// screen that no longer exists — and puts a new one up when the next
+    /// instruction arrives. The bubble keeps its place through that wait: one
+    /// that jumps to the corner every time the user acts reads as the product
+    /// resetting.
+    func clearAnswerFrame() {
+        canvas?.wash?.markShape = nil
+        canvas?.wash?.hitFrame = nil
+    }
+
     func close() {
         anchor = nil
         frameAnchor = nil
         reflow?.invalidate()
         reflow = nil
+        washFade?.invalidate()
+        washFade = nil
+        if let cursorMonitor { NSEvent.removeMonitor(cursorMonitor) }
+        cursorMonitor = nil
+        if let bubblePanel {
+            panel?.removeChildWindow(bubblePanel)
+            bubblePanel.orderOut(nil)
+        }
         panel?.orderOut(nil)
         panel = nil
         canvas = nil
         bubble = nil
+        bubblePanel = nil
         placedSize = .zero
+        isGuiding = false
+    }
+
+    // MARK: - Wash
+
+    /// 0.2 seconds, the length of the wash coming or going. Long enough to read
+    /// as the screen being handed over rather than as a flicker, short enough
+    /// that the control is reachable before the hand gets there.
+    private static let washFadeDuration: TimeInterval = 0.2
+
+    private func fadeWash(to opacity: CGFloat) {
+        washFade?.invalidate()
+        washFade = nil
+        guard let wash = canvas?.wash else { return }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            wash.washOpacity = opacity
+            return
+        }
+        let start = wash.washOpacity
+        let began = Date()
+        washFade = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                let progress = min(1, Date().timeIntervalSince(began) / Self.washFadeDuration)
+                wash.washOpacity = start + (opacity - start) * CGFloat(progress)
+                if progress >= 1 {
+                    timer.invalidate()
+                    self?.washFade = nil
+                }
+            }
+        }
+    }
+
+    private func trackCursor() {
+        guard !isGuiding, let wash = canvas?.wash else { return }
+        let global = NSEvent.mouseLocation
+        wash.cursor = CGPoint(x: global.x - screenFrame.minX, y: global.y - screenFrame.minY)
     }
 
     // MARK: - Bubble placement
@@ -214,6 +349,11 @@ final class VisionPointingOverlay {
     /// sentence arrives reads as the layout thrashing rather than as somebody
     /// speaking. The view inside uses the same constant, so there is one width.
     static let bubbleWidth: CGFloat = 380
+
+    /// Room around the bubble inside its own window for the shadow SwiftUI
+    /// draws (radius 18, offset 6). A window cut to the card clips the shadow
+    /// flat on every side, and the card stops floating.
+    static let bubbleShadowMargin: CGFloat = 32
 
     private func placeBubbleIfResized() {
         guard let bubble else { return }
@@ -234,7 +374,7 @@ final class VisionPointingOverlay {
     }
 
     private func placeBubble() {
-        guard let bubble, let canvas else { return }
+        guard let bubble, let bubblePanel, let canvas else { return }
         let size = CGSize(
             width: Self.bubbleWidth,
             height: max(1, Self.height(of: bubble))
@@ -266,15 +406,45 @@ final class VisionPointingOverlay {
                 avoid: [canvas.wash?.hitFrame].compactMap { $0 }
             )
         }
-        bubble.frame = CGRect(origin: origin, size: size)
+        // The placement is screen-local, the window is global, and the card
+        // sits one margin in from the window's edge on every side.
+        let margin = Self.bubbleShadowMargin
+        bubblePanel.setFrame(
+            CGRect(
+                x: origin.x + screenFrame.minX - margin,
+                y: origin.y + screenFrame.minY - margin,
+                width: size.width + margin * 2,
+                height: size.height + margin * 2
+            ),
+            display: true
+        )
+        bubble.frame = CGRect(x: margin, y: margin, width: size.width, height: size.height)
         placedSize = size
     }
 }
 
+/// The bubble window's content: the hosting view with the shadow's room around
+/// it, and Esc when nothing inside is typing. The field handles its own Esc
+/// (`SendableTextEditor.onEscape`); this is for the moment after a button in
+/// the bubble was pressed, when key is here and no text view has it.
+private final class BubbleHostView: NSView {
+    var onClose: (() -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // Esc
+            onClose?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
 /// Routes the gesture and owns nothing else. The wash draws below it, the bubble
-/// above it, and everything the user reads comes from the bubble — a card in the
-/// middle of the picture covers the place they are trying to look at, which the
-/// web client established the hard way.
+/// above it in its own window, and everything the user reads comes from the
+/// bubble — a card in the middle of the picture covers the place they are trying
+/// to look at, which the web client established the hard way.
 private final class PointingCanvas: NSView {
     /// The finished path, from the press to the release. One point when the
     /// hand stayed put — what it meant is not decided here.
@@ -332,10 +502,6 @@ private final class PointingCanvas: NSView {
         onPath?(finished)
     }
 
-    override func mouseMoved(with event: NSEvent) {
-        wash?.cursor = convert(event.locationInWindow, from: nil)
-    }
-
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Esc
             onClose?()
@@ -353,13 +519,17 @@ private final class PointingCanvas: NSView {
 /// click is a question — depend on which subview happened to be on top.
 private final class WashView: NSView {
     /// The one thing that says "this one" — see `MarkStyle`, which owns the
-    /// shape, the colours and the numbers so that the guidance highlight in its
-    /// own window draws exactly the same thing.
+    /// shape, the colours and the numbers so that every surface draws exactly
+    /// the same thing.
     var markShape: MarkShape? { didSet { renderMark() } }
     /// The line the user drew, in this view's coordinates.
     var stroke: [CGPoint]? { didSet { needsDisplay = true } }
     var hitFrame: CGRect? { didSet { needsDisplay = true } }
     var cursor: CGPoint? { didSet { needsDisplay = true } }
+    /// How much of the wash is there: 1 while pointing, 0 while guiding, and in
+    /// between for the length of the hand-over. The marks are unaffected — they
+    /// are layers, and the one thing guidance keeps on screen.
+    var washOpacity: CGFloat = 1 { didSet { needsDisplay = true } }
 
 
     /// Where the spotlight's falloff ends — not where the clear part ends. The
@@ -471,11 +641,20 @@ private final class WashView: NSView {
     /// Nothing is added to the core — it is left alone. Adding light there was
     /// tried on the web and it fogged the one place the user was trying to read.
     ///
-    /// The spotlight follows the cursor for as long as the overlay is up,
-    /// including after a question. It says where the pointer is on a screen this
-    /// app has covered, and that stays true.
+    /// The spotlight follows the cursor for as long as the wash is up, including
+    /// after a question. It says where the pointer is on a screen this app has
+    /// covered, and that stays true. While guiding there is no wash and no
+    /// light: the screen is the user's again, and the light would say otherwise.
     private func drawWash() {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        guard washOpacity > 0, let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        // One alpha for the whole sheet — tint, lattice and hole together — so
+        // the hand-over fades the wash as one thing rather than as layers
+        // leaving at different speeds.
+        context.setAlpha(washOpacity)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        defer { context.endTransparencyLayer() }
         WashStyle.tint.setFill()
         bounds.fill()
         Self.lattice.setFill()
@@ -510,7 +689,4 @@ private final class WashView: NSView {
         }
         context.restoreGState()
     }
-
-    /// A ring with a crosshair, never a filled dot: what was pointed at has to
-    /// stay visible, or the mark hides the answer's subject.
 }
