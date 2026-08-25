@@ -113,6 +113,10 @@ final class VisionSession: ObservableObject {
     private var identityTask: Task<VisionObservationCaptureService.TargetIdentity?, Never>
     private var targetIdentity: VisionObservationCaptureService.TargetIdentity?
     private let onRequestPanelClose: () -> Void
+    /// Where this session's own bubble is on screen, asked at the moment a
+    /// click has to be judged. A stored rectangle would be wrong as soon as an
+    /// answer grew or the user moved it.
+    private let bubbleFrame: () -> CGRect?
     private let onRequestModeTransition: (AppMode, TransitionReason) -> Bool
     private var requestTask: Task<Void, Never>?
     private var copilotProgressTask: Task<Void, Never>?
@@ -146,7 +150,8 @@ final class VisionSession: ObservableObject {
         // user's gesture, not from the moment this object happened to exist.
         askClock: SummonClock = SummonClock(),
         onRequestModeTransition: @escaping (AppMode, TransitionReason) -> Bool = { _, _ in true },
-        onRequestPanelClose: @escaping () -> Void = {}
+        onRequestPanelClose: @escaping () -> Void = {},
+        bubbleFrame: @escaping () -> CGRect? = { nil }
     ) {
         self.attachment = attachment
         self.preferredTargetPID = preferredTargetPID
@@ -174,6 +179,7 @@ final class VisionSession: ObservableObject {
         self.outputLanguage = AppSettings.outputLanguage()
         self.onRequestModeTransition = onRequestModeTransition
         self.onRequestPanelClose = onRequestPanelClose
+        self.bubbleFrame = bubbleFrame
         // Starts here, in the coordinator-owned initializer, so the decode
         // overlaps the transition and the panel setup instead of waiting for
         // the view to appear and then blocking the main thread on a 2560x1600
@@ -812,12 +818,36 @@ final class VisionSession: ObservableObject {
         ])
     }
 
+    /// Whether a click counts as the user acting on the app being guided.
+    ///
+    /// A global monitor was chosen because guidance watches another
+    /// application, and the note beside it used to say our own events would
+    /// never arrive here. That was wrong, and the field found it: while guiding,
+    /// the target app is frontmost and this app is not, so a click on our own
+    /// bubble reaches the monitor like any other. Dragging the answer out of the
+    /// way therefore took the frame down, flashed the screen, and spent a
+    /// capture and a request deciding that nothing had happened — as did every
+    /// press of 再確認, the microphone and the cross.
+    ///
+    /// The bubble's rectangle is the whole rule: everything outside it is the
+    /// screen the user was asked to act on.
+    static func advancesGuidance(clickAt point: CGPoint, bubble: CGRect?) -> Bool {
+        guard let bubble else { return true }
+        return !bubble.contains(point)
+    }
+
     private func installCopilotClickMonitor() {
         guard copilotClickMonitor == nil else { return }
         copilotClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) {
             [weak self] _ in
+            // Read where the pointer is now, before the hop to the main actor:
+            // by the time the task runs the hand has moved on.
+            let location = NSEvent.mouseLocation
             Task { @MainActor [weak self] in
-                self?.scheduleCopilotProgressCheck(after: 700_000_000, waitForChange: true)
+                guard let self,
+                      Self.advancesGuidance(clickAt: location, bubble: self.bubbleFrame())
+                else { return }
+                self.scheduleCopilotProgressCheck(after: 700_000_000, waitForChange: true)
             }
         }
     }

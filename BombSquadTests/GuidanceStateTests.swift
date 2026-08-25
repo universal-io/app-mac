@@ -99,6 +99,38 @@ final class GuidanceStateTests: XCTestCase {
         XCTAssertEqual(requested, 0)
     }
 
+    /// Clicking our own bubble is not the user acting on the app being guided.
+    ///
+    /// The field found this: dragging the answer out of the way took the frame
+    /// down, flashed the screen and spent a capture and a request on nothing.
+    /// The comment beside the monitor claimed our own events never reached it.
+    func testAClickOnTheBubbleDoesNotAdvanceGuidance() {
+        let bubble = CGRect(x: 1000, y: 200, width: 380, height: 400)
+
+        // On it, including its edges.
+        XCTAssertFalse(VisionSession.advancesGuidance(clickAt: CGPoint(x: 1200, y: 400), bubble: bubble))
+        XCTAssertFalse(VisionSession.advancesGuidance(clickAt: CGPoint(x: 1000, y: 200), bubble: bubble))
+
+        // Beside it, which is the screen the user was asked to click.
+        for point in [
+            CGPoint(x: 999, y: 400),
+            CGPoint(x: 1381, y: 400),
+            CGPoint(x: 1200, y: 199),
+            CGPoint(x: 1200, y: 601),
+        ] {
+            XCTAssertTrue(
+                VisionSession.advancesGuidance(clickAt: point, bubble: bubble),
+                "a click at \(point) beside the bubble was discarded"
+            )
+        }
+    }
+
+    /// No bubble on screen, no reason to discard anything. Guidance must not
+    /// stop advancing because the rectangle could not be resolved.
+    func testWithoutABubbleEveryClickAdvancesGuidance() {
+        XCTAssertTrue(VisionSession.advancesGuidance(clickAt: .zero, bubble: nil))
+    }
+
     /// The Gateway takes twenty turns. The newest survive.
     func testTheWireCarriesTheNewestTwentyTurns() {
         let turns = (0..<25).map { index in

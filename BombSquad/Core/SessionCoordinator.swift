@@ -896,7 +896,8 @@ final class SessionCoordinator {
                 },
                 onRequestPanelClose: { [weak self] in
                     self?.close(reason: .visionRequestedClose)
-                }
+                },
+                bubbleFrame: { [weak self] in self?.pointingOverlay.bubbleCardFrame }
             )
             visionSession?.tearDown()
             session.onToggleDictation = { [weak self] in self?.toggleDictation() }

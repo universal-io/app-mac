@@ -94,6 +94,21 @@ final class VisionPointingOverlay {
     private(set) var isGuiding = false
 
     var isVisible: Bool { panel?.isVisible == true }
+
+    /// The card's own rectangle, in global Cocoa coordinates.
+    ///
+    /// The window is larger than the card by the shadow's margin, so this is
+    /// not its frame. Guidance needs it to tell a click on the bubble from a
+    /// click on the app it is guiding: the first is somebody moving the answer
+    /// out of the way or pressing 再確認, and counting it as progress spends a
+    /// capture and a request on nothing.
+    var bubbleCardFrame: CGRect? {
+        guard let bubblePanel else { return nil }
+        return bubblePanel.frame.insetBy(
+            dx: Self.bubbleShadowMargin,
+            dy: Self.bubbleShadowMargin
+        )
+    }
     /// The screen this overlay covers, so a click can be converted against the
     /// same frame the window was placed with.
     var coveredScreenFrame: CGRect { screenFrame }
@@ -483,6 +498,17 @@ private final class BubbleHostView: NSView {
     var onClose: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// The shadow's margin is see-through, and while guiding what shows through
+    /// it is the app the user has just been asked to click. A view that spans
+    /// the whole window swallows those clicks — a ring of 32 points around the
+    /// bubble where pressing a button does nothing at all — so anything outside
+    /// the card belongs to whatever is underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let card = subviews.first else { return super.hitTest(point) }
+        guard card.frame.contains(point) else { return nil }
+        return super.hitTest(point)
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Esc
