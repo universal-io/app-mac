@@ -98,6 +98,24 @@ enum VisionBubblePlacement {
         return clamp(CGRect(origin: candidates[0], size: size), into: bounds).origin
     }
 
+    /// Where a bubble the user dragged goes.
+    ///
+    /// Their position wins over both rules above until they point somewhere new
+    /// — the default is beside the mark, not a place the bubble has to be — so
+    /// all this does is keep it reachable. Anchored by its **top-left**: the
+    /// card grows downward as an answer arrives, and holding the origin instead
+    /// would slide the whole thing up out from under the pointer while somebody
+    /// is reading it.
+    static func origin(movedTo topLeft: CGPoint, size: CGSize, in bounds: CGRect) -> CGPoint {
+        clamp(
+            CGRect(
+                origin: CGPoint(x: topLeft.x, y: topLeft.y - size.height),
+                size: size
+            ),
+            into: bounds
+        ).origin
+    }
+
     private static func fits(_ rect: CGRect, in bounds: CGRect) -> Bool {
         rect.minX >= bounds.minX + margin
             && rect.maxX <= bounds.maxX - margin

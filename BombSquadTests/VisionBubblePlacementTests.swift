@@ -42,6 +42,40 @@ final class VisionBubblePlacementTests: XCTestCase {
         XCTAssertEqual(origin.y, 80 + 20, accuracy: 0.001)
     }
 
+    /// A bubble the user dragged stays where they put it, and stays anchored by
+    /// its top: an answer arriving makes the card taller, and holding the origin
+    /// instead would slide the whole thing up out from under someone reading it.
+    func testAMovedBubbleGrowsDownwardFromWhereItWasPut() {
+        let topLeft = CGPoint(x: 500, y: 800)
+        let short = VisionBubblePlacement.origin(movedTo: topLeft, size: size, in: bounds)
+        let tall = VisionBubblePlacement.origin(
+            movedTo: topLeft,
+            size: CGSize(width: size.width, height: size.height * 2),
+            in: bounds
+        )
+
+        XCTAssertEqual(short.x, 500, accuracy: 0.001)
+        XCTAssertEqual(short.y + size.height, 800, accuracy: 0.001)
+        XCTAssertEqual(tall.x, 500, accuracy: 0.001)
+        XCTAssertEqual(tall.y + size.height * 2, 800, accuracy: 0.001, "the top edge moved")
+    }
+
+    /// Their position wins, but not off the display: a bubble dragged to the
+    /// edge and then grown by a long answer still has to be readable.
+    func testAMovedBubbleIsKeptOnScreen() {
+        for topLeft in [
+            CGPoint(x: -400, y: 40),
+            CGPoint(x: 1900, y: 2000),
+            CGPoint(x: 800, y: 60),
+        ] {
+            let rect = CGRect(
+                origin: VisionBubblePlacement.origin(movedTo: topLeft, size: size, in: bounds),
+                size: size
+            )
+            XCTAssertTrue(bounds.contains(rect), "bubble left the screen from \(topLeft): \(rect)")
+        }
+    }
+
     /// All four corners, because a rule that works in the middle of the screen
     /// and fails at the edges fails exactly where menus and toolbars live.
     func testEveryCornerStaysOnScreen() {

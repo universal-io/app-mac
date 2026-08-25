@@ -142,6 +142,7 @@ struct VisionBubbleView: View {
                         // product speaks, and iris is what that place is made
                         // of. State never borrows it — this is not state.
                         .background(MarkStyle.swiftUIColor, in: RoundedRectangle(cornerRadius: 8))
+                        .allowsHitTesting(false)
                         .accessibilityLabel("送信した質問: \(question)")
                 }
                 // Two surfaces, because there are two jobs: this is the place to
@@ -170,7 +171,15 @@ struct VisionBubbleView: View {
                     alignment: .topLeading
                 )
                 .padding(10)
-                .background(Self.readingSurface, in: RoundedRectangle(cornerRadius: 10))
+                // The surface takes no clicks so the empty part of the reading
+                // pane — most of it, for an ordinary answer, since the box has
+                // a ten-line floor — belongs to the drag. The answer text is in
+                // front of it and still selects.
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Self.readingSurface)
+                        .allowsHitTesting(false)
+                )
                 guidanceStatus
                 ask
                 startGuidance
@@ -178,16 +187,33 @@ struct VisionBubbleView: View {
             .padding(12)
         }
         .frame(width: VisionPointingOverlay.bubbleWidth, alignment: .leading)
+        // Everything that is not a control or the field the user types in is a
+        // place to pick the bubble up by. It sits over whatever the user is
+        // trying to look at — that is the price of putting the answer beside
+        // its subject — so moving it out of the way has to be possible from
+        // wherever the hand happens to be, not from one small grip. Buttons,
+        // the editor and the answer's own text are in front of this and take
+        // their clicks first; the surfaces behind them opt out of hit testing
+        // so that everything else falls through to here.
+        //
+        // No label on it. A grip that has to be labelled is not a grip
+        // (`app-web/docs/pointing.md` §3).
+        .background(WindowDragHandle())
         // Opaque, and deliberately not a material. A material samples what is
         // behind it *within the same window*, and what is behind this one is the
         // wash — so the bubble came out tinted purple, sitting in the colour it
         // is supposed to be readable against. `windowBackgroundColor` also keeps
         // the default label colours legible in both appearances, which a fixed
         // dark card would not.
-        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 16))
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .allowsHitTesting(false)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                .allowsHitTesting(false)
         )
         .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
     }
@@ -325,7 +351,7 @@ struct VisionBubbleView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(MarkStyle.swiftUIColor, in: Capsule())
+            .background(Capsule().fill(MarkStyle.swiftUIColor).allowsHitTesting(false))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("案内中")
         } else {
@@ -334,7 +360,8 @@ struct VisionBubbleView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Self.readingSurface, in: Capsule())
+                .background(Capsule().fill(Self.readingSurface).allowsHitTesting(false))
+                .allowsHitTesting(false)
                 .accessibilityLabel("解説中")
         }
     }
@@ -475,6 +502,9 @@ struct VisionBubbleView: View {
             .padding(.trailing, 8)
             .padding(.bottom, 7)
         }
+        // The one surface that keeps its clicks. Everywhere else in the bubble
+        // is a place to pick it up by; here a press has to put a cursor in the
+        // sentence being written.
         .background(Self.typingSurface, in: RoundedRectangle(cornerRadius: 8))
         .accessibilityLabel("Visionへの質問")
         .help("Enterで送信、Shift+Enterで改行")

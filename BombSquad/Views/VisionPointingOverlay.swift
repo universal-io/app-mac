@@ -73,6 +73,22 @@ final class VisionPointingOverlay {
     /// worse than no light (`app-web/docs/solo-mode.md` §1).
     private var cursorMonitor: Any?
     private var washFade: Timer?
+    /// The top-left corner the user dragged the bubble to, screen-local.
+    ///
+    /// Beside the mark is the default, not a fixed place: sooner or later the
+    /// answer lands on top of the thing being read (`app-web/docs/pointing.md`
+    /// §3). Once moved, their position wins until they point somewhere new —
+    /// without that the automatic placement takes it back on the next reflow,
+    /// which is every time an answer grows by a line, and the bubble reads as
+    /// refusing to be moved at all.
+    ///
+    /// The top rather than the origin, because the card grows downward.
+    private var userTopLeft: CGPoint?
+    private var bubbleMoveObserver: Any?
+    /// True while `placeBubble` is setting the frame, so the move it causes is
+    /// not mistaken for the user dragging the bubble there — that would pin it
+    /// to wherever it was first placed and nothing would ever move it again.
+    private var isPlacingBubble = false
 
     /// Whether clicks currently belong to the app underneath.
     private(set) var isGuiding = false
@@ -149,6 +165,17 @@ final class VisionPointingOverlay {
             MainActor.assumeIsolated { self?.trackCursor() }
             return event
         }
+        // Any movement of the bubble's own window that this class did not
+        // perform is the user dragging it. Watching the window rather than the
+        // handle keeps the two sides independent: the bubble asks AppKit to
+        // drag its window, and the placement finds out from AppKit.
+        bubbleMoveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: bubblePanel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.noteBubbleMoved() }
+        }
 
         // The bubble grows while an answer streams in, and AppKit does not tell
         // a superview that a hosting view's content got taller. Ten times a
@@ -207,6 +234,10 @@ final class VisionPointingOverlay {
     /// rather than to look like the product.
     func setMark(point: CGPoint?, frame: CGRect?) {
         anchor = point
+        // A new subject re-places the bubble, so a position the user chose for
+        // the last one is spent. Pointing somewhere else is the gesture that
+        // says "put it where it belongs again".
+        userTopLeft = nil
         // A new gesture starts a new subject: whatever the previous answer
         // pointed at no longer decides where this answer appears, and a line
         // drawn for the previous question is not part of this one.
@@ -247,6 +278,7 @@ final class VisionPointingOverlay {
     /// cannot cover the thing the ring was drawn around.
     func setRegion(path: [CGPoint]) {
         anchor = nil
+        userTopLeft = nil
         frameAnchor = VisionPointerResolver.bounds(of: path)
         canvas?.wash?.markShape = nil
         canvas?.wash?.stroke = path
@@ -295,6 +327,9 @@ final class VisionPointingOverlay {
         washFade = nil
         if let cursorMonitor { NSEvent.removeMonitor(cursorMonitor) }
         cursorMonitor = nil
+        if let bubbleMoveObserver { NotificationCenter.default.removeObserver(bubbleMoveObserver) }
+        bubbleMoveObserver = nil
+        userTopLeft = nil
         if let bubblePanel {
             panel?.removeChildWindow(bubblePanel)
             bubblePanel.orderOut(nil)
@@ -391,8 +426,15 @@ final class VisionPointingOverlay {
             width: visible.width,
             height: visible.height
         )
+        let margin = Self.bubbleShadowMargin
         let origin: CGPoint
-        if let frameAnchor {
+        if let userTopLeft {
+            origin = VisionBubblePlacement.origin(
+                movedTo: userTopLeft,
+                size: size,
+                in: bounds
+            )
+        } else if let frameAnchor {
             origin = VisionBubblePlacement.origin(
                 besideFrame: frameAnchor,
                 size: size,
@@ -408,7 +450,8 @@ final class VisionPointingOverlay {
         }
         // The placement is screen-local, the window is global, and the card
         // sits one margin in from the window's edge on every side.
-        let margin = Self.bubbleShadowMargin
+        isPlacingBubble = true
+        defer { isPlacingBubble = false }
         bubblePanel.setFrame(
             CGRect(
                 x: origin.x + screenFrame.minX - margin,
@@ -420,6 +463,15 @@ final class VisionPointingOverlay {
         )
         bubble.frame = CGRect(x: margin, y: margin, width: size.width, height: size.height)
         placedSize = size
+    }
+
+    private func noteBubbleMoved() {
+        guard !isPlacingBubble, let bubblePanel else { return }
+        let margin = Self.bubbleShadowMargin
+        userTopLeft = CGPoint(
+            x: bubblePanel.frame.minX + margin - screenFrame.minX,
+            y: bubblePanel.frame.maxY - margin - screenFrame.minY
+        )
     }
 }
 
