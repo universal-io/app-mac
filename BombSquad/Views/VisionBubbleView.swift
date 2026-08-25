@@ -219,11 +219,22 @@ struct VisionBubbleView: View {
             // away, or the wash, or the app. "終了" was avoided for the same
             // reason: it reads as quitting the application.
             Button(action: onClose) {
-                Label("解説を閉じる", systemImage: "xmark")
-                    .font(.system(size: 11))
+                HStack(spacing: 5) {
+                    Label("解説を閉じる", systemImage: "xmark")
+                        .font(.system(size: 11))
+                    // The key, on the button, the way a menu item carries its
+                    // equivalent. A tooltip only teaches somebody who already
+                    // waited on the control long enough to be told, and Esc is
+                    // the thing a user reaches for first when a mode has taken
+                    // the screen.
+                    Text("Esc")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .arrowCursorOnHover()
             .accessibilityLabel("解説を閉じる")
             .help("この解説モードを抜けます（Esc）")
         }
@@ -281,6 +292,7 @@ struct VisionBubbleView: View {
             .buttonStyle(.borderedProminent)
             .tint(MarkStyle.swiftUIColor)
             .controlSize(.small)
+            .arrowCursorOnHover()
             .frame(maxWidth: .infinity, alignment: .trailing)
             .accessibilityLabel("この画面での操作案内を開始")
             .accessibilityHint("同じ会話の内容を引き継いで操作案内を開始します")

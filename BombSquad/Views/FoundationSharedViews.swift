@@ -62,6 +62,7 @@ struct PanelToolInfo<PopoverContent: View>: View {
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
+            .arrowCursorOnHover()
             .help(informationHelp)
             .accessibilityLabel(informationAccessibilityLabel)
             .popover(isPresented: $isShowingInformation, arrowEdge: .bottom) {
@@ -185,6 +186,7 @@ struct DictationButton: View {
             }
         }
         .buttonStyle(.borderless)
+        .arrowCursorOnHover()
         .disabled(isTranscribing)
         .accessibilityLabel(isRecording ? "音声入力を停止" : "音声入力を開始")
         .help(
@@ -194,5 +196,28 @@ struct DictationButton: View {
                     ? "録音中。クリックで停止します"
                     : "音声入力（クリック、または\(KeybindingSettings.gestureKey().hintLabel) 長押し）"
         )
+    }
+}
+
+extension View {
+    /// Says the arrow belongs here, because the pointing overlay's panel does
+    /// not say it for us.
+    ///
+    /// The bubble lives in a `.nonactivatingPanel` that can become key but never
+    /// main, and AppKit's cursor rectangles do not run for it: whatever last set
+    /// the cursor keeps it. The text field sets an I-beam, so every control in
+    /// the bubble — the microphone, the close button, the info button — was
+    /// reached with an I-beam still showing, which says "type here" over things
+    /// you press.
+    ///
+    /// Set rather than pushed. A push needs a matching pop, and the pop is owed
+    /// by a hover that ends — which never arrives if the bubble is torn down
+    /// while the pointer is over the control, leaving the whole app holding a
+    /// cursor nobody can put back.
+    func arrowCursorOnHover() -> some View {
+        onHover { inside in
+            guard inside else { return }
+            NSCursor.arrow.set()
+        }
     }
 }
