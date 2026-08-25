@@ -389,11 +389,15 @@ private final class WashView: NSView {
 
     /// The ring's radius, which is also what the bubble's placement has to clear.
     static let ringRadius: CGFloat = 22
-    /// The line every mark is drawn with, and the dark halo under it. Iris
+    /// The line every mark is drawn with, and the dark backing under it. Iris
     /// nearly vanishes on a blue app, and a second colour would promise a
     /// second meaning.
-    private static let markLineWidth: CGFloat = 2.5
-    private static let markHaloWidth: CGFloat = 6
+    ///
+    /// Backing, not halo: the halo is the thing that beats outward, and one word
+    /// for two layers is how the next edit gives them the same width.
+    static let markLineWidth: CGFloat = 2.5
+    static let markBackingWidth: CGFloat = 6
+    private static let markBacking = NSColor.black.withAlphaComponent(0.45)
     /// How far a beat travels before it is gone.
     private static let markBeatSpread: CGFloat = 14
 
@@ -430,12 +434,31 @@ private final class WashView: NSView {
     /// Kept just above the threshold of notice: it should be found, not seen.
     /// Built once as a tile and drawn as a pattern — a few thousand circles
     /// redrawn on every cursor move would be paid for on every frame.
+    /// The three numbers the lattice is: how far apart the dots sit, how wide
+    /// each one is, and how white.
+    ///
+    /// It was 2pt dots on a 22pt grid — 0.65% of the surface — and at that size
+    /// they were below being found rather than just below being noticed. Bigger
+    /// and further apart is the trade that keeps it a lattice: 4pt on 25pt is
+    /// three times the ink with a fifth fewer dots, so the pattern reads as a
+    /// grid of points rather than as grain.
+    ///
+    /// **The alpha is nowhere near its ceiling** (0.16 of 1). If this still
+    /// reads faint on a real screen, that is the number to turn, and it can go
+    /// a long way before it runs out.
+    private static let latticeSpacing: CGFloat = 25
+    private static let latticeDotWidth: CGFloat = 4
+    private static let latticeAlpha: CGFloat = 0.16
+
     private static let lattice: NSColor = {
-        let side: CGFloat = 22
+        let side = latticeSpacing
+        let dot = latticeDotWidth
         let image = NSImage(size: NSSize(width: side, height: side))
         image.lockFocus()
-        NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.16).setFill()
-        NSBezierPath(ovalIn: CGRect(x: side / 2 - 1, y: side / 2 - 1, width: 2, height: 2)).fill()
+        NSColor(srgbRed: 1, green: 1, blue: 1, alpha: latticeAlpha).setFill()
+        NSBezierPath(ovalIn: CGRect(
+            x: (side - dot) / 2, y: (side - dot) / 2, width: dot, height: dot
+        )).fill()
         image.unlockFocus()
         return NSColor(patternImage: image)
     }()
@@ -452,7 +475,7 @@ private final class WashView: NSView {
 
     private var markLayer: CALayer?
 
-    /// Draws whichever mark is current: dark halo, iris outline, and a beat
+    /// Draws whichever mark is current: dark backing, iris outline, and a beat
     /// radiating out of it.
     ///
     /// One implementation for the ring and the frame, because they are the same
@@ -474,7 +497,7 @@ private final class WashView: NSView {
         markLayer = container
 
         let outline = markShape.path(spread: 0)
-        container.addSublayer(Self.stroked(outline, NSColor.black.withAlphaComponent(0.45), Self.markHaloWidth))
+        container.addSublayer(Self.stroked(outline, Self.markBacking, Self.markBackingWidth))
         container.addSublayer(Self.stroked(outline, Self.iris, Self.markLineWidth))
 
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
@@ -524,9 +547,12 @@ private final class WashView: NSView {
     /// burn closes it for the model, which needs to read an enclosure rather
     /// than follow a hand — same split the web client makes.
     private func draw(stroke points: [CGPoint]) {
+        // The same two widths as a mark: the trail is the same claim in a shape
+        // the user drew, and one iris line at 3pt beside another at 2.5pt is a
+        // difference nobody chose.
         for (color, width) in [
-            (NSColor.black.withAlphaComponent(0.45), CGFloat(6)),
-            (Self.iris, CGFloat(3)),
+            (Self.markBacking, Self.markBackingWidth),
+            (Self.iris, Self.markLineWidth),
         ] {
             color.setStroke()
             let path = NSBezierPath()
