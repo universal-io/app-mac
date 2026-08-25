@@ -41,16 +41,13 @@ struct PanelSpec: Equatable {
                 placement: .centered,
                 closesOnResignActive: false
             )
-        case .navigator:
+        case .copilot:
+            // No panel either: guidance is the pointing overlay with the wash
+            // lifted (R15). The spec still answers the resign-active question,
+            // and clicking the app being guided IS the interaction, so no.
             return PanelSpec(
                 size: CGSize(width: 960, height: 640),
                 placement: .centered,
-                closesOnResignActive: true
-            )
-        case .copilot:
-            return PanelSpec(
-                size: CGSize(width: 460, height: 240),
-                placement: .bottomTrailing,
                 closesOnResignActive: false
             )
         }

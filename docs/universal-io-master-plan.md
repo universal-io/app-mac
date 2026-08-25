@@ -781,9 +781,8 @@ AXヒットは`vision.point`の`hit`で溜まっており、実機のGitLab画�
 **指した対象と回答の枠を隠さない**、バブルは1つだけ、**枠が返ったら自分の印を引っ込める**、
 待っている間は印そのものが脈打つ、`prefers-reduced-motion`では静止。色は「ここ・これ・あなたが
 触ったもの」を1色に統一し、状態（動いている・注意）には貸さない。覆い・印・枠・軌跡はWeb版と同じ
-`iris`へ寄せた。**ただし`HighlightOverlayPresenter`（Copilotが実画面へ出す枠）と
-実画面へ出す枠）はまだ`systemRed`である** — 同じ製品が2つの見た目を持たないための
-統一は、Copilot側が未処理として残っている。
+`iris`へ寄せた。Copilotの枠（`HighlightOverlayPresenter`）も2026-08-25に同じ`MarkStyle`へ揃え、
+R15でそのクラス自体を削除した — 案内中の枠も覆いと同じ`WashView`が描く。
 
 **Web版の数値のうち実機未検証のものを設計根拠にしない。** 初回説明が何行で何秒返るか、指した対象と
 返ってくる枠が一致するか、待ち時間の典型値は、Web版でもまだ記録されていない。
@@ -791,7 +790,7 @@ AXヒットは`vision.point`の`hit`で溜まっており、実機のGitLab画�
 R14は「正しいが遅い」（R13）と「動いているのに内容が正しくない」（R12）を巻き戻さない。速さのために
 正しさを削らず、**指差しという新しい経路にもR11の不変条件（無音で終わらない）を通す**。
 
-### R15 — 実画面の上の案内（Copilotを覆いの上から実画面へ・G1完了、G2〜実装中）
+### R15 — 実画面の上の案内（Copilotを覆いの上から実画面へ・G1〜G5実装済み、残りG6実機）
 
 **2026-08-25の実機テストが設計の前提を与えた。** Copilotの入口を「打ち込んだ質問」に開けた直後
 （`508635a`）、GA4で「どうすればデバイス別にアクセス解析が見れますか」と打ち、「テクノロジーの
@@ -927,14 +926,13 @@ guidance分岐）は「目的でない画面でも、閉じろ・戻れと言わ
 - 記録: `guide.entered`（auto／button、sinceAsk）、`guide.left`（cross／complete／closed／stepLimit）を
   足す。`copilot.capture`／`request`／`turn`／`failed`はそのまま。
 
-#### 撤去するもの
+#### 撤去したもの（G3・G4）
 
-- `CopilotPanelView.swift`（`VisionRootView`・`CopilotStripView`）。
-- `PanelSpec`の`.navigator`／`.copilot`、`applyPanel`の該当分岐、`AppMode.navigator`、
-  `TransitionReason.visionGuideReady`。
-- `HighlightOverlayPresenter`（G1で子パネル案が通れば）。
-- `offersGuidance`は「打った質問＋`answer`回答」の時だけボタンを出す規則へ縮む（`guide`は自動で入る）。
-  `CopilotEntranceTests`を書き換える。
+- `CopilotPanelView.swift`（`VisionRootView`・`CopilotStripView`）、`HighlightOverlayPresenter.swift`、
+  `CorePanelShellView`。
+- `AppMode.navigator`、`TransitionReason.visionGuideReady`、`PanelSpec`の`.navigator`、`AppMode.hasPanel`。
+- `offersGuidance`はそのまま（打った質問＋回答あり）で、`canStartCopilot`が案内中は`false`を返す。
+  `guide`回答は自動で入るので、ボタンが見えるのは`answer`回答の時になる。
 
 #### 進捗ターンに履歴を渡す
 
@@ -966,16 +964,28 @@ guidance分岐）は「目的でない画面でも、閉じろ・戻れと言わ
     **切替のたびに幕を再描画し**、G6で「幕が引いた直後に押す」を実クリックで確かめる。
     副作用: 計測中、透過を抜けた合成クリックが約40回、プライマリ表示の左下（x60〜420・y120〜360pt）
     にあったアプリへ落ちた可能性がある。
-- **G2** `VisionPointingOverlay.enterGuiding()`／`enterPointing()`。幕の有無、透過の切替、キーの放棄、
-  枠の維持、バブルの置き場所（対象の枠の隣／右下）。
-- **G3** `VisionSession`: `guide`回答での自動入場、`answer`＋ボタンでの最初の一手、×で指す状態へ
-  （`turns`維持）、到達後は幕を戻さない、進捗ターンへ`turns`を載せる、記録。`AppMode`の整理。
-- **G4** バブル: 状態ラベル対と×、状態行・再確認・無変化注記の移設、ストリップ削除、
-  `HighlightOverlayPresenter`削除（G1次第）、案内中の音声入力。
-- **G5** 文書: READMEの呼び名表（状態: 指す／案内）と案内の節、golden pathsの「バブルの『案内を開始』で
-  覆いが閉じ小型stripへ移行」の行、HANDOFF。
-- **G6** 実機: 今日と同じGA4の質問で、指示→クリック→次の一手→到達を通す。違う物を押す。×で戻る。
-  記録は`guide.entered`→`copilot.capture`→`copilot.turn`の連なりで読む。
+- **G2（完了・`97d66b1`）** バブルを覆いの子パネルへ（影の分の余白32ptを窓の中に持つ）。
+  `enterGuiding()`は幕を0.2秒で引き（Reduce Motionは即時）、`ignoresMouseEvents=true`にして再描画する。
+  `enterPointing()`は逆。`clearAnswerFrame()`は枠だけ下ろしてバブルを動かさない。スポットライトは
+  `mouseMoved`のローカルモニタで追う（バブルが別窓になり、その上ではcanvasに届かないため）。
+- **G3（完了）** `VisionSession.opensGuidance(turn:mode:)`＝打った質問×`guide`のみ。自動入場は
+  `run()`の`apply`直後、`enterGuidance(reason:)`が`.copilot`へ遷移して対象アプリを前面化する。
+  `answer`＋ボタンは`startCopilot()`→入場→即`requestCopilotProgressCheck()`。`leaveGuidance()`（×）は
+  `.vision`へ戻り`turns`を保つ。到達（`.complete`）・上限は案内状態のまま。進捗ターンは`turns`（最新20）を
+  運ぶ。**Gateway上限20ターンにクライアント側のcapが無かった**のを`VisionSession.wire`で足した。
+  `AppMode.navigator`退役、`vision ⇄ copilot`直結、`.copilot`は`PanelSpec`にパネルを持たない。
+  `applyPanel`はモードごとのswitchになり、Phase 1の`CorePanelShellView`を削除。案内中も音声入力が通る。
+  記録: `guide.entered via=copilotStarted|copilotAutoStarted`、`guide.left via=cross|closed`、
+  `guide.done state=complete|stepLimit`。
+- **G4（完了）** バブル左上に状態チップ（「解説」／紫の「案内」＋×）。案内中は答えの下に状態行
+  （待ち・確認中・到達・判断・上限）と再確認、無変化の注記。Escの表記は解説の時だけ。
+  `chromeHeight` 352→422。`CopilotPanelView.swift`（ストリップ）と`HighlightOverlayPresenter.swift`を
+  削除。`GuidanceStateTests`（6件）。140 unit test。**見た目は仮** — 「デザインは後で」の指示どおり、
+  意味と位置だけを置いた。
+- **G5（完了）** README（呼び名表に解説／案内、案内の節）、golden paths、HANDOFF。
+- **G6（残り）** 実機: 今日と同じGA4の質問で、指示→幕が引く→クリック→次の一手→到達を通す。違う物を
+  押す。×で戻る。**幕が引いた直後のクリック**（切替の反映遅延は合成クリックで測れなかった）。
+  記録は`guide.entered`→`copilot.capture`→`copilot.turn`→`guide.done`の連なりで読む。
 
 #### 決定した論点（2026-08-25）
 
@@ -1055,7 +1065,7 @@ Composeの基本は入力補完。音声入力ができるだけでも便利。
 （`VisionSession.offersGuidance`、`CopilotEntranceTests`）。指差しだけのターンには出さない。
 
 同日の実機で、**ボタンは押されなかった** — 案内の答えを読んだユーザーはそのまま対象をクリックし、覆いが
-それを指差しとして飲んだ。何が起きたかと次の設計は [R15](#r15--実画面の上の案内copilotを覆いの上から実画面へg1完了g2実装中)。
+それを指差しとして飲んだ。何が起きたかと次の設計は [R15](#r15--実画面の上の案内copilotを覆いの上から実画面へg1g5実装済み残りg6実機)。
 
 ### スキル（注入できる文脈）の不足（2026-08-25に記録）
 

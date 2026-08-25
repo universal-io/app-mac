@@ -11,9 +11,8 @@ enum AppMode: Equatable, CustomStringConvertible {
     case compose
     /// See → understand → respond: screenshot interpretation with actions.
     case vision
-    /// Multi-turn screen navigation chat on top of a vision session.
-    case navigator
-    /// Guided copilot: corner strip, target-app clicks are the interaction.
+    /// Guidance: the same overlay as vision with the wash lifted, so the clicks
+    /// the user is asked to make reach the app underneath (R15).
     case copilot
     /// The selection overlay / screenshot capture is up. Remembers where to
     /// return so a cancelled capture restores the previous mode.
@@ -24,18 +23,8 @@ enum AppMode: Equatable, CustomStringConvertible {
         case .idle: return "idle"
         case .compose: return "compose"
         case .vision: return "vision"
-        case .navigator: return "navigator"
         case .copilot: return "copilot"
         case .capturing(let returnTo): return "capturing(returnTo=\(returnTo))"
-        }
-    }
-
-    /// Whether a panel window exists in this mode.
-    var hasPanel: Bool {
-        switch self {
-        case .idle: return false
-        case .capturing: return false // panel is ordered out during capture
-        default: return true
         }
     }
 
@@ -57,14 +46,13 @@ enum AppMode: Equatable, CustomStringConvertible {
         // Cancelled capture returns to where it came from (or all the way out).
         case (.capturing(let returnTo), let target) where target == returnTo:
             return true
-        // Vision escalates to navigator (first question) and copilot (task plan).
-        case (.vision, .navigator), (.navigator, .copilot):
-            return true
-        // Copilot ends back on the navigator answer view.
-        case (.copilot, .navigator):
+        // A typed question answered with a next step opens guidance, and the
+        // cross on the guidance chip closes it back to pointing. Same overlay,
+        // same session: the wash is the only thing that changes (R15).
+        case (.vision, .copilot), (.copilot, .vision):
             return true
         // Vision action drafts carry into the compose editor.
-        case (.vision, .compose), (.navigator, .compose):
+        case (.vision, .compose):
             return true
         // Everything can close to idle.
         case (_, .idle):
@@ -88,7 +76,14 @@ enum TransitionReason: String {
     case closeRequested
     case composeDeploy
     case composePreCaptureVision
+    /// The guidance button: a typed question the model answered rather than
+    /// guided, and the user wants to be walked there anyway.
     case copilotStarted
+    /// A typed question the model answered in guide mode. Guidance opens by
+    /// itself — the first field test showed the button is not what gets pressed.
+    case copilotAutoStarted
+    /// The cross on the guidance chip. Back to pointing; the conversation stays.
+    case copilotLeft
     case doubleTapDuringCapture
     case doubleTapOnVision
     case emptyComposeCapture
@@ -96,7 +91,6 @@ enum TransitionReason: String {
     case menuPanelToggle
     case resignActive
     case summon
-    case visionGuideReady
     case visionRequestedClose
 }
 

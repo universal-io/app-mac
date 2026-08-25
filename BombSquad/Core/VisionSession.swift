@@ -93,6 +93,8 @@ final class VisionSession: ObservableObject {
     var onToggleDictation: (() -> Void)?
 
     private static let maxGuideSteps = 15
+    private static let noClientMessage =
+        "画面読み取りサービスを利用できません。ログインと接続設定を確認してください。"
 
     private let client: GatewayVisionClient?
     private let outputLanguage: OutputLanguage
@@ -180,11 +182,11 @@ final class VisionSession: ObservableObject {
 
 
     var canSend: Bool {
-        !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLoading
+        !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLoading && !isCopilotChecking
     }
 
     var canStartCopilot: Bool {
-        !isLoading && Self.offersGuidance(turns: turns)
+        !isLoading && !isCopilotActive && Self.offersGuidance(turns: turns)
     }
 
     /// Whether the entrance to guidance belongs on this conversation.
@@ -337,7 +339,9 @@ final class VisionSession: ObservableObject {
 
     func sendQuestion() {
         let question = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty, !isLoading else { return }
+        // Not while a guidance step is being evaluated either: two requests
+        // about two different captures would race for the same bubble.
+        guard !question.isEmpty, !isLoading, !isCopilotChecking else { return }
 
         // The origin moves to Enter: this turn's wait is the user's, and it has
         // nothing to do with how long ago the panel was summoned.
@@ -365,48 +369,108 @@ final class VisionSession: ObservableObject {
         onRequestPanelClose()
     }
 
+    /// The way into guidance from the button: a typed question the model
+    /// answered rather than guided, where the user wants to be walked there
+    /// anyway. The answer was not a step, so the first step is asked for at
+    /// once instead of waiting for a click that has nothing to aim at.
     func startCopilot() {
-        guard canStartCopilot,
-              let goal = turns.last(where: { $0.role == .user })?.text else { return }
+        guard enterGuidance(reason: .copilotStarted) else { return }
+        requestCopilotProgressCheck()
+    }
+
+    /// Whether a finished turn opens guidance by itself.
+    ///
+    /// Only a typed question does, and only when the model answered it in guide
+    /// mode — its own judgment that the user needs an action this screen
+    /// supports. A pointing turn never does, whatever the mode: its user turn
+    /// reads "ここについて", and that is what guidance would adopt as the goal.
+    ///
+    /// The first field test (2026-08-25) settled the button question. Shown a
+    /// guide answer with "案内を開始" beside it, the user clicked the named
+    /// control — and the wash swallowed the click as a question. A button
+    /// between an instruction and the act it asks for is not pressed.
+    static func opensGuidance(turn: VisionTurnKind, mode: VisionResult.Mode) -> Bool {
+        turn == .question && mode == .guide
+    }
+
+    /// What a typed question's answer does to guidance.
+    ///
+    /// Not guiding yet: a guide answer opens it. Already guiding: a guide
+    /// answer is the new goal — the user refined what they want, and the next
+    /// click is measured against that. Anything else leaves the state alone;
+    /// an answer is an answer, and the walk-through continues from where it was.
+    private func noteQuestionAnswered(
+        _ question: String,
+        mode: VisionResult.Mode,
+        turn: VisionTurnKind
+    ) {
+        guard turn == .question else { return }
+        if isCopilotActive {
+            guard mode == .guide else { return }
+            copilotGoal = question
+            copilotStepCount = 0
+            copilotState = .idle
+            copilotSawNoChange = false
+            installCopilotClickMonitor()
+        } else if Self.opensGuidance(turn: turn, mode: mode),
+                  enterGuidance(reason: .copilotAutoStarted) {
+            // The answer is already the first step, so the next thing to
+            // measure is the click it asks for.
+            installCopilotClickMonitor()
+        }
+    }
+
+    /// Hands the screen over. Returns whether the mode actually changed.
+    @discardableResult
+    private func enterGuidance(reason: TransitionReason) -> Bool {
+        guard !isCopilotActive,
+              let goal = turns.last(where: { $0.role == .user })?.text,
+              goal != Self.pointedHereText else { return false }
         copilotGoal = goal
         copilotStepCount = 0
         isCopilotActive = true
         copilotState = .idle
         copilotSawNoChange = false
-        focusedField = nil
-        guard onRequestModeTransition(.copilot, .copilotStarted) else {
-            // Roll back so a refused transition cannot leave the strip UI
-            // stranded inside the centered panel with a live click monitor.
+        guard onRequestModeTransition(.copilot, reason) else {
+            // Roll back so a refused transition cannot leave the session
+            // believing it is guiding on a screen that still has its wash.
             isCopilotActive = false
             copilotGoal = nil
-            focusedField = .navigator
-            return
+            return false
         }
-        if selectedCandidate?.rect != nil {
-            showLiveHighlight()
-        } else {
-            // A useful guide answer can exist even when Chrome/Electron did
-            // not expose a matching AX rectangle. Copilot remains usable as
-            // text guidance; only the optional highlight is omitted.
-            activateTargetApp()
-        }
-        installCopilotClickMonitor()
+        Diagnostics.record("guide.entered", details: [
+            ("via", .code(reason)),
+            ("sinceAsk", .ms(askClock.elapsedMs)),
+        ])
+        // Key and frontmost belong to the app being guided from here: the next
+        // click has to press the control, not activate its window.
+        activateTargetApp()
+        return true
     }
 
-    /// Ending the copilot ends the session: the goal was either reached or
-    /// abandoned, so the strip just disappears — no return to the big panel.
-    func stopCopilot() {
+    /// The cross on the guidance chip: back to pointing, keeping the
+    /// conversation. The goal was abandoned or was never wanted as a
+    /// walk-through; the answer stays in the bubble, the wash comes back, and
+    /// the screen can be pointed at again.
+    func leaveGuidance() {
         guard isCopilotActive else { return }
         isCopilotActive = false
+        copilotCancellation?.cause = .guidanceLeft
         copilotProgressTask?.cancel()
         copilotProgressTask = nil
         isCopilotChecking = false
         removeCopilotClickMonitor()
-        HighlightOverlayPresenter.shared.hide()
-        onRequestPanelClose()
+        copilotState = .idle
+        copilotGoal = nil
+        copilotSawNoChange = false
+        Diagnostics.record("guide.left", details: [("via", .literal("cross"))])
+        _ = onRequestModeTransition(.vision, .copilotLeft)
     }
 
     func tearDown() {
+        if isCopilotActive {
+            Diagnostics.record("guide.left", details: [("via", .literal("closed"))])
+        }
         requestCancellation?.cause = .sessionTornDown
         requestTask?.cancel()
         requestTask = nil
@@ -417,7 +481,6 @@ final class VisionSession: ObservableObject {
         visionTurnDeadline?.cancel()
         visionTurnDeadline = nil
         removeCopilotClickMonitor()
-        HighlightOverlayPresenter.shared.hide()
         try? FileManager.default.removeItem(at: attachment.url)
     }
 
@@ -427,8 +490,15 @@ final class VisionSession: ObservableObject {
         scheduleCopilotProgressCheck(after: 0, waitForChange: false)
     }
 
-    private var wireTurns: [VisionTurn] {
-        turns.map { VisionTurn(role: $0.role, text: $0.text) }
+    /// The Gateway accepts at most this many turns (`api-contract.md`), so the
+    /// oldest go first. Nothing capped it on this side before; a session that
+    /// asked ten questions would have been refused on the eleventh.
+    static let maxWireTurns = 20
+
+    private var wireTurns: [VisionTurn] { Self.wire(turns) }
+
+    static func wire(_ turns: [VisionDisplayTurn]) -> [VisionTurn] {
+        turns.suffix(maxWireTurns).map { VisionTurn(role: $0.role, text: $0.text) }
     }
 
     /// A resolved identity is reused, except when it came back without a host.
@@ -471,7 +541,7 @@ final class VisionSession: ObservableObject {
         requestTask?.cancel()
         OperationalNoticeCenter.shared.beginOperation()
         guard let client else {
-            errorMessage = "画面読み取りサービスを利用できません。ログインと接続設定を確認してください。"
+            errorMessage = Self.noClientMessage
             return
         }
 
@@ -608,6 +678,9 @@ final class VisionSession: ObservableObject {
                     candidates: fixedCandidates,
                     toleratingUnplaceableTarget: pointer != nil
                 )
+                if let question {
+                    self.noteQuestionAnswered(question, mode: response.result.mode, turn: turnKind)
+                }
             } catch is CancellationError {
                 // A cancellation this session asked for needs no explanation:
                 // a newer request will produce the outcome, and a torn-down
@@ -757,8 +830,12 @@ final class VisionSession: ObservableObject {
     }
 
     private func scheduleCopilotProgressCheck(after delay: UInt64, waitForChange: Bool) {
-        guard isCopilotActive, !isCopilotChecking,
+        guard isCopilotActive, !isCopilotChecking, !isLoading,
               copilotState != .complete, copilotState != .stepLimit else { return }
+        guard client != nil else {
+            errorMessage = Self.noClientMessage
+            return
+        }
         // The user's click is the origin of a copilot step, and it is where
         // their wait starts — including the settle delay below, which is spent
         // on their behalf and therefore belongs in the number.
@@ -770,7 +847,10 @@ final class VisionSession: ObservableObject {
         copilotState = .waitingForChange
         copilotSawNoChange = false
         errorMessage = nil
-        HighlightOverlayPresenter.shared.hide()
+        // The frame comes off the control the user just pressed: the screen is
+        // about to change, and a frame on the old control would be a claim
+        // about a screen that no longer exists. The bubble does not move.
+        publishAnswerHighlight(nil)
         let baseline = attachment
         let goal = copilotGoal
         let previousInstruction = latestInstruction
@@ -865,10 +945,14 @@ final class VisionSession: ObservableObject {
                 ("ax", .ms(axMs)),
                 ("candidates", .count(snapshot.axCandidates.count)),
             ])
+            // The conversation travels with the step now. Guidance used to send
+            // no history at all, so a question typed during it could not be
+            // understood as a refinement of anything (R12 E3 decides what the
+            // prompt does with it; this side hands it over).
             let response = try await client.understand(
                 attachment: newAttachment,
                 question: nil,
-                turns: [],
+                turns: wireTurns,
                 candidates: snapshot.axCandidates,
                 candidateDiagnostics: snapshot.diagnostics,
                 identity: await resolvedIdentity(),
@@ -911,15 +995,18 @@ final class VisionSession: ObservableObject {
             }
             switch response.result.mode {
             case .answer:
+                // Reached. The wash stays down — the user has just arrived
+                // somewhere and a sheet over it would be a sheet over their
+                // work — and the bubble offers the way out.
                 copilotState = .complete
                 removeCopilotClickMonitor()
-                HighlightOverlayPresenter.shared.hide()
+                Diagnostics.record("guide.done", details: [("state", .literal("complete"))])
             case .guide:
                 copilotStepCount += 1
                 if copilotStepCount >= Self.maxGuideSteps {
                     copilotState = .stepLimit
                     removeCopilotClickMonitor()
-                    HighlightOverlayPresenter.shared.hide()
+                    Diagnostics.record("guide.done", details: [("state", .literal("stepLimit"))])
                 } else {
                     copilotState = .idle
                     installCopilotClickMonitor()
@@ -973,7 +1060,9 @@ final class VisionSession: ObservableObject {
             selectedCandidate = candidate
             publishAnswerHighlight(rect)
             highlight = .resolved
-            if isCopilotActive { showLiveHighlight() }
+            // The frame is up on the control to press; the app under it has to
+            // be frontmost, or the first click is spent activating its window.
+            if isCopilotActive { activateTargetApp() }
         } else if response.result.targetCandidateID != nil, !tolerant {
             Diagnostics.record("vision.result", details: [
                 ("mode", .code(response.result.mode)),
@@ -991,12 +1080,10 @@ final class VisionSession: ObservableObject {
             selectedCandidate = nil
             publishAnswerHighlight(box)
             highlight = .resolved
-            if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
         } else {
             selectedCandidate = nil
             publishAnswerHighlight(nil)
             highlight = .none
-            if isCopilotActive { HighlightOverlayPresenter.shared.hide() }
         }
         // Whether the user got a highlight, and why not when they did not.
         // A missing ring has three different causes — the model named no
@@ -1026,25 +1113,6 @@ final class VisionSession: ObservableObject {
         onAnswerHighlight?(rect)
     }
 
-    private func showLiveHighlight() {
-        guard let rect = selectedCandidate?.rect,
-              let captureRect = attachment.captureRect else { return }
-        let globalRect = CGRect(
-            x: captureRect.minX + rect.minX * captureRect.width,
-            y: captureRect.minY + rect.minY * captureRect.height,
-            width: rect.width * captureRect.width,
-            height: rect.height * captureRect.height
-        )
-        HighlightOverlayPresenter.shared.show(around: globalRect, duration: nil, padding: 6)
-        // Whenever we point at a control to click, the target app must be
-        // frontmost — otherwise the user's first click is spent activating
-        // its window (macOS click-to-focus) instead of pressing the control,
-        // yet our global monitor still fires and clears the ring. Handing
-        // focus back makes the very first click act. The strip floats above
-        // and does not close on resign-active, so nothing is lost.
-        activateTargetApp()
-    }
-
     /// Returns frontmost status to the app being navigated. No-op when it is
     /// already active (e.g. mid-task, after the user clicked in it).
     private func activateTargetApp() {
@@ -1069,6 +1137,9 @@ final class CancellationLedger {
         /// The turn ran past its budget. The watchdog that cancelled it owns
         /// the message, so the request path stays quiet.
         case deadlineExceeded
+        /// The user closed guidance while a step was being evaluated. Nothing
+        /// was dropped on them; they walked away from it.
+        case guidanceLeft
     }
 
     var cause: Cause?

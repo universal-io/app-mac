@@ -173,7 +173,7 @@ final class SessionCoordinator {
         switch mode {
         case .idle:
             summonSelectionAware()
-        case .vision, .navigator, .copilot:
+        case .vision, .copilot:
             close(reason: .doubleTapOnVision)
         case .compose:
             // The cycle is 閉 → コンポーズ → Vision → 閉: a double-tap always
@@ -443,7 +443,7 @@ final class SessionCoordinator {
                 composeSession.isRecording = false
                 composeSession.errorMessage = UserFacingError.message(for: error)
             }
-        case .vision:
+        case .vision, .copilot:
             guard let visionSession else { return }
             isDictating = true
             visionSession.errorMessage = nil
@@ -457,8 +457,6 @@ final class SessionCoordinator {
                 visionSession.isRecording = false
                 visionSession.errorMessage = UserFacingError.message(for: error)
             }
-        case .navigator, .copilot:
-            return
         default:
             return
         }
@@ -489,7 +487,7 @@ final class SessionCoordinator {
             } else {
                 sink = nil
             }
-        case .vision:
+        case .vision, .copilot:
             if let visionSession {
                 visionSession.isRecording = false
                 visionSession.isTranscribing = true
@@ -951,11 +949,6 @@ final class SessionCoordinator {
 
     private func transitionVision(to target: AppMode, reason: TransitionReason) -> Bool {
         guard visionSession != nil else { return false }
-        if target == .copilot, stateMachine.mode == .vision {
-            guard stateMachine.transition(to: .navigator, reason: .visionGuideReady) else {
-                return false
-            }
-        }
         return stateMachine.transition(to: target, reason: reason)
     }
 
@@ -998,7 +991,9 @@ final class SessionCoordinator {
     // MARK: - Panel
 
     private func applyPanel(for mode: AppMode) {
-        if mode.hasPanel {
+        switch mode {
+        case .compose:
+            guard let composeSession else { return }
             // The first thing the user sees. Recorded before `present` returns
             // rather than after, because what follows is view construction the
             // user is already watching happen, and because a panel that never
@@ -1008,44 +1003,35 @@ final class SessionCoordinator {
                     ("sinceSummon", .ms(summonClock.elapsedMs)),
                 ])
             }
-            if mode == .compose, let composeSession {
-                panelController.present(
-                    FoundationComposeRootView(
-                        session: composeSession,
-                        onExpansionChange: { [weak self] expanded in
-                            self?.panelController.setComposeExpanded(expanded)
-                        }
-                    ),
-                    for: mode
-                )
-            } else if mode == .vision, let visionSession {
-                presentPointing(for: visionSession)
-            } else if mode == .navigator || mode == .copilot, let visionSession {
-                // Guidance keeps the panel for now: the strip carries its own
-                // controls and its own progress, and the overlay would have to
-                // hand the screen back for every click the user is being asked
-                // to make. Closing the overlay here is what makes that handover
-                // happen at all.
-                pointingOverlay.close()
-                if panelController.isVisible {
-                    panelController.applyMode(mode)
-                } else {
-                    panelController.present(
-                        VisionRootView(session: visionSession),
-                        for: mode
-                    )
-                }
-            } else if panelController.isVisible {
-                panelController.applyMode(mode)
+            panelController.present(
+                FoundationComposeRootView(
+                    session: composeSession,
+                    onExpansionChange: { [weak self] expanded in
+                        self?.panelController.setComposeExpanded(expanded)
+                    }
+                ),
+                for: mode
+            )
+        case .vision:
+            guard let visionSession else { return }
+            if pointingOverlay.isVisible {
+                // Back from guidance: the same overlay, with the wash returning.
+                pointingOverlay.enterPointing()
             } else {
-                panelController.present(
-                    CorePanelShellView(stateMachine: stateMachine),
-                    for: mode
-                )
+                Diagnostics.record("coordinator.panelShown", mode: mode, details: [
+                    ("sinceSummon", .ms(summonClock.elapsedMs)),
+                ])
+                presentPointing(for: visionSession)
             }
-        } else if case .capturing = mode {
+        case .copilot:
+            // Guidance presents nothing new. It is the pointing overlay with the
+            // wash lifted, so the clicks the user is asked to make reach the app
+            // underneath, and the bubble that was explaining now instructs. The
+            // strip this used to present is gone (R15).
+            pointingOverlay.enterGuiding()
+        case .capturing:
             panelController.hide()
-        } else {
+        case .idle:
             pointingTask?.cancel()
             pointingTask = nil
             pointingOverlay.close()
@@ -1097,9 +1083,14 @@ final class SessionCoordinator {
     /// correct. When no box comes back, their own mark stays: then the gesture is
     /// the only thing that says what the question was about.
     private func markWhatTheAnswerIsAbout(_ box: CGRect?, session: VisionSession) {
-        guard pointingOverlay.isVisible,
-              let box,
-              let captureRect = session.attachment.captureRect else { return }
+        guard pointingOverlay.isVisible else { return }
+        guard let box, let captureRect = session.attachment.captureRect else {
+            // Nothing to point at — or, in guidance, the user just clicked and
+            // the frame on the old control would be a claim about a screen that
+            // is changing. The bubble stays where it is.
+            pointingOverlay.clearAnswerFrame()
+            return
+        }
         pointingOverlay.showAnswerFrame(
             VisionPointerResolver.screenLocalRect(
                 normalized: box,
@@ -1296,31 +1287,5 @@ enum SuggestTrace {
         #if DEBUG
         NSLog("[Suggest] %@", message)
         #endif
-    }
-}
-
-/// Phase 1 placeholder content: proves on device that gestures drive the
-/// state machine and the window geometry follows the mode. Replaced mode by
-/// mode in Phase 3.
-struct CorePanelShellView: View {
-    @ObservedObject var stateMachine: AppStateMachine
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "gearshape.2")
-                .font(.system(size: 28))
-                .foregroundStyle(.secondary)
-            Text("I//O Core shell (Phase 1)")
-                .font(.headline)
-            Text("mode: \(stateMachine.mode.description)")
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.secondary)
-            Text("Right-Shift double-tap or Esc closes.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
     }
 }

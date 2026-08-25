@@ -99,8 +99,8 @@ enum VisionPointerResolver {
     /// `NSEvent.mouseLocation` reports) → CG global (top-left origin, what
     /// `ScreenshotAttachment.captureRect` and AX frames use).
     ///
-    /// This is exactly the inverse of the flip `HighlightOverlayPresenter`
-    /// performs to place its ring, and deliberately written as its mirror
+    /// This is exactly the inverse of the flip `screenLocalRect` performs to
+    /// put a frame back on the screen, and deliberately written as its mirror
     /// rather than derived again. Displays left of or above the main one have
     /// negative origins in both spaces, which is why only the main display's
     /// height appears here.

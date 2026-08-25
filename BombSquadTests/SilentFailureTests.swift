@@ -23,7 +23,7 @@ final class SilentFailureTests: XCTestCase {
     func testRefusedTransitionLeavesTheModeUnchanged() {
         let machine = AppStateMachine()
 
-        XCTAssertFalse(machine.transition(to: .navigator, reason: .summon))
+        XCTAssertFalse(machine.transition(to: .vision, reason: .summon))
 
         XCTAssertEqual(machine.mode, .idle)
         XCTAssertTrue(

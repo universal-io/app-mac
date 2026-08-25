@@ -86,18 +86,19 @@ struct VisionBubbleView: View {
     /// Everything in the bubble that is not the answer, at its tallest.
     ///
     /// Derived from the layout below rather than guessed: the handle with its
-    /// named close button (44), the body's own padding (24), the gaps between
-    /// its rows (30), the sent question's chip (25), the answer surface's
-    /// padding (20), the input at its ceiling (160), the guidance button (22)
-    /// and the margin the placement keeps on both edges (24). It exists so the
-    /// answer can be told how much of the screen is left, instead of being
-    /// given a share of it and letting the total run off the top — the
-    /// placement can move a bubble that is too tall, but it cannot shrink one.
+    /// state chip and named close button (44), the body's own padding (24), the
+    /// gaps between its rows (40), the sent question's chip (25), the answer
+    /// surface's padding (20), guidance's status row with its note (52), the
+    /// input at its ceiling (160), the guidance button (22) and the margin the
+    /// placement keeps on both edges (24). It exists so the answer can be told
+    /// how much of the screen is left, instead of being given a share of it and
+    /// letting the total run off the top — the placement can move a bubble that
+    /// is too tall, but it cannot shrink one.
     ///
     /// An upper bound, and meant to be: no single bubble carries all of these at
     /// once. Being wrong low is what puts the top of the answer above the menu
     /// bar, so it is rounded up whenever the chrome grows.
-    static let chromeHeight: CGFloat = 352
+    static let chromeHeight: CGFloat = 422
 
     /// How much of the covered screen the answer may take.
     ///
@@ -170,6 +171,7 @@ struct VisionBubbleView: View {
                 )
                 .padding(10)
                 .background(Self.readingSurface, in: RoundedRectangle(cornerRadius: 10))
+                guidanceStatus
                 ask
                 startGuidance
             }
@@ -212,6 +214,7 @@ struct VisionBubbleView: View {
                     report: VisionDiagnosticsReport.text(for: session)
                 )
             }
+            stateChip
             Spacer(minLength: 0)
             // Named, not just an ×. This is the way out of a mode that has taken
             // over the whole screen, and a bare glyph in a corner asks the user
@@ -226,10 +229,14 @@ struct VisionBubbleView: View {
                     // equivalent. A tooltip only teaches somebody who already
                     // waited on the control long enough to be told, and Esc is
                     // the thing a user reaches for first when a mode has taken
-                    // the screen.
-                    Text("Esc")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
+                    // the screen. Not shown while guiding: the screen is the
+                    // app's then, and so is Esc — it reaches this bubble only
+                    // while somebody is typing in it.
+                    if !session.isCopilotActive {
+                        Text("Esc")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .buttonStyle(.bordered)
@@ -278,12 +285,151 @@ struct VisionBubbleView: View {
         }
     }
 
-    /// The way into guidance, which used to live in the static panel.
+    /// Which of the two states this is, named — both of them.
     ///
-    /// It had to move here, and not as a tidy-up: the panel it was in is only
-    /// presented once guidance has already started, so from the moment pointing
-    /// replaced the panel this button was the only entrance to Copilot and
-    /// nothing could reach it. Starting guidance closes the overlay, because
+    /// The web client learned this the hard way: it labelled one state and let
+    /// the label's absence stand for the other, and nobody could read the
+    /// absence (`app-web/docs/solo-mode.md` §1). The wash already says
+    /// "pointing" to anyone who knows the product; the chip says it to anyone
+    /// who does not, and says "案内" once the wash is gone and a click will
+    /// press things. The cross on the guidance chip goes back to pointing;
+    /// "解説を閉じる" beside it ends the whole session. Two exits on one bar,
+    /// told apart by their words — a bare glyph would make the user guess
+    /// which of the two a click gives up.
+    ///
+    /// Guidance wears the product's purple: it is "the actions that lead to
+    /// this", which is what the colour means. Pointing wears none — it is not
+    /// an action and not a state of anything, it is where the product rests.
+    @ViewBuilder
+    private var stateChip: some View {
+        if session.isCopilotActive {
+            HStack(spacing: 6) {
+                Label("案内", systemImage: "location.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                Button {
+                    session.leaveGuidance()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+                .arrowCursorOnHover()
+                .accessibilityLabel("案内を終える")
+                .hoverHint(
+                    "案内を終えて、画面を指せる状態に戻ります",
+                    alignment: .bottomLeading,
+                    offset: CGSize(width: 0, height: 28)
+                )
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(MarkStyle.swiftUIColor, in: Capsule())
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("案内中")
+        } else {
+            Label("解説", systemImage: "eye")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Self.readingSurface, in: Capsule())
+                .accessibilityLabel("解説中")
+        }
+    }
+
+    /// What guidance is doing, and the one button it needs.
+    ///
+    /// The strip's status line, moved here with the strip's retirement (R15):
+    /// the frame on the real screen says where, this says what is being waited
+    /// for, and 再確認 is for the actions the click monitor cannot see —
+    /// keyboard ones, and clicks on another display.
+    @ViewBuilder
+    private var guidanceStatus: some View {
+        if session.isCopilotActive {
+            VStack(alignment: .leading, spacing: 6) {
+                if session.copilotSawNoChange {
+                    Label(
+                        "操作は検知しましたが、画面に変化は見えませんでした",
+                        systemImage: "info.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+                HStack(spacing: 8) {
+                    if session.isCopilotChecking {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: statusIcon)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(statusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    if session.copilotState != .complete, session.copilotState != .stepLimit {
+                        Button {
+                            session.requestCopilotProgressCheck()
+                        } label: {
+                            Label("再確認", systemImage: "arrow.clockwise")
+                        }
+                        .controlSize(.small)
+                        .disabled(session.isCopilotChecking)
+                        .arrowCursorOnHover()
+                        .hoverHint(
+                            "いまの画面をもう一度確認します",
+                            alignment: .bottomTrailing,
+                            offset: CGSize(width: 0, height: 30)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private var statusText: String {
+        switch session.copilotState {
+        case .idle:
+            // A guide turn may legitimately return no target (candidate
+            // missing from AX); never point the user at a frame that does
+            // not exist.
+            return session.selectedCandidate != nil
+                ? "枠の場所をクリックしてください。操作後の画面を自動で確認します"
+                : "案内に従って操作してください。操作後の画面を自動で確認します"
+        case .waitingForChange:
+            return "クリック後の画面変化と安定を待っています…"
+        case .evaluating:
+            return "新しい画面から次の案内を確認しています…"
+        case .timedOut:
+            return "画面を撮影できませんでした。「再確認」を押してください"
+        case .complete:
+            return "目的に到達しました。「解説を閉じる」で終わります"
+        case .clarification:
+            return "案内をご確認ください。進める場合はそのまま操作すると続きます"
+        case .stepLimit:
+            return "案内の回数が上限に達しました。目的を絞ってもう一度質問してください"
+        }
+    }
+
+    private var statusIcon: String {
+        switch session.copilotState {
+        case .complete:
+            return "checkmark.circle.fill"
+        case .timedOut, .clarification, .stepLimit:
+            return "exclamationmark.circle"
+        default:
+            return "cursorarrow.click.2"
+        }
+    }
+
+    /// The way into guidance for a typed question the model answered rather
+    /// than guided.
+    ///
+    /// A guide answer opens guidance by itself (`VisionSession.opensGuidance`);
+    /// this is for the other case, where the user still wants to be walked
+    /// there. Pressing it lifts the wash and asks for the first step, because
     /// being told "click this" is useless while a wash is swallowing clicks.
     @ViewBuilder
     private var startGuidance: some View {
@@ -300,6 +446,11 @@ struct VisionBubbleView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .accessibilityLabel("この画面での操作案内を開始")
             .accessibilityHint("同じ会話の内容を引き継いで操作案内を開始します")
+            .hoverHint(
+                "幕が消え、次に押す場所を枠で示します",
+                alignment: .bottomTrailing,
+                offset: CGSize(width: 0, height: 30)
+            )
         }
     }
 
