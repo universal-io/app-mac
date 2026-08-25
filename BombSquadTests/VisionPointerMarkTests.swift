@@ -44,6 +44,36 @@ final class VisionPointerMarkTests: XCTestCase {
         assertMarked(marked, x: 522, y: 500, "the ring itself")
     }
 
+    /// The mark carries its own edge outward: a dark band between the magenta
+    /// core and the white surround.
+    ///
+    /// Two bands leave the mark defenceless on the two screens it is most likely
+    /// to need help on — a white page hides the white surround, and a magenta or
+    /// hot-pink one hides the core. Nothing throws when a band is dropped; the
+    /// mark just quietly stops having an edge on somebody's brand page, so the
+    /// band is pinned here.
+    func testTheMarkCarriesADarkBandBetweenItsCoreAndItsSurround() throws {
+        let bitmap = try white(width: 1000, height: 1000)
+        let marked = try XCTUnwrap(
+            VisionPointerMark.burn(
+                VisionPointer(kind: .point(CGPoint(x: 0.5, y: 0.5))),
+                into: bitmap
+            )
+        )
+
+        // Straight out from the centre along the x axis, across every band.
+        var sawMagenta = false
+        var sawDark = false
+        for x in 500...540 {
+            guard let colour = marked.colorAt(x: x, y: 500) else { continue }
+            let r = colour.redComponent, g = colour.greenComponent, b = colour.blueComponent
+            if r > 0.6 && g < 0.4 && b > 0.6 { sawMagenta = true }
+            if r < 0.35 && g < 0.35 && b < 0.35 { sawDark = true }
+        }
+        XCTAssertTrue(sawMagenta, "the magenta core is gone")
+        XCTAssertTrue(sawDark, "the dark band between core and surround is gone")
+    }
+
     func testTheRestOfTheScreenSurvivesUnchanged() throws {
         let bitmap = try white(width: 800, height: 600)
         let marked = try XCTUnwrap(

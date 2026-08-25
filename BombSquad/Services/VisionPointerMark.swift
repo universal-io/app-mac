@@ -23,8 +23,15 @@ import AppKit
 enum VisionPointerMark {
     /// Magenta: effectively absent from real interface chrome, so the mark
     /// cannot be mistaken for part of the screen underneath it.
+    ///
+    /// **Deliberately not the colour of the mark the user sees.** That one is
+    /// iris (`MarkStyle`), and the two must not be made to match: this is a
+    /// signal to a model and that is a signal to a person, and a reader who saw
+    /// them as the same thing would conclude the app draws on the screenshots it
+    /// keeps.
     private static let markColor = NSColor(srgbRed: 1, green: 0, blue: 0.898, alpha: 1)
-    private static let haloColor = NSColor.white
+    private static let outerColor = NSColor.white
+    private static let midColor = NSColor.black
 
     /// Returns a new bitmap with the gesture drawn on top, or nil when a
     /// drawing context could not be made.
@@ -159,10 +166,39 @@ enum VisionPointerMark {
         }
     }
 
-    /// Every shape is drawn twice — a white halo under a magenta line — so it
-    /// stays visible on both a dark toolbar and a white document. Magenta alone
-    /// nearly vanishes on a blue app, which the web client saw in a screenshot.
+    /// Three concentric bands — white, then black, then magenta — so the mark
+    /// has an edge against any background it can land on.
+    ///
+    /// It was two: a white surround under a magenta line, which covers a dark
+    /// toolbar and leaves magenta alone to carry a light one. Two backgrounds
+    /// defeat that. **A white or near-white page** hides the white band, leaving
+    /// a magenta line whose only edge is against the page itself. **A magenta or
+    /// hot-pink screen** — the case the colour was chosen to avoid, but a
+    /// designer's canvas or a brand page is exactly where somebody points —
+    /// leaves the magenta core with nothing to sit against. Black between them
+    /// closes both: white always has an edge against black, black always has one
+    /// against white, and the magenta core stays the thing the prompt refers to.
+    ///
+    /// Widths are multiples of the stroke so this scales with the image like
+    /// everything else here. Drawn widest first, so each band is the rim of the
+    /// one before it.
+    ///
+    /// **The outermost width is unchanged at 2.2.** Widening it to fit a third
+    /// band was the obvious move and it was wrong: the mark's footprint grew
+    /// inward and started covering the thing being pointed at, which
+    /// `testTheMarkIsARingRatherThanADiscSoTheTargetStaysVisible` caught. The
+    /// black is carved out of the white instead, so this costs no coverage at
+    /// all — the hole in the middle of the ring is exactly as wide as it was.
+    ///
+    /// **Unverified against the model.** It cannot read worse than two bands —
+    /// same magenta core, same footprint, strictly more edge — but whether it
+    /// reads *better* is a question for repeated runs on the same screen with
+    /// the wire dumps open, not for reasoning.
     private static func passes(_ strokeWidth: CGFloat) -> [(NSColor, CGFloat)] {
-        [(haloColor, strokeWidth * 2.2), (markColor, strokeWidth)]
+        [
+            (outerColor, strokeWidth * 2.2),
+            (midColor, strokeWidth * 1.6),
+            (markColor, strokeWidth),
+        ]
     }
 }

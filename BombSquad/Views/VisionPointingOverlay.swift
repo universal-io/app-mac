@@ -138,8 +138,8 @@ final class VisionPointingOverlay {
         // drawn for the previous question is not part of this one.
         frameAnchor = nil
         canvas?.wash?.stroke = nil
-        canvas?.wash?.markShape = frame.map(WashView.MarkShape.frame)
-            ?? Self.drawnMark(point: point, frame: frame).map(WashView.MarkShape.ring)
+        canvas?.wash?.markShape = frame.map(MarkShape.frame)
+            ?? Self.drawnMark(point: point, frame: frame).map(MarkShape.ring)
         canvas?.wash?.hitFrame = frame
         placeBubble()
     }
@@ -352,71 +352,15 @@ private final class PointingCanvas: NSView {
 /// that swallowed clicks here would make the point of the whole surface — that a
 /// click is a question — depend on which subview happened to be on top.
 private final class WashView: NSView {
-    /// The one thing that says "this one".
-    ///
-    /// A ring at a point until the element is measured, then the element's own
-    /// frame — two shapes of the same object, so they are one type with one
-    /// drawing. They used to be two: a hand-drawn ring with a 3pt line and a
-    /// target cross, and a layer-drawn frame with a 2.5pt line and a beat. Two
-    /// marks that mean the same thing and do not look alike read as two
-    /// different features, and the cross in the middle claimed a precision the
-    /// mark does not have — the click is not a crosshair, it is a place.
-    enum MarkShape {
-        case ring(CGPoint)
-        case frame(CGRect)
-
-        /// The stroked outline, and — as `spread` grows — what a beat radiates
-        /// out to. Radiating a fixed distance rather than scaling: a frame can
-        /// be a button or an 800-point toolbar, and doubling the second one
-        /// throws a ring across half the screen.
-        func path(spread: CGFloat) -> NSBezierPath {
-            switch self {
-            case .ring(let centre):
-                let radius = WashView.ringRadius + spread
-                return NSBezierPath(ovalIn: CGRect(
-                    x: centre.x - radius, y: centre.y - radius,
-                    width: radius * 2, height: radius * 2
-                ))
-            case .frame(let rect):
-                return NSBezierPath(
-                    roundedRect: rect.insetBy(dx: -4 - spread, dy: -4 - spread),
-                    xRadius: 8 + spread,
-                    yRadius: 8 + spread
-                )
-            }
-        }
-    }
-
-    /// The ring's radius, which is also what the bubble's placement has to clear.
-    static let ringRadius: CGFloat = 22
-    /// The line every mark is drawn with, and the dark backing under it. Iris
-    /// nearly vanishes on a blue app, and a second colour would promise a
-    /// second meaning.
-    ///
-    /// Backing, not halo: the halo is the thing that beats outward, and one word
-    /// for two layers is how the next edit gives them the same width.
-    static let markLineWidth: CGFloat = 2.5
-    static let markBackingWidth: CGFloat = 6
-    private static let markBacking = NSColor.black.withAlphaComponent(0.45)
-    /// How far a beat travels before it is gone.
-    private static let markBeatSpread: CGFloat = 14
-
+    /// The one thing that says "this one" — see `MarkStyle`, which owns the
+    /// shape, the colours and the numbers so that the guidance highlight in its
+    /// own window draws exactly the same thing.
     var markShape: MarkShape? { didSet { renderMark() } }
     /// The line the user drew, in this view's coordinates.
     var stroke: [CGPoint]? { didSet { needsDisplay = true } }
     var hitFrame: CGRect? { didSet { needsDisplay = true } }
     var cursor: CGPoint? { didSet { needsDisplay = true } }
 
-    /// The tint. Colour only — nothing here filters brightness, so the screen
-    /// underneath keeps its own light and shade exactly. Raising the alpha to
-    /// make it "more purple" is the trap: a flat colour drags dark screens and
-    /// light screens alike toward its own lightness, and the web client measured
-    /// the difference between them shrinking by a third when that was tried.
-    /// Same value as the web client's wash (`app/wash.ts`).
-    private static let tint = NSColor(srgbRed: 74 / 255, green: 80 / 255, blue: 1, alpha: 0.40)
-    /// One colour for "here, this, the thing you touched" — the mark and the
-    /// frame, and nothing else. State never borrows it.
-    private static let iris = NSColor(srgbRed: 74 / 255, green: 80 / 255, blue: 1, alpha: 1)
 
     /// Where the spotlight's falloff ends — not where the clear part ends. The
     /// held-clear core is half of it and every stop of the ramp is a fraction of
@@ -475,62 +419,14 @@ private final class WashView: NSView {
 
     private var markLayer: CALayer?
 
-    /// Draws whichever mark is current: dark backing, iris outline, and a beat
-    /// radiating out of it.
-    ///
-    /// One implementation for the ring and the frame, because they are the same
-    /// statement — "this one" — and a user who sees them side by side across two
-    /// gestures should not be able to tell that two pieces of code drew them.
-    ///
-    /// A rest between beats is what makes it a beat. A pulse with no gap is a
-    /// waiting spinner, which would say something about processing rather than
-    /// about a place. Held still under Reduce Motion.
+    /// Puts up whichever mark is current, and takes down the one before it.
     private func renderMark() {
-        // One container so a new mark replaces the old one whole; loose
-        // sublayers are how a stale ring outlives the gesture it belonged to.
         markLayer?.removeFromSuperlayer()
         markLayer = nil
         guard let markShape, let host = layer else { return }
-
-        let container = CALayer()
-        host.addSublayer(container)
-        markLayer = container
-
-        let outline = markShape.path(spread: 0)
-        container.addSublayer(Self.stroked(outline, Self.markBacking, Self.markBackingWidth))
-        container.addSublayer(Self.stroked(outline, Self.iris, Self.markLineWidth))
-
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-
-        let spread = markShape.path(spread: Self.markBeatSpread)
-        let grow = CAKeyframeAnimation(keyPath: "path")
-        grow.values = [outline.cgPath, spread.cgPath, spread.cgPath]
-        grow.keyTimes = [0, 0.58, 1]
-        let fade = CAKeyframeAnimation(keyPath: "opacity")
-        fade.values = [0.61, 0, 0]
-        fade.keyTimes = [0, 0.58, 1]
-        let group = CAAnimationGroup()
-        group.animations = [grow, fade]
-        group.duration = 1.8
-        group.repeatCount = .infinity
-        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
-
-        let beat = Self.stroked(outline, Self.iris, Self.markLineWidth)
-        beat.add(group, forKey: "beat")
-        container.addSublayer(beat)
-    }
-
-    private static func stroked(
-        _ path: NSBezierPath,
-        _ color: NSColor,
-        _ width: CGFloat
-    ) -> CAShapeLayer {
-        let layer = CAShapeLayer()
-        layer.path = path.cgPath
-        layer.fillColor = nil
-        layer.strokeColor = color.cgColor
-        layer.lineWidth = width
-        return layer
+        let mark = MarkStyle.layer(for: markShape)
+        host.addSublayer(mark)
+        markLayer = mark
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -547,13 +443,10 @@ private final class WashView: NSView {
     /// burn closes it for the model, which needs to read an enclosure rather
     /// than follow a hand — same split the web client makes.
     private func draw(stroke points: [CGPoint]) {
-        // The same two widths as a mark: the trail is the same claim in a shape
-        // the user drew, and one iris line at 3pt beside another at 2.5pt is a
-        // difference nobody chose.
-        for (color, width) in [
-            (Self.markBacking, Self.markBackingWidth),
-            (Self.iris, Self.markLineWidth),
-        ] {
+        // The same two passes as a mark: the trail is the same claim in a shape
+        // only the user knows, so it cannot be a `MarkShape`, but there is no
+        // reason for it to be a different weight or a different purple.
+        for (color, width) in MarkStyle.passes {
             color.setStroke()
             let path = NSBezierPath()
             path.lineJoinStyle = .round
@@ -583,7 +476,7 @@ private final class WashView: NSView {
     /// app has covered, and that stays true.
     private func drawWash() {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        Self.tint.setFill()
+        WashStyle.tint.setFill()
         bounds.fill()
         Self.lattice.setFill()
         bounds.fill()

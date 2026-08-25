@@ -122,7 +122,11 @@ struct VisionBubbleView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
-                        .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8))
+                        // The product's own purple, not the system accent: the
+                        // chip is the user's own words in the one place the
+                        // product speaks, and iris is what that place is made
+                        // of. State never borrows it — this is not state.
+                        .background(MarkStyle.swiftUIColor, in: RoundedRectangle(cornerRadius: 8))
                         .accessibilityLabel("送信した質問: \(question)")
                 }
                 // Two surfaces, because there are two jobs: this is the place to
@@ -251,6 +255,7 @@ struct VisionBubbleView: View {
                 Label("案内を開始", systemImage: "location.fill")
             }
             .buttonStyle(.borderedProminent)
+            .tint(MarkStyle.swiftUIColor)
             .controlSize(.small)
             .frame(maxWidth: .infinity, alignment: .trailing)
             .accessibilityLabel("この画面での操作案内を開始")

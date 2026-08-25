@@ -1,10 +1,16 @@
 import AppKit
 
-/// Draws the AI's "here it is" ring on the LIVE screen (POC Step 3): a red
-/// rounded rectangle over the real UI element, floating above every window,
-/// click-through, and gone after a few seconds. The panel's in-image
-/// highlight tells the user where in the picture; this one points at the
-/// actual pixels they need to click.
+/// Draws guidance's "here it is" on the LIVE screen: a mark over the real UI
+/// element, floating above every window, click-through, and gone after a few
+/// seconds.
+///
+/// It draws `MarkStyle`, the same thing the pointing overlay draws. It used to
+/// be its own red rounded rectangle with its own corner radius and its own
+/// glow, from before pointing existed — so the product had two ways of saying
+/// "this one" and a user who met both in a session had no reason to think they
+/// were related. Guidance is the surface that most needs the beat: it is asking
+/// somebody to find a control and move a mouse to it, which is exactly the wait
+/// a still mark has to survive.
 @MainActor
 final class HighlightOverlayPresenter {
     static let shared = HighlightOverlayPresenter()
@@ -23,7 +29,7 @@ final class HighlightOverlayPresenter {
     func show(
         around cgRect: CGRect,
         duration: TimeInterval? = 2.6,
-        padding: CGFloat = 14
+        padding: CGFloat = MarkStyle.outerReach
     ) {
         hide()
 
@@ -35,13 +41,21 @@ final class HighlightOverlayPresenter {
             width: cgRect.width,
             height: cgRect.height
         )
-        // Padding so the ring surrounds rather than covers, plus room for
-        // the stroke and glow.
+        // Padding so the mark surrounds rather than covers, plus the room the
+        // beat needs — a window sized to the element clips it, and the beat is
+        // the part that carries across a screen.
         let frame = cocoaTarget.insetBy(dx: -padding, dy: -padding)
 
         let window = OverlayWindow(clickThrough: true)
         window.place(globalFrame: frame)
-        window.contentView = HighlightRingView(frame: NSRect(origin: .zero, size: frame.size))
+        window.contentView = MarkHostView(
+            frame: NSRect(origin: .zero, size: frame.size),
+            // Back to the element's own rect, in the window's coordinates: the
+            // mark adds its own outset, so handing it the padded frame would
+            // draw it one padding too far out.
+            target: NSRect(origin: .zero, size: frame.size)
+                .insetBy(dx: padding, dy: padding)
+        )
         window.alphaValue = 0
         window.orderFrontRegardless()
 
@@ -110,33 +124,17 @@ final class HighlightOverlayPresenter {
     }
 }
 
-/// The ring itself: red rounded stroke with a soft glow, matching the
-/// in-panel highlight so both read as the same gesture.
-private final class HighlightRingView: NSView {
-    override init(frame frameRect: NSRect) {
+/// Holds one `MarkStyle` mark and nothing else. Every colour, width, corner and
+/// beat comes from there, so this window and the pointing overlay cannot drift.
+private final class MarkHostView: NSView {
+    init(frame frameRect: NSRect, target: CGRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer?.addSublayer(MarkStyle.layer(for: .frame(target)))
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        let inset: CGFloat = 8
-        let rect = bounds.insetBy(dx: inset, dy: inset)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
-        path.lineWidth = 4
-
-        // Glow pass (wider, translucent) then the crisp ring.
-        NSColor.systemRed.withAlphaComponent(0.35).setStroke()
-        let glow = NSBezierPath(roundedRect: rect.insetBy(dx: -3, dy: -3), xRadius: 12, yRadius: 12)
-        glow.lineWidth = 9
-        glow.stroke()
-
-        NSColor.systemRed.setStroke()
-        path.stroke()
     }
 }
