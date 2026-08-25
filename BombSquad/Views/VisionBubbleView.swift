@@ -27,6 +27,16 @@ struct VisionBubbleView: View {
 
     private static let answerFontSize: CGFloat = 13
 
+    /// The two surfaces inside the bubble, as tone rather than as depth.
+    ///
+    /// The place to read and the place to type still have to be told apart —
+    /// without that the answer, the empty space and the input box are one area
+    /// with nothing saying where a click puts a cursor. A shade of the
+    /// foreground does it in both appearances without either surface claiming
+    /// to be a layer of its own.
+    private static let readingSurface = Color.primary.opacity(0.05)
+    private static let typingSurface = Color.primary.opacity(0.10)
+
     /// One line of the answer, in the answer's own font.
     ///
     /// Ascender to descender plus leading is what text layout uses for a line
@@ -75,15 +85,19 @@ struct VisionBubbleView: View {
 
     /// Everything in the bubble that is not the answer, at its tallest.
     ///
-    /// Derived from the layout below rather than guessed: the handle (32), the
-    /// body's own padding (24), the gaps between its rows (30), the sent
-    /// question's chip (25), the answer surface's padding (20), the input at
-    /// its ceiling (160), the guidance button (22) and the margin the placement
-    /// keeps on both edges (24). It exists so the answer can be told how much
-    /// of the screen is left, instead of being given a share of it and letting
-    /// the total run off the top — the placement can move a bubble that is too
-    /// tall, but it cannot shrink one.
-    static let chromeHeight: CGFloat = 340
+    /// Derived from the layout below rather than guessed: the handle with its
+    /// named close button (44), the body's own padding (24), the gaps between
+    /// its rows (30), the sent question's chip (25), the answer surface's
+    /// padding (20), the input at its ceiling (160), the guidance button (22)
+    /// and the margin the placement keeps on both edges (24). It exists so the
+    /// answer can be told how much of the screen is left, instead of being
+    /// given a share of it and letting the total run off the top — the
+    /// placement can move a bubble that is too tall, but it cannot shrink one.
+    ///
+    /// An upper bound, and meant to be: no single bubble carries all of these at
+    /// once. Being wrong low is what puts the top of the answer above the menu
+    /// bar, so it is rounded up whenever the chrome grows.
+    static let chromeHeight: CGFloat = 352
 
     /// How much of the covered screen the answer may take.
     ///
@@ -134,6 +148,13 @@ struct VisionBubbleView: View {
                 // on the card, which made the answer, the empty space and the
                 // input box one undifferentiated area — there was nothing to
                 // tell the user where a click would put a cursor.
+                //
+                // Told apart by tone alone. `controlBackgroundColor` and
+                // `textBackgroundColor` with a hairline around each read as two
+                // panes stacked on the card, and the bubble then had depth
+                // inside it as well as under it — a card floating over the
+                // screen, holding two more cards. One shadow in the whole thing,
+                // and it belongs to the bubble.
                 ViewThatFits(in: .vertical) {
                     answer
                     ScrollView { answer }
@@ -148,10 +169,7 @@ struct VisionBubbleView: View {
                     alignment: .topLeading
                 )
                 .padding(10)
-                .background(
-                    Color(nsColor: .controlBackgroundColor),
-                    in: RoundedRectangle(cornerRadius: 10)
-                )
+                .background(Self.readingSurface, in: RoundedRectangle(cornerRadius: 10))
                 ask
                 startGuidance
             }
@@ -195,13 +213,19 @@ struct VisionBubbleView: View {
                 )
             }
             Spacer(minLength: 0)
+            // Named, not just an ×. This is the way out of a mode that has taken
+            // over the whole screen, and a bare glyph in a corner asks the user
+            // to guess what dismissing it does — whether the explanation goes
+            // away, or the wash, or the app. "終了" was avoided for the same
+            // reason: it reads as quitting the application.
             Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                Label("解説を閉じる", systemImage: "xmark")
+                    .font(.system(size: 11))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Visionを閉じる")
-            .help("閉じる（Esc）")
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .accessibilityLabel("解説を閉じる")
+            .help("この解説モードを抜けます（Esc）")
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
@@ -295,14 +319,7 @@ struct VisionBubbleView: View {
                 within: answerHeightBudget
             )
         )
-        .background(
-            Color(nsColor: .textBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
-        )
+        .background(Self.typingSurface, in: RoundedRectangle(cornerRadius: 8))
         .accessibilityLabel("Visionへの質問")
         .help("Enterで送信、Shift+Enterで改行")
     }

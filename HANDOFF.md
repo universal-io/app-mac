@@ -151,7 +151,7 @@ AXヒット率をunified logから集計）。
 位置だけ動かす。見た目が違うのは中身の出入り（質問チップ・スクローラ・「案内を開始」ボタン・
 入力欄の高さ）による。
 
-7件直した（2026-08-24〜25）。実機で見てほしいのは、**答えの面積が実際に足りているか**である。
+8件直した（2026-08-24〜25）。実機で見てほしいのは、**答えの面積が実際に足りているか**である。
 
 1. 高さを**行の整数倍**へ（`VisionBubbleView.answerHeight(within:)`）。文字の途中で切れない
 2. 面積は**「画面に残っている分だけ」**（`VisionBubbleView.answerHeightBudget`）。半分では足りず、
@@ -173,8 +173,13 @@ AXヒット率をunified logから集計）。
    最初から持っていたので、ボタンはキーボードが既にやることの2つ目の経路で、製品で最も狭い面から
    幅を取っていた。ヘルプ文言「Enterで送信、Shift+Enterで改行」が代わりを務める。
    **`PanelSendButton`はComposeでは現役**（3箇所）
-6. 読む面（`controlBackgroundColor`）と打つ面（`textBackgroundColor`＋枠）を分離した
-7. 待っている間の文言が**クリック後も「画面を読んでいます…」のまま**だった。`hasPointed`が
+6. 読む面と打つ面は**濃さだけで分ける**（2026-08-25）。`controlBackgroundColor`／`textBackgroundColor`
+   ＋各面の1pt枠は、カードの上に2枚のカードが乗っているように見えた。**影はバブル自体の1つだけ**にし、
+   面は`Color.primary.opacity(0.05)`（読む）と`0.10`（打つ）のフラットな地に。
+   `NSScrollView.borderType = .noBorder`も明示（呼び出し側が縁を描くので二重になる）
+7. **閉じるボタンを「解説を閉じる」に**（2026-08-25）。画面全体を覆うモードの唯一の出口が隅の×では、
+   消したら何が起きるのか（解説か、幕か、アプリか）を推測させる。「終了」はアプリ終了に読めるので避けた
+8. 待っている間の文言が**クリック後も「画面を読んでいます…」のまま**だった。`hasPointed`が
    present時の`session.pointer != nil`で固定され、rootViewは更新されないため。`beginPointing()`が
    立てる`VisionSession.isPointing`から引くようにした（`pointer`では駄目 — 古い場所を語らないために
    `beginPointing()`が意図的にnilへ落としており、文言が出ている待ち時間の全部でnilである）

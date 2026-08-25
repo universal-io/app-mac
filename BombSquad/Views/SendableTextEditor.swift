@@ -63,6 +63,9 @@ struct SendableTextEditor: NSViewRepresentable {
         let scroll = NSScrollView()
         scroll.documentView = textView
         scroll.drawsBackground = false
+        // Explicit, because the surface around this is drawn by the caller: a
+        // bezel here would be a second edge on top of theirs.
+        scroll.borderType = .noBorder
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         // After this returns, because nothing is laid out yet: measuring here
