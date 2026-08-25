@@ -184,23 +184,36 @@ final class VisionSession: ObservableObject {
     }
 
     var canStartCopilot: Bool {
-        guard !isLoading,
-              let assistant = turns.last(where: { $0.role == .assistant }),
+        !isLoading && Self.offersGuidance(turns: turns)
+    }
+
+    /// Whether the entrance to guidance belongs on this conversation.
+    ///
+    /// Typing is the signal. Somebody who taps a thing is asking what it is,
+    /// not asking to be walked somewhere — and the tap's own turn reads
+    /// `pointedHereText`, which `startCopilot` would adopt as the goal and send
+    /// the copilot off to accomplish "ここについて".
+    ///
+    /// This was a 26-word keyword match against the question, plus the model's
+    /// own `guide` mode. The list is deleted rather than extended: it held
+    /// "どうやって" and not "どうすれば", so
+    /// "Google Analyticsでどうすれば国別のアクセス解析が見れるんですか?" — the
+    /// sentence the requirement was written from — did not open it, and neither
+    /// did "レポートを出力するには?" or "請求書を発行したい". Adding words
+    /// has no end, and it leans against the requirement, which is to offer
+    /// guidance where it is doubtful rather than withhold it. An entrance that
+    /// also appears on "これは何ですか?" costs one line of the bubble; a
+    /// missing one costs the feature.
+    ///
+    /// The two guards are `startCopilot`'s own, so the button is offered
+    /// exactly when pressing it would do something: an answer has to exist to
+    /// carry forward, and a user turn has to exist to become the goal.
+    static func offersGuidance(turns: [VisionDisplayTurn]) -> Bool {
+        guard turns.contains(where: { $0.role == .assistant }),
               let question = turns.last(where: { $0.role == .user })?.text else {
             return false
         }
-        return assistant.mode == .guide || Self.isActionSeekingQuestion(question)
-    }
-
-    private static func isActionSeekingQuestion(_ question: String) -> Bool {
-        let normalized = question.lowercased()
-        let markers = [
-            "どこ", "どうやって", "方法", "行き方", "開く", "開け", "取得",
-            "作成", "設定", "変更", "クリック", "押す", "操作", "見つけ",
-            "where", "how do", "how can", "open", "go to", "find", "get ",
-            "create", "set up", "configure", "change", "click", "press",
-        ]
-        return markers.contains { normalized.contains($0) }
+        return question != pointedHereText
     }
 
     var latestInstruction: String {
