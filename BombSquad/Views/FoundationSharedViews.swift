@@ -152,3 +152,47 @@ struct OperationalNoticeBanner: View {
         .foregroundStyle(.orange)
     }
 }
+
+/// The microphone, inside the field it types into.
+///
+/// Dictation was hold-to-talk on a key and nothing else: no button, and the
+/// only sign it existed was a red `mic.fill` that appeared *outside* the form
+/// once recording had already started. A capability whose sole affordance shows
+/// up after you have used it is a capability nobody finds. It sits in the field
+/// now, the way every messenger does it, so it is visible before it is needed
+/// and reachable by somebody who has never heard of the shortcut.
+///
+/// Click to start, click again to stop — the key stays hold-to-talk. Two
+/// interaction models for one feature is the convention, not a compromise: a
+/// held key ends when you let go, and a button has nothing to let go of.
+struct DictationButton: View {
+    let isRecording: Bool
+    let isTranscribing: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            if isTranscribing {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: isRecording ? "mic.fill" : "mic")
+                    // Red is state, so it never borrows the product's purple
+                    // (`MarkStyle`). Grey until it is doing something is the
+                    // whole point: the icon has to be legible as available
+                    // rather than as active.
+                    .foregroundStyle(isRecording ? Color.red : Color.secondary)
+                    .font(.system(size: 13))
+            }
+        }
+        .buttonStyle(.borderless)
+        .disabled(isTranscribing)
+        .accessibilityLabel(isRecording ? "音声入力を停止" : "音声入力を開始")
+        .help(
+            isTranscribing
+                ? "文字起こし中…"
+                : isRecording
+                    ? "録音中。クリックで停止します"
+                    : "音声入力（クリック、または\(KeybindingSettings.gestureKey().hintLabel) 長押し）"
+        )
+    }
+}

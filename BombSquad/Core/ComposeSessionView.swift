@@ -75,13 +75,27 @@ struct ComposeSessionView: View {
                 composeToolInfo
             }
 
-            SendableTextEditor(
-                text: $session.draft,
-                focusedField: focusedField,
-                field: .draft,
-                onSend: session.deployDraft
-            )
-            .padding(8)
+            // The microphone sits in the field, not in the toolbar below it.
+            // It used to appear only once recording had started, and outside
+            // the form — so the one sign that dictation existed showed up after
+            // you had already found it some other way.
+            HStack(alignment: .bottom, spacing: 0) {
+                SendableTextEditor(
+                    text: $session.draft,
+                    focusedField: focusedField,
+                    field: .draft,
+                    onSend: session.deployDraft
+                )
+                .padding(8)
+
+                DictationButton(
+                    isRecording: session.isRecording,
+                    isTranscribing: session.isTranscribing,
+                    action: { session.onToggleDictation?() }
+                )
+                .padding(.trailing, 10)
+                .padding(.bottom, 10)
+            }
             .background(EditorFocusBackground(
                 isFocused: session.focusedField == .draft && session.canFocusRevision
             ))
@@ -103,7 +117,7 @@ struct ComposeSessionView: View {
                         shortcut("Shift+Enter", "改行")
                         shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×1", "文案とフォーカス切替")
                         shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×2", "起動 / ビジョン / 閉じる")
-                        shortcut("\(KeybindingSettings.gestureKey().hintLabel) 長押し", "音声")
+                        shortcut("\(KeybindingSettings.gestureKey().hintLabel) 長押し", "音声（マイクのクリックでも可）")
                         shortcut("Esc", "閉じる")
                         Text("レビューは「レビュー」ボタンで実行します。")
                             .font(.caption2)
@@ -112,13 +126,10 @@ struct ComposeSessionView: View {
                     .padding(12)
                 }
 
-                if session.isRecording {
-                    Image(systemName: "mic.fill").foregroundStyle(.red)
-                    Text("録音中…").font(.caption).foregroundStyle(.secondary)
-                } else if session.isTranscribing {
-                    ProgressView().controlSize(.small)
-                    Text("文字起こし中…").font(.caption).foregroundStyle(.secondary)
-                }
+                // Recording and transcribing are shown by the microphone in
+                // the field. A second indicator here said the same thing in
+                // another place, which is how a user learns to look somewhere
+                // other than the control they pressed.
 
                 Spacer(minLength: 12)
 

@@ -334,6 +334,7 @@ final class SessionCoordinator {
             contextCaptureTask: Task { await rootContextTask.value }
         )
         visionSession?.tearDown()
+        session.onToggleDictation = { [weak self] in self?.toggleDictation() }
         visionSession = nil
         composeSession = session
         guard stateMachine.transition(to: .compose, reason: .summon) else {
@@ -406,6 +407,21 @@ final class SessionCoordinator {
     }
 
     // MARK: - Dictation
+
+    /// The button's way in, which the key does not have: something to press
+    /// again.
+    ///
+    /// Hold-to-talk ends when the key comes up, and a button has nothing to come
+    /// up — so the two gestures share the start and the stop but not the shape.
+    /// Both go through the same pair, so a session started either way is
+    /// finished, transcribed and cleaned up by the same code.
+    func toggleDictation() {
+        if isDictating {
+            stopDictationAndTranscribe()
+        } else {
+            startDictation()
+        }
+    }
 
     private func startDictation() {
         guard !isDictating else { return }
@@ -885,6 +901,7 @@ final class SessionCoordinator {
                 }
             )
             visionSession?.tearDown()
+            session.onToggleDictation = { [weak self] in self?.toggleDictation() }
             visionSession = session
             guard stateMachine.transition(to: .vision, reason: .captureCompleted) else {
                 session.tearDown()

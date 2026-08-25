@@ -75,6 +75,10 @@ final class ComposeSession: ObservableObject {
     @Published var focusedField: FocusField? = .draft
     @Published var isRecording = false
     @Published var isTranscribing = false
+    /// Start or stop dictation from inside the view. The recorder, the
+    /// transcriber and the mode rules all live in the coordinator; this is the
+    /// microphone in the field asking it to do what the held key asks it to do.
+    var onToggleDictation: (() -> Void)?
     @Published private(set) var situationalContext: SituationalContext?
     @Published private(set) var isContextExcluded = false
     /// Proactive Vision-grounded draft suggestion for the focused external

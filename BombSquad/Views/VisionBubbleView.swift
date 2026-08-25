@@ -295,9 +295,27 @@ struct VisionBubbleView: View {
     /// apps settled this convention long ago; the help text on the field is
     /// what carries it for somebody who has not met it.
     private var ask: some View {
-        // A real field surface, which is what macOS uses to say "text goes in
-        // here" — the editor draws no background of its own, so without this it
-        // is an invisible box on the card.
+        // The microphone lives inside the field's own surface rather than beside
+        // it: the two share one background, so it reads as part of the place you
+        // type rather than as a control that happens to sit next to it.
+        HStack(alignment: .bottom, spacing: 0) {
+            editor
+            DictationButton(
+                isRecording: session.isRecording,
+                isTranscribing: session.isTranscribing,
+                action: { session.onToggleDictation?() }
+            )
+            .padding(.trailing, 8)
+            .padding(.bottom, 7)
+        }
+        .background(Self.typingSurface, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityLabel("Visionへの質問")
+        .help("Enterで送信、Shift+Enterで改行")
+    }
+
+    private var editor: some View {
+        // The editor draws no background of its own, which is why the surface
+        // above exists: without it this is an invisible box on the card.
         SendableTextEditor(
             text: $session.input,
             focusedField: $session.focusedField,
@@ -319,9 +337,6 @@ struct VisionBubbleView: View {
                 within: answerHeightBudget
             )
         )
-        .background(Self.typingSurface, in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityLabel("Visionへの質問")
-        .help("Enterで送信、Shift+Enterで改行")
     }
 
     /// The most recent thing the user said, unless it was the gesture itself.
