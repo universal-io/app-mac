@@ -33,7 +33,7 @@ struct ActiveSkillLabel: View {
         Label(skillName, systemImage: "puzzlepiece.extension")
             .font(.caption)
             .foregroundStyle(.secondary)
-            .help(help)
+            .hoverHint(help, alignment: .bottomLeading, offset: CGSize(width: 0, height: 28))
             .accessibilityLabel("適用中のスキル: \(skillName)")
     }
 }
@@ -63,7 +63,11 @@ struct PanelToolInfo<PopoverContent: View>: View {
             .labelStyle(.iconOnly)
             .buttonStyle(.borderless)
             .arrowCursorOnHover()
-            .help(informationHelp)
+            .hoverHint(
+                informationHelp,
+                alignment: .bottomLeading,
+                offset: CGSize(width: 0, height: 28)
+            )
             .accessibilityLabel(informationAccessibilityLabel)
             .popover(isPresented: $isShowingInformation, arrowEdge: .bottom) {
                 popoverContent()
@@ -171,6 +175,12 @@ struct DictationButton: View {
     let isTranscribing: Bool
     let action: () -> Void
 
+    private var hint: String {
+        if isTranscribing { return "文字起こし中…" }
+        if isRecording { return "録音中。クリックで停止します" }
+        return "音声入力（クリック、または\(KeybindingSettings.gestureKey().hintLabel) 長押し）"
+    }
+
     var body: some View {
         Button(action: action) {
             if isTranscribing {
@@ -189,13 +199,10 @@ struct DictationButton: View {
         .arrowCursorOnHover()
         .disabled(isTranscribing)
         .accessibilityLabel(isRecording ? "音声入力を停止" : "音声入力を開始")
-        .help(
-            isTranscribing
-                ? "文字起こし中…"
-                : isRecording
-                    ? "録音中。クリックで停止します"
-                    : "音声入力（クリック、または\(KeybindingSettings.gestureKey().hintLabel) 長押し）"
-        )
+        // Drawn rather than asked for. One mechanism in both places: this button
+        // lives in the bubble as well as in Compose, and the bubble's window
+        // cannot show a system tooltip at all.
+        .hoverHint(hint)
     }
 }
 
@@ -219,5 +226,72 @@ extension View {
             guard inside else { return }
             NSCursor.arrow.set()
         }
+    }
+}
+
+extension View {
+    /// A hint this window draws itself, because the system's cannot be seen here.
+    ///
+    /// `.help()` is dead on the pointing overlay, and not because of an ordering
+    /// bug that can be fixed: AppKit draws tooltips in **their own window** at
+    /// pop-up level, and the overlay panel sits at `.screenSaver` covering the
+    /// whole display. The tooltip renders correctly and lands behind the thing
+    /// it belongs to, every time, and there is no public way to raise it. The
+    /// only hint that can be seen over this panel is one the panel draws.
+    ///
+    /// Delayed like a tooltip, because a label that appears the instant the
+    /// pointer crosses a control reads as the interface twitching.
+    func hoverHint(
+        _ text: String,
+        alignment: Alignment = .top,
+        offset: CGSize = CGSize(width: 0, height: -28)
+    ) -> some View {
+        modifier(HoverHint(text: text, alignment: alignment, offset: offset))
+    }
+}
+
+private struct HoverHint: ViewModifier {
+    let text: String
+    let alignment: Alignment
+    let offset: CGSize
+
+    @State private var isShown = false
+    @State private var reveal: Task<Void, Never>?
+
+    func body(content: Content) -> some View {
+        content
+            .onHover { inside in
+                reveal?.cancel()
+                guard inside else {
+                    isShown = false
+                    return
+                }
+                reveal = Task {
+                    try? await Task.sleep(for: .milliseconds(450))
+                    guard !Task.isCancelled else { return }
+                    isShown = true
+                }
+            }
+            .overlay(alignment: alignment) {
+                if isShown {
+                    Text(text)
+                        .font(.system(size: 11))
+                        .fixedSize()
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(
+                            Color(nsColor: .windowBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color.primary.opacity(0.14), lineWidth: 1)
+                        )
+                        .offset(offset)
+                        // It is a label, not a target: hit testing it would put
+                        // a hole in the control it is describing.
+                        .allowsHitTesting(false)
+                }
+            }
     }
 }

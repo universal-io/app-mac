@@ -236,7 +236,11 @@ struct VisionBubbleView: View {
             .controlSize(.small)
             .arrowCursorOnHover()
             .accessibilityLabel("解説を閉じる")
-            .help("この解説モードを抜けます（Esc）")
+            .hoverHint(
+                "この解説モードを抜けます",
+                alignment: .bottomTrailing,
+                offset: CGSize(width: 0, height: 30)
+            )
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
