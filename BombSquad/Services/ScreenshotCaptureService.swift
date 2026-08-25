@@ -530,6 +530,13 @@ enum StableScreenCaptureService {
 /// A non-blocking confirmation shown only after Copilot has selected the
 /// capture it will send to Vision. Stability probes stay invisible: flashing
 /// every comparison frame would imply that each one was analyzed by the model.
+///
+/// What it shows is the wash itself, for the length of one sweep: while guiding
+/// the wash is down because the screen is the user's, and the moment the
+/// product reads the screen again is the moment the wash is briefly back. It
+/// used to be a black dimming with an accent-coloured border and an eye — a
+/// third visual language, next to the wash and the marks, for something the
+/// wash already says.
 @MainActor
 final class CopilotCaptureCuePresenter {
     static let shared = CopilotCaptureCuePresenter()
@@ -555,8 +562,11 @@ final class CopilotCaptureCuePresenter {
 
         let displayedWindows = windows
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        // Held for the sweep, then let go. Under Reduce Motion there is no
+        // sweep, so the sheet itself is shown just long enough to register.
+        let hold: UInt64 = reduceMotion ? 140_000_000 : UInt64(WashStyle.sweepDuration * 1e9)
         hideTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: reduceMotion ? 140_000_000 : 70_000_000)
+            try? await Task.sleep(nanoseconds: hold)
             guard !Task.isCancelled, self?.generation == currentGeneration else { return }
 
             if reduceMotion {
@@ -565,7 +575,7 @@ final class CopilotCaptureCuePresenter {
             }
 
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.14
+                context.duration = 0.12
                 displayedWindows.forEach { $0.animator().alphaValue = 0 }
             } completionHandler: { [weak self] in
                 Task { @MainActor in
@@ -580,10 +590,10 @@ final class CopilotCaptureCuePresenter {
         let window = OverlayWindow(clickThrough: true)
         window.place(globalFrame: frame)
         window.alphaValue = 1
-        window.contentView = CopilotCaptureCueView(
-            frame: NSRect(origin: .zero, size: frame.size)
-        )
+        let cue = CopilotCaptureCueView(frame: NSRect(origin: .zero, size: frame.size))
+        window.contentView = cue
         window.orderFrontRegardless()
+        cue.sweep()
         return window
     }
 
@@ -594,6 +604,7 @@ final class CopilotCaptureCuePresenter {
     }
 }
 
+/// The wash, without a cursor: tint and an unbent lattice, and one sweep.
 private final class CopilotCaptureCueView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -605,35 +616,15 @@ private final class CopilotCaptureCueView: NSView {
         nil
     }
 
+    func sweep() {
+        guard let host = layer else { return }
+        WashStyle.sweep(over: host, in: bounds)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-
-        NSColor.black.withAlphaComponent(0.22).setFill()
-        bounds.fill()
-
-        let borderRect = bounds.insetBy(dx: 8, dy: 8)
-        let border = NSBezierPath(roundedRect: borderRect, xRadius: 12, yRadius: 12)
-        border.lineWidth = 3
-        NSColor.controlAccentColor.withAlphaComponent(0.9).setStroke()
-        border.stroke()
-
-        guard bounds.width >= 100, bounds.height >= 100,
-              let eye = NSImage(
-                systemSymbolName: "eye.fill",
-                accessibilityDescription: "画面を確認しました"
-              ) else { return }
-        let symbol = eye.withSymbolConfiguration(
-            .init(pointSize: 26, weight: .semibold)
-        ) ?? eye
-        symbol.isTemplate = true
-        let symbolRect = NSRect(
-            x: bounds.midX - 24,
-            y: bounds.midY - 24,
-            width: 48,
-            height: 48
-        )
-        NSColor.white.withAlphaComponent(0.95).set()
-        symbol.draw(in: symbolRect)
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        WashStyle.drawSheet(in: bounds, gravity: nil, context: context)
     }
 }
 

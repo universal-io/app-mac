@@ -149,4 +149,144 @@ enum WashStyle {
     /// difference between them shrinking by a third when that was tried. Same
     /// value as the web client's wash (`app/wash.ts`).
     static let tint = NSColor(srgbRed: 74 / 255, green: 80 / 255, blue: 1, alpha: 0.40)
+
+    // MARK: Lattice
+
+    /// The lattice: white dots on a grid over the tint.
+    ///
+    /// This is the layer that says the screen is being read rather than used.
+    /// The wash alone changes the colour; the dots give it a reason — a sensor
+    /// looking at a surface. The gap between "I am operating this screen" and "I
+    /// am pointing at it" has to be large, because a user who thinks they are
+    /// operating it will click a button and get an explanation instead.
+    ///
+    /// Kept just above the threshold of notice: it should be found, not seen.
+    /// It was 2pt dots on a 22pt grid — 0.65% of the surface — and at that size
+    /// they were below being found rather than just below being noticed. Bigger
+    /// and further apart is the trade that keeps it a lattice: 4pt on 25pt is
+    /// three times the ink with a fifth fewer dots, so the pattern reads as a
+    /// grid of points rather than as grain.
+    ///
+    /// **The alpha is nowhere near its ceiling** (0.16 of 1). If this still
+    /// reads faint on a real screen, that is the number to turn, and it can go
+    /// a long way before it runs out.
+    static let latticeSpacing: CGFloat = 25
+    static let latticeDotWidth: CGFloat = 4
+    static let latticeAlpha: CGFloat = 0.16
+
+    // MARK: Gravity
+
+    /// How far the cursor's pull on the lattice reaches, and how hard it pulls
+    /// at the centre.
+    ///
+    /// The dots gather toward the pointer the way a field bends toward a mass:
+    /// strongest close in, easing off smoothly to nothing at `gravityReach`.
+    /// The reach is set wide on purpose — most of a display from wherever the
+    /// pointer is — so the whole sheet leans toward the cursor rather than a
+    /// patch around it puckering. Note that the spotlight erases the lattice
+    /// nearest the cursor, so what is actually seen is the lean in the
+    /// surrounding field, not the well itself; that is the intended look.
+    ///
+    /// `gravityPull` is the fraction of its distance a dot at the centre moves
+    /// inward; 0.35 makes the grid there about 2.4× as dense.
+    static let gravityReach: CGFloat = 1400
+    static let gravityPull: CGFloat = 0.35
+
+    /// Where a lattice point ends up under the pull of `centre`.
+    ///
+    /// Pure geometry so it can be tested: the pull is always toward the centre,
+    /// falls off as the square of the remaining distance, is zero at and beyond
+    /// the reach, and never carries a point past the centre.
+    static func gravity(displacing point: CGPoint, toward centre: CGPoint) -> CGPoint {
+        let dx = point.x - centre.x
+        let dy = point.y - centre.y
+        let distance = (dx * dx + dy * dy).squareRoot()
+        guard distance > 0, distance < gravityReach else { return point }
+        let remaining = 1 - distance / gravityReach
+        let pull = gravityPull * remaining * remaining
+        return CGPoint(x: centre.x + dx * (1 - pull), y: centre.y + dy * (1 - pull))
+    }
+
+    /// The sheet: tint, then the lattice, optionally bent toward `gravity`.
+    ///
+    /// Drawn dot by dot rather than as a pattern tile, because a bent grid is not
+    /// a repeating tile. Each dot is its own `fillEllipse` on purpose: measured
+    /// on a 1728×1117 sheet (4,134 dots), one path holding every ellipse took
+    /// 14 ms to fill and one fill per dot took 5 ms — a single huge path pays
+    /// for a scanline pass over the whole sheet. The grid extends past the
+    /// bounds by the furthest any dot can travel, so dots pulled in from just
+    /// outside arrive instead of leaving a bare edge.
+    static func drawSheet(in bounds: CGRect, gravity centre: CGPoint?, context: CGContext) {
+        context.setFillColor(tint.cgColor)
+        context.fill(bounds)
+
+        let spacing = latticeSpacing
+        let dot = latticeDotWidth
+        // The furthest a dot moves is at a third of the reach: r·pull·(2/3)².
+        let margin = spacing * ceil(gravityReach / 3 * gravityPull * 4 / 9 / spacing)
+        let columns = Int(ceil((bounds.width + margin * 2) / spacing))
+        let rows = Int(ceil((bounds.height + margin * 2) / spacing))
+        let originX = bounds.minX - margin + spacing / 2
+        let originY = bounds.minY - margin + spacing / 2
+
+        context.setFillColor(NSColor(srgbRed: 1, green: 1, blue: 1, alpha: latticeAlpha).cgColor)
+        for row in 0..<rows {
+            for column in 0..<columns {
+                var point = CGPoint(
+                    x: originX + CGFloat(column) * spacing,
+                    y: originY + CGFloat(row) * spacing
+                )
+                if let centre { point = gravity(displacing: point, toward: centre) }
+                guard bounds.insetBy(dx: -dot, dy: -dot).contains(point) else { continue }
+                context.fillEllipse(in: CGRect(
+                    x: point.x - dot / 2, y: point.y - dot / 2, width: dot, height: dot
+                ))
+            }
+        }
+    }
+
+    // MARK: Sweep
+
+    /// One pass of light down the sheet: how the wash says "reading now".
+    ///
+    /// The same pass on the way in (right Shift twice) and every time guidance
+    /// takes the screen again, so the two are recognisably one act. Top to
+    /// bottom, once, and short — a return trip doubles the time and turns a
+    /// glance into a show, and this happens on every step of guidance. A soft
+    /// band rather than a line: a line reads as a cursor or a ruler; a band of
+    /// light reads as a scanner passing.
+    static let sweepDuration: CFTimeInterval = 0.32
+    static let sweepBandHeight: CGFloat = 160
+    static let sweepPeakAlpha: CGFloat = 0.22
+
+    /// Runs one sweep over `host` and removes it when done. Nothing is added
+    /// under Reduce Motion — the sheet appearing is the whole cue there.
+    static func sweep(over host: CALayer, in bounds: CGRect) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let band = CAGradientLayer()
+        band.colors = [
+            NSColor.white.withAlphaComponent(0).cgColor,
+            NSColor.white.withAlphaComponent(sweepPeakAlpha).cgColor,
+            NSColor.white.withAlphaComponent(0).cgColor,
+        ]
+        band.startPoint = CGPoint(x: 0.5, y: 0)
+        band.endPoint = CGPoint(x: 0.5, y: 1)
+        band.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: sweepBandHeight)
+        // Layer space is not flipped: top of the sheet is the larger y.
+        let start = CGPoint(x: bounds.midX, y: bounds.maxY + sweepBandHeight / 2)
+        let end = CGPoint(x: bounds.midX, y: bounds.minY - sweepBandHeight / 2)
+        band.position = end
+
+        let travel = CABasicAnimation(keyPath: "position")
+        travel.fromValue = NSValue(point: start)
+        travel.toValue = NSValue(point: end)
+        travel.duration = sweepDuration
+        travel.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { band.removeFromSuperlayer() }
+        host.addSublayer(band)
+        band.add(travel, forKey: "sweep")
+        CATransaction.commit()
+    }
 }

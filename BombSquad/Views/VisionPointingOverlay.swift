@@ -169,6 +169,9 @@ final class VisionPointingOverlay {
 
         panel.contentView = canvas
         panel.orderFrontRegardless()
+        // The wash arrives with the same pass of light guidance uses when it
+        // takes the screen again, so entering and re-reading read as one act.
+        wash.sweep()
         // A child, so it is ordered with the cover and never slips behind it.
         panel.addChildWindow(bubblePanel, ordered: .above)
 
@@ -637,46 +640,6 @@ private final class WashView: NSView {
     /// it, so this one number resizes the whole light in proportion.
     private static let spotlightReach: CGFloat = 672
 
-    /// The lattice: white dots on a 22-point grid.
-    ///
-    /// This is the layer that says the screen is being read rather than used.
-    /// The wash alone changes the colour; the dots give it a reason — a sensor
-    /// looking at a surface. The gap between "I am operating this screen" and "I
-    /// am pointing at it" has to be large, because a user who thinks they are
-    /// operating it will click a button and get an explanation instead.
-    ///
-    /// Kept just above the threshold of notice: it should be found, not seen.
-    /// Built once as a tile and drawn as a pattern — a few thousand circles
-    /// redrawn on every cursor move would be paid for on every frame.
-    /// The three numbers the lattice is: how far apart the dots sit, how wide
-    /// each one is, and how white.
-    ///
-    /// It was 2pt dots on a 22pt grid — 0.65% of the surface — and at that size
-    /// they were below being found rather than just below being noticed. Bigger
-    /// and further apart is the trade that keeps it a lattice: 4pt on 25pt is
-    /// three times the ink with a fifth fewer dots, so the pattern reads as a
-    /// grid of points rather than as grain.
-    ///
-    /// **The alpha is nowhere near its ceiling** (0.16 of 1). If this still
-    /// reads faint on a real screen, that is the number to turn, and it can go
-    /// a long way before it runs out.
-    private static let latticeSpacing: CGFloat = 25
-    private static let latticeDotWidth: CGFloat = 4
-    private static let latticeAlpha: CGFloat = 0.16
-
-    private static let lattice: NSColor = {
-        let side = latticeSpacing
-        let dot = latticeDotWidth
-        let image = NSImage(size: NSSize(width: side, height: side))
-        image.lockFocus()
-        NSColor(srgbRed: 1, green: 1, blue: 1, alpha: latticeAlpha).setFill()
-        NSBezierPath(ovalIn: CGRect(
-            x: (side - dot) / 2, y: (side - dot) / 2, width: dot, height: dot
-        )).fill()
-        image.unlockFocus()
-        return NSColor(patternImage: image)
-    }()
-
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -686,6 +649,12 @@ private final class WashView: NSView {
     required init?(coder: NSCoder) { nil }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// One pass of light down the sheet — the wash saying it is reading.
+    func sweep() {
+        guard let host = layer else { return }
+        WashStyle.sweep(over: host, in: bounds)
+    }
 
     private var markLayer: CALayer?
 
@@ -755,10 +724,11 @@ private final class WashView: NSView {
         context.setAlpha(washOpacity)
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         defer { context.endTransparencyLayer() }
-        WashStyle.tint.setFill()
-        bounds.fill()
-        Self.lattice.setFill()
-        bounds.fill()
+        // The cursor bends the lattice as well as lighting it. Not under Reduce
+        // Motion: a field that follows the pointer is the same kind of motion
+        // as parallax, which that setting exists to turn off.
+        let gravity = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : cursor
+        WashStyle.drawSheet(in: bounds, gravity: gravity, context: context)
 
         guard let cursor else { return }
         context.saveGState()
