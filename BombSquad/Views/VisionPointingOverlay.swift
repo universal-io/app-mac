@@ -52,17 +52,11 @@ final class VisionPointingOverlay {
     /// Where the bubble is anchored, which outlives the drawn mark: once the
     /// answer's own frame is up the mark retracts, but the bubble keeps a place
     /// on the picture rather than retreating to the corner.
-    private var anchor: CGPoint?
-    /// A rectangle the bubble sits beside rather than a point it sits below.
     ///
-    /// Two things claim it. The frame the answer pointed at: the words and the
-    /// frame are one claim about one element, and showing them in two places —
-    /// the frame on the answer's subject, the words beside the click — reads as
-    /// the product disagreeing with itself. And the area the user enclosed: a
-    /// bubble placed against the middle of a ring covers what the ring was
-    /// drawn around, so it goes outside the edge (`app-web/docs/pointing.md`
-    /// §2.2).
-    private var frameAnchor: CGRect?
+    /// Read by the reflow as well as by the gestures, so **who is allowed to
+    /// write it is the whole of the rule** — see `BubbleAnchor`. Internal so a
+    /// test can hold the ring to it.
+    private(set) var bubbleAnchor = BubbleAnchor()
     /// Kept so the bubble can be re-placed when its own size changes.
     private var placedSize: CGSize = .zero
     private var reflow: Timer?
@@ -73,17 +67,6 @@ final class VisionPointingOverlay {
     /// worse than no light (`app-web/docs/solo-mode.md` §1).
     private var cursorMonitor: Any?
     private var washFade: Timer?
-    /// The top-left corner the user dragged the bubble to, screen-local.
-    ///
-    /// Beside the mark is the default, not a fixed place: sooner or later the
-    /// answer lands on top of the thing being read (`app-web/docs/pointing.md`
-    /// §3). Once moved, their position wins until they point somewhere new —
-    /// without that the automatic placement takes it back on the next reflow,
-    /// which is every time an answer grows by a line, and the bubble reads as
-    /// refusing to be moved at all.
-    ///
-    /// The top rather than the origin, because the card grows downward.
-    private var userTopLeft: CGPoint?
     private var bubbleMoveObserver: Any?
     /// Whether the frame currently drawn is the answer's rather than the
     /// user's own gesture. `clearAnswerFrame` is only entitled to take down the
@@ -258,17 +241,22 @@ final class VisionPointingOverlay {
     /// rather than to look like the product.
     /// The click, answered on the spot.
     ///
-    /// **The bubble does not move for this.** A ring and the frame around the
-    /// element under it are rarely in the same place, so placing the bubble
-    /// twice — once beside the pixel, then again beside the element about half
-    /// a second later — reads as the card being shoved around rather than
-    /// arriving. The ring's job is to say the click was heard, which it does
-    /// where the hand already is; where the answer goes is settled once the
-    /// screen has been measured.
+    /// **The bubble does not move for this, and this does not touch the
+    /// anchor.** A ring and the frame around the element under it are rarely in
+    /// the same place, so placing the bubble twice — once beside the pixel,
+    /// then again beside the element about half a second later — reads as the
+    /// card being shoved around rather than arriving. The ring's job is to say
+    /// the click was heard, which it does where the hand already is; where the
+    /// answer goes is settled once the screen has been measured.
+    ///
+    /// Not calling `placeBubble` is not enough on its own, which is how this
+    /// came back: `beginPointing` follows immediately and swaps the previous
+    /// answer for "ここを読んでいます…", the bubble's height changes, and the
+    /// reflow places it against whatever the anchor says a tenth of a second
+    /// later. Leaving the anchor alone is what holds the card still — it keeps
+    /// pointing at the subject of the turn that is ending until the next one
+    /// has been measured.
     func showRing(at point: CGPoint) {
-        anchor = point
-        frameAnchor = nil
-        userTopLeft = nil
         showsAnswerFrame = false
         canvas?.wash?.stroke = nil
         canvas?.wash?.markShape = .ring(point)
@@ -281,16 +269,14 @@ final class VisionPointingOverlay {
     /// measured anything: with a frame the bubble goes beside the element, and
     /// without one it goes beside the click the ring is already marking.
     func setMark(point: CGPoint?, frame: CGRect?) {
-        anchor = point
-        // A new subject re-places the bubble, so a position the user chose for
-        // the last one is spent. Pointing somewhere else is the gesture that
-        // says "put it where it belongs again".
-        userTopLeft = nil
+        // The whole anchor at once: a new subject re-places the bubble, so a
+        // position the user chose for the last one is spent (pointing somewhere
+        // else is the gesture that says "put it where it belongs again"), and
+        // whatever the previous answer pointed at no longer decides where this
+        // one appears. The measured frame is not the anchor — the bubble goes
+        // beside the click and merely avoids the frame, below.
+        bubbleAnchor = BubbleAnchor(point: point)
         showsAnswerFrame = false
-        // A new gesture starts a new subject: whatever the previous answer
-        // pointed at no longer decides where this answer appears, and a line
-        // drawn for the previous question is not part of this one.
-        frameAnchor = nil
         canvas?.wash?.stroke = nil
         canvas?.wash?.markShape = frame.map(MarkShape.frame)
             ?? Self.drawnMark(point: point, frame: frame).map(MarkShape.ring)
@@ -326,10 +312,8 @@ final class VisionPointingOverlay {
     /// The bubble goes outside its edge rather than beside its centre, so it
     /// cannot cover the thing the ring was drawn around.
     func setRegion(path: [CGPoint]) {
-        anchor = nil
-        userTopLeft = nil
+        bubbleAnchor = BubbleAnchor(frame: VisionPointerResolver.bounds(of: path))
         showsAnswerFrame = false
-        frameAnchor = VisionPointerResolver.bounds(of: path)
         canvas?.wash?.markShape = nil
         canvas?.wash?.stroke = path
         canvas?.wash?.hitFrame = nil
@@ -352,7 +336,9 @@ final class VisionPointingOverlay {
         canvas?.wash?.hitFrame = frame
         // The bubble follows the frame: from here on the words sit beside the
         // element they are about, which is not always the one under the click.
-        frameAnchor = frame
+        // A position the user chose is left standing — they moved the card
+        // during this same turn, about this same subject.
+        bubbleAnchor.frame = frame
         placeBubble()
     }
 
@@ -374,8 +360,7 @@ final class VisionPointingOverlay {
     }
 
     func close() {
-        anchor = nil
-        frameAnchor = nil
+        bubbleAnchor = BubbleAnchor()
         reflow?.invalidate()
         reflow = nil
         washFade?.invalidate()
@@ -384,7 +369,6 @@ final class VisionPointingOverlay {
         cursorMonitor = nil
         if let bubbleMoveObserver { NotificationCenter.default.removeObserver(bubbleMoveObserver) }
         bubbleMoveObserver = nil
-        userTopLeft = nil
         if let bubblePanel {
             panel?.removeChildWindow(bubblePanel)
             bubblePanel.orderOut(nil)
@@ -476,27 +460,12 @@ final class VisionPointingOverlay {
             width: visible.width,
             height: visible.height
         )
-        let origin: CGPoint
-        if let userTopLeft {
-            origin = VisionBubblePlacement.origin(
-                movedTo: userTopLeft,
-                size: size,
-                in: bounds
-            )
-        } else if let frameAnchor {
-            origin = VisionBubblePlacement.origin(
-                besideFrame: frameAnchor,
-                size: size,
-                in: bounds
-            )
-        } else {
-            origin = VisionBubblePlacement.origin(
-                for: anchor,
-                size: size,
-                in: bounds,
-                avoid: [canvas.wash?.hitFrame].compactMap { $0 }
-            )
-        }
+        let origin = VisionBubblePlacement.origin(
+            for: bubbleAnchor,
+            size: size,
+            in: bounds,
+            avoid: [canvas.wash?.hitFrame].compactMap { $0 }
+        )
         // The placement is screen-local and the window is global.
         isPlacingBubble = true
         defer { isPlacingBubble = false }
@@ -519,7 +488,7 @@ final class VisionPointingOverlay {
 
     private func noteBubbleMoved() {
         guard !isPlacingBubble, let bubblePanel else { return }
-        userTopLeft = CGPoint(
+        bubbleAnchor.userTopLeft = CGPoint(
             x: bubblePanel.frame.minX - screenFrame.minX,
             y: bubblePanel.frame.maxY - screenFrame.minY
         )

@@ -1,5 +1,30 @@
 import CoreGraphics
 
+/// Everything that decides where the bubble goes.
+///
+/// One value rather than three loose fields, because the fault it guards
+/// against is not a wrong position but a **second** one. The overlay re-places
+/// the bubble whenever its height changes — an answer arriving grows it a line
+/// at a time — so any code that writes here has decided the card may move, and
+/// a reflow a tenth of a second later will carry that out whether or not the
+/// writer meant it to. Writing "the ring must not move the bubble" in a comment
+/// above `showRing` was not enough: the call to place it was taken out and the
+/// assignment to the anchor left in, and the bubble went on jumping to the ring
+/// on the next reflow (2026-08-25, again on 2026-08-26).
+///
+/// So: the only things entitled to change this are a new subject (a
+/// measurement, an enclosure), the answer pointing somewhere, and the user
+/// dragging the card. Showing a mark is not one of them.
+struct BubbleAnchor: Equatable {
+    /// The place the answer is about, when nothing was measured there.
+    var point: CGPoint?
+    /// The element or the enclosure the answer is about. Beats `point`: it says
+    /// where the subject *is* rather than where the hand landed.
+    var frame: CGRect?
+    /// Where the user dragged the card. Beats both, until they point anew.
+    var userTopLeft: CGPoint?
+}
+
 /// Where the answer sits relative to the place the user pointed at.
 ///
 /// The whole point of R14 is that the answer appears beside the thing it is
@@ -96,6 +121,27 @@ enum VisionBubblePlacement {
         // Same trade as the point placement: a bubble overlapping the frame is
         // still readable, one pushed off the display is not.
         return clamp(CGRect(origin: candidates[0], size: size), into: bounds).origin
+    }
+
+    /// The one place the three rules below are chosen between.
+    ///
+    /// Here rather than in the overlay so that "where would the bubble go" can
+    /// be asked of a `BubbleAnchor` without a window — which is what lets a test
+    /// state the rule that matters: showing the ring must not change the
+    /// answer this returns.
+    static func origin(
+        for anchor: BubbleAnchor,
+        size: CGSize,
+        in bounds: CGRect,
+        avoid: [CGRect] = []
+    ) -> CGPoint {
+        if let userTopLeft = anchor.userTopLeft {
+            return origin(movedTo: userTopLeft, size: size, in: bounds)
+        }
+        if let frame = anchor.frame {
+            return origin(besideFrame: frame, size: size, in: bounds)
+        }
+        return origin(for: anchor.point, size: size, in: bounds, avoid: avoid)
     }
 
     /// Where a bubble the user dragged goes.
