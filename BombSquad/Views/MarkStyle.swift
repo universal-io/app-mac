@@ -170,7 +170,10 @@ enum WashStyle {
     /// **The alpha is nowhere near its ceiling** (0.16 of 1). If this still
     /// reads faint on a real screen, that is the number to turn, and it can go
     /// a long way before it runs out.
-    static let latticeSpacing: CGFloat = 25
+    ///
+    /// 25pt read as too many dots on a real screen (2026-08-26); 30pt is about
+    /// seven tenths as many, same dot, same white.
+    static let latticeSpacing: CGFloat = 30
     static let latticeDotWidth: CGFloat = 4
     static let latticeAlpha: CGFloat = 0.16
 
@@ -181,15 +184,17 @@ enum WashStyle {
     ///
     /// The dots gather toward the pointer the way a field bends toward a mass:
     /// strongest close in, easing off smoothly to nothing at `gravityReach`.
-    /// The reach is set wide on purpose — most of a display from wherever the
-    /// pointer is — so the whole sheet leans toward the cursor rather than a
-    /// patch around it puckering. Note that the spotlight erases the lattice
-    /// nearest the cursor, so what is actually seen is the lean in the
-    /// surrounding field, not the well itself; that is the intended look.
+    /// The spotlight erases the lattice nearest the cursor (clear to 336pt,
+    /// faded out by 672pt), so the well itself is never seen — what shows is
+    /// the surrounding field leaning in. The reach is set so that field has an
+    /// outside: dots past it stand still, and the eye can see where the pull
+    /// ends. A reach wide enough to move every dot on the display was tried
+    /// first (1400pt) and read as nothing in particular, because there was
+    /// nothing unmoved to compare against.
     ///
     /// `gravityPull` is the fraction of its distance a dot at the centre moves
     /// inward; 0.35 makes the grid there about 2.4× as dense.
-    static let gravityReach: CGFloat = 1400
+    static let gravityReach: CGFloat = 900
     static let gravityPull: CGFloat = 0.35
 
     /// Where a lattice point ends up under the pull of `centre`.
@@ -247,46 +252,80 @@ enum WashStyle {
 
     // MARK: Sweep
 
-    /// One pass of light down the sheet: how the wash says "reading now".
+    /// The sheet arrives behind a line of light: how the wash says "reading".
     ///
-    /// The same pass on the way in (right Shift twice) and every time guidance
-    /// takes the screen again, so the two are recognisably one act. Top to
-    /// bottom, once, and short — a return trip doubles the time and turns a
-    /// glance into a show, and this happens on every step of guidance. A soft
-    /// band rather than a line: a line reads as a cursor or a ruler; a band of
-    /// light reads as a scanner passing.
-    static let sweepDuration: CFTimeInterval = 0.32
-    static let sweepBandHeight: CGFloat = 160
+    /// The same entrance on the way in (right Shift twice) and every time
+    /// guidance takes the screen again, so the two are recognisably one act.
+    /// Bottom to top, once, accelerating — the light is not a thing passing
+    /// over a sheet that is already there; it is the front edge of the sheet
+    /// itself, and everything below it is what has been read. A band passing
+    /// over a wash that had already appeared was tried and read as an
+    /// unrelated effect (2026-08-26).
+    static let sweepDuration: CFTimeInterval = 0.42
+    /// The light at the front edge, and how far the edge is feathered.
+    static let sweepBandHeight: CGFloat = 120
     static let sweepPeakAlpha: CGFloat = 0.22
+    static let sweepEdgeSoftness: CGFloat = 80
 
-    /// Runs one sweep over `host` and removes it when done. Nothing is added
-    /// under Reduce Motion — the sheet appearing is the whole cue there.
+    /// Reveals `host` from the bottom up behind a line of light, then leaves
+    /// it fully shown. Nothing is added under Reduce Motion — the sheet
+    /// appearing is the whole cue there.
+    ///
+    /// Works by masking the host: the mask is opaque below the front edge and
+    /// clear above it, twice the height of the sheet so that at rest it covers
+    /// everything. The mask comes off at the end so nothing is left in the
+    /// layer tree that a later mark could be clipped by.
     static func sweep(over host: CALayer, in bounds: CGRect) {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let height = bounds.height
+        let soft = sweepEdgeSoftness
+
+        // Layer space is not flipped: the bottom of the sheet is the smaller y,
+        // and the front edge is the middle of the mask.
+        let mask = CAGradientLayer()
+        mask.colors = [
+            NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor,
+        ]
+        mask.locations = [0, 0.5, NSNumber(value: 0.5 + Double(soft / (height * 2)))]
+        mask.startPoint = CGPoint(x: 0.5, y: 0)
+        mask.endPoint = CGPoint(x: 0.5, y: 1)
+        mask.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: height * 2)
+        let edgeStart = bounds.minY - soft
+        let edgeEnd = bounds.maxY + soft
+        mask.position = CGPoint(x: bounds.midX, y: edgeEnd)
+
         let band = CAGradientLayer()
         band.colors = [
             NSColor.white.withAlphaComponent(0).cgColor,
             NSColor.white.withAlphaComponent(sweepPeakAlpha).cgColor,
-            NSColor.white.withAlphaComponent(0).cgColor,
         ]
         band.startPoint = CGPoint(x: 0.5, y: 0)
         band.endPoint = CGPoint(x: 0.5, y: 1)
         band.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: sweepBandHeight)
-        // Layer space is not flipped: top of the sheet is the larger y.
-        let start = CGPoint(x: bounds.midX, y: bounds.maxY + sweepBandHeight / 2)
-        let end = CGPoint(x: bounds.midX, y: bounds.minY - sweepBandHeight / 2)
-        band.position = end
+        // The band sits just inside the revealed part, brightest at the edge.
+        let bandOffset = -sweepBandHeight / 2
+        band.position = CGPoint(x: bounds.midX, y: edgeEnd + bandOffset)
 
-        let travel = CABasicAnimation(keyPath: "position")
-        travel.fromValue = NSValue(point: start)
-        travel.toValue = NSValue(point: end)
-        travel.duration = sweepDuration
-        travel.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // Accelerating: the read starts deliberately and finishes quickly.
+        let timing = CAMediaTimingFunction(name: .easeIn)
+        func travel(from: CGFloat, to: CGFloat) -> CABasicAnimation {
+            let move = CABasicAnimation(keyPath: "position.y")
+            move.fromValue = from
+            move.toValue = to
+            move.duration = sweepDuration
+            move.timingFunction = timing
+            return move
+        }
 
         CATransaction.begin()
-        CATransaction.setCompletionBlock { band.removeFromSuperlayer() }
+        CATransaction.setCompletionBlock {
+            if host.mask === mask { host.mask = nil }
+            band.removeFromSuperlayer()
+        }
+        host.mask = mask
         host.addSublayer(band)
-        band.add(travel, forKey: "sweep")
+        mask.add(travel(from: edgeStart, to: edgeEnd), forKey: "sweep")
+        band.add(travel(from: edgeStart + bandOffset, to: edgeEnd + bandOffset), forKey: "sweep")
         CATransaction.commit()
     }
 }

@@ -42,10 +42,12 @@ final class WashGravityTests: XCTestCase {
             let moved = WashStyle.gravity(displacing: point, toward: centre)
             return 1 - (moved.x - centre.x) / distance
         }
+        let reach = WashStyle.gravityReach
         XCTAssertEqual(fraction(0.001), WashStyle.gravityPull, accuracy: 1e-4)
-        XCTAssertGreaterThan(fraction(100), fraction(400))
-        XCTAssertGreaterThan(fraction(400), fraction(1000))
-        XCTAssertGreaterThan(fraction(1000), 0)
+        XCTAssertGreaterThan(fraction(reach * 0.1), fraction(reach * 0.4))
+        XCTAssertGreaterThan(fraction(reach * 0.4), fraction(reach * 0.8))
+        XCTAssertGreaterThan(fraction(reach * 0.8), 0)
+        XCTAssertEqual(fraction(reach), 0)
     }
 
     func testMarginCoversTheFurthestAnyDotTravels() {
