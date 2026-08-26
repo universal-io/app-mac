@@ -171,9 +171,10 @@ enum WashStyle {
     /// reads faint on a real screen, that is the number to turn, and it can go
     /// a long way before it runs out.
     ///
-    /// 25pt read as too many dots on a real screen (2026-08-26); 30pt is about
-    /// seven tenths as many, same dot, same white.
-    static let latticeSpacing: CGFloat = 30
+    /// 25pt read as too many dots on a real screen (2026-08-26), and so did
+    /// 30pt; each step to the next is about seven tenths as many dots, same
+    /// dot, same white.
+    static let latticeSpacing: CGFloat = 36
     static let latticeDotWidth: CGFloat = 4
     static let latticeAlpha: CGFloat = 0.16
 
@@ -306,8 +307,10 @@ enum WashStyle {
         let bandOffset = -sweepBandHeight / 2
         band.position = CGPoint(x: bounds.midX, y: edgeEnd + bandOffset)
 
-        // Accelerating: the read starts deliberately and finishes quickly.
-        let timing = CAMediaTimingFunction(name: .easeIn)
+        // Accelerating hard: the read starts deliberately and finishes in a
+        // rush. The system easeIn (0.42, 0, 1, 1) was too gentle a curve on a
+        // real screen; this one holds back longer and then goes.
+        let timing = CAMediaTimingFunction(controlPoints: 0.7, 0, 0.84, 0)
         func travel(from: CGFloat, to: CGFloat) -> CABasicAnimation {
             let move = CABasicAnimation(keyPath: "position.y")
             move.fromValue = from
