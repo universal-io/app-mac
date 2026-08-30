@@ -711,6 +711,16 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 公開ダウンロードを build `8` へ切り替えました。
 
 **`0.2.3` build `9` を候補として作成しました（2026-08-30）。まだ公開ダウンロードではありません。**
+
+```text
+dist/Universal-IO-0.2.3-build9.dmg
+SHA-256: a5aa6f207b38a292a5aa02e09e501117debd9ece56730419eb60c9087aab086c
+バイナリソース: d23c86f
+```
+
+Developer ID署名、notarization（app・DMGとも`Accepted`）、staple、Gatekeeper評価
+（`source=Notarized Developer ID`）、Universal binary（x86_64 + arm64）、
+本番Gateway（`https://api.universal-io.com`）向きであることを確認済みです。
 実画面の上のVision（R14）、その上の案内（R15）、Composeのバブル化を初めて署名ビルドへ載せたものです。
 公開へ向けるには2つが要ります。
 
