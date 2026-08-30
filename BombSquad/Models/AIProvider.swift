@@ -27,10 +27,11 @@ enum AppSettings {
         return UserDefaults.standard.bool(forKey: isContextCaptureEnabledKey)
     }
 
+    /// Off by default (2026-08-27): the always-on mode generates a model call
+    /// on every summon, and most summons are input completion that asked for
+    /// none. The 自動返信 button covers the on-demand case without the mode.
+    /// A stored value — a user who chose either way — still wins.
     static func isProactiveSuggestEnabled() -> Bool {
-        if UserDefaults.standard.object(forKey: isProactiveSuggestEnabledKey) == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: isProactiveSuggestEnabledKey)
+        UserDefaults.standard.bool(forKey: isProactiveSuggestEnabledKey)
     }
 }

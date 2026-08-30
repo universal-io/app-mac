@@ -103,24 +103,30 @@ enum SituationalContextService {
         )
     }
 
-    /// Synchronous, fast check of whether the given app currently has an
-    /// editable text field focused. Read this at summon *before* our panel
-    /// activates — once our window becomes key the source app resigns first
-    /// responder and its `kAXFocusedUIElementAttribute` no longer reports the
-    /// field, which is exactly why the async context walk saw no focus. One
-    /// focused-element read (+ role/subrole), so it is safe on the hot path.
-    static func focusedFieldIsEditable(pid: pid_t) -> Bool {
+    /// Synchronous, fast read of what the given app currently has focused.
+    /// Read this at summon *before* our panel activates — once our window
+    /// becomes key the source app resigns first responder and its
+    /// `kAXFocusedUIElementAttribute` no longer reports the field, which is
+    /// exactly why the async context walk saw no focus. One focused-element
+    /// read (+ role/subrole/geometry), so it is safe on the hot path.
+    ///
+    /// Returns the whole verdict rather than just "is it editable": the same
+    /// read already measures where the field is, and the compose bubble opens
+    /// beside it. Collapsing this to a Bool is what sent the hold-to-talk and
+    /// menu-bar summons to the centre of the screen while the double-tap —
+    /// which takes its own snapshot — opened beside the field (2026-08-27).
+    static func focusedFieldVerdict(pid: pid_t) -> FocusVerdict? {
         guard AXIsProcessTrusted(),
-              pid != ProcessInfo.processInfo.processIdentifier else { return false }
+              pid != ProcessInfo.processInfo.processIdentifier else { return nil }
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, Budget.axMessagingTimeout)
         guard let focused = copyElement(appElement, kAXFocusedUIElementAttribute) else {
             FocusGateTrace.log("no focused element")
-            return false
+            return nil
         }
         let verdict = editableVerdict(focused)
         FocusGateTrace.log(verdict.description)
-        return verdict.isEditable
+        return verdict
     }
 
     /// Why the gate decided what it decided. Recorded because the decision is
@@ -135,6 +141,14 @@ enum SituationalContextService {
         let subrole: String
         let size: CGSize?
         let position: CGPoint?
+
+        /// The field's rectangle in accessibility's own top-left-origin space,
+        /// when both halves were measured. Nil when either read failed — half
+        /// a rectangle is not a place.
+        var frame: CGRect? {
+            guard let position, let size else { return nil }
+            return CGRect(origin: position, size: size)
+        }
 
         /// Shape only: role, subrole, geometry. Never the field's value — that
         /// is the user's content, and a diagnostic has no business holding it.

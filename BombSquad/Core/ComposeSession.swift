@@ -79,6 +79,10 @@ final class ComposeSession: ObservableObject {
     /// transcriber and the mode rules all live in the coordinator; this is the
     /// microphone in the field asking it to do what the held key asks it to do.
     var onToggleDictation: (() -> Void)?
+    /// Ask for a reply draft for this screen now, whatever the always-on
+    /// toggle says. The pre-capture and the request live in the coordinator;
+    /// this is the 自動返信 button in the bubble asking for one.
+    var onRequestSuggestion: (() -> Void)?
     @Published private(set) var situationalContext: SituationalContext?
     @Published private(set) var isContextExcluded = false
     /// Proactive Vision-grounded draft suggestion for the focused external
@@ -110,7 +114,10 @@ final class ComposeSession: ObservableObject {
     private let injectedReviewProvider: ReviewProvider?
     private var contextCaptureTask: Task<SituationalContext?, Never>?
     private var reviewTask: Task<Void, Never>?
-    private var reviewedDraft: String?
+    /// The draft as it was when the review ran. Published because the bubble
+    /// shows it as the user's own speech chip: the sentence the review is
+    /// about, which editing the field afterwards must not rewrite.
+    @Published private(set) var reviewedDraft: String?
     private var reviewedLanguage: OutputLanguage?
 
     init(
@@ -158,6 +165,23 @@ final class ComposeSession: ObservableObject {
         isContextExcluded = true
     }
 
+    /// An explicit suggestion request takes the result surface over from a
+    /// review — the mirror of `runReview` claiming it from a suggestion. The
+    /// draft itself is untouched: only the review's output comes down.
+    func takeDownReviewSurface() {
+        reviewTask?.cancel()
+        reviewTask = nil
+        isReviewing = false
+        result = nil
+        revisedDraft = ""
+        streamingRevision = nil
+        reviewedDraft = nil
+        reviewedLanguage = nil
+        if focusedField == .revision {
+            focusedField = .draft
+        }
+    }
+
     func toggleFocusedField() {
         // The lower slot (`.revision`) is the switch target whether it holds a
         // review result or a proactive suggestion; the two never coexist.
@@ -180,6 +204,10 @@ final class ComposeSession: ObservableObject {
         suggestionNote = nil
         activeSkillName = nil
         clearSuggestionError()
+        // The 自動返信 button can run this more than once per session now; a
+        // question left over from the previous answer would sit under a draft
+        // it was not asked about.
+        clearFactQuestion()
     }
 
     func applySuggestion(draft suggestion: String, note: String?, skillName: String?) {
@@ -418,6 +446,10 @@ final class ComposeSession: ObservableObject {
         clearFactQuestion()
         isReviewing = true
         let input = draft
+        // Fixed at the start, not on completion: the chip above the result
+        // shows the sentence being reviewed, and editing the field while the
+        // review runs must not rewrite what it claims to be about.
+        reviewedDraft = input
         let language = outputLanguage
         let started = Date()
         defer {

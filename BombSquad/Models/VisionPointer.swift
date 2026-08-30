@@ -162,6 +162,42 @@ enum VisionPointerResolver {
         )
     }
 
+    /// An accessibility frame placed into Cocoa global coordinates.
+    ///
+    /// AX reports frames top-left-origin, anchored to the display carrying the
+    /// menu bar; window placement speaks bottom-left from the same anchor. This
+    /// is `screenLocalRect`'s flip without the screen subtraction, and it lives
+    /// here for the reason the other two do: **the main display's height enters
+    /// this file and nowhere else.** A conversion written next to its caller is
+    /// how the same rectangle ends up in two spaces — the flip is one line, it
+    /// survives review, and the second display is where it shows.
+    ///
+    /// An empty frame is no anchor: a zero-sized element is a read that
+    /// technically succeeded about a place that cannot be sat beside.
+    static func cocoaGlobalRect(
+        axFrame frame: CGRect?,
+        mainDisplayHeight: CGFloat
+    ) -> CGRect? {
+        guard let frame, !frame.isEmpty else { return nil }
+        return CGRect(
+            x: frame.minX,
+            y: mainDisplayHeight - frame.maxY,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
+    /// The height every conversion here measures against: the display carrying
+    /// the menu bar, which is the origin of both spaces.
+    ///
+    /// One accessor rather than a literal at each call site, because the two
+    /// obvious spellings — this one and `NSScreen.screens.first?.frame.maxY` —
+    /// agree today and are not the same expression. Having both in the tree
+    /// invites a future edit to fix one of them.
+    static var mainDisplayHeight: CGFloat {
+        CGDisplayBounds(CGMainDisplayID()).height
+    }
+
     /// The one candidate the user pointed at: the smallest whose rectangle
     /// contains the point.
     ///

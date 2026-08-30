@@ -85,6 +85,17 @@ final class SessionCoordinator {
     /// compose was summoned — captured synchronously before our panel steals
     /// focus, so the proactive suggestion gate is reliable.
     private var composeFocusEditable = false
+    /// The summoned field's frame in global Cocoa coordinates, when the AX
+    /// snapshot measured one. The compose bubble opens beside it — input
+    /// completion belongs next to the input — and falls back to the screen
+    /// centre when nothing was measured.
+    private var composeAnchorFrame: CGRect?
+    /// True from the 自動返信 button being pressed until that request resolves.
+    /// It lets one explicit request through the gates that keep the automatic
+    /// path polite (the always-on setting, the empty-draft rule): a user who
+    /// pressed the button has already said they want it, whatever the toggle
+    /// says and whatever is in the field.
+    private var composeSuggestionExplicitlyRequested = false
     /// Reset by every gesture that starts a surface, and read by everything
     /// downstream. Without a shared origin the trail holds several stopwatches
     /// that overlap and cannot be added, and none of them covers the gap the
@@ -131,6 +142,46 @@ final class SessionCoordinator {
         } else if composePreCaptureTask == nil {
             composeSession.markSuggestionUnavailable()
         }
+    }
+
+    /// The 自動返信 button: one suggestion, now, whatever the always-on toggle
+    /// says. An explicit press takes the result surface over from a review —
+    /// the mirror of a review claiming it — and reuses the summon's silent
+    /// pre-capture while it is still in hand, so the reply is about the screen
+    /// the user summoned us from. When that shot is already spent or failed,
+    /// a new one is taken for this request.
+    func requestComposeSuggestionNow() {
+        guard stateMachine.mode == .compose, let composeSession else { return }
+        guard composeSession.suggestionStatus != .preparing else { return }
+        guard ScreenCapturePermission.isGranted else {
+            composeSession.takeDownReviewSurface()
+            composeSession.markSuggestionFailed(
+                "自動返信には画面収録の許可が必要です。システム設定の"
+                    + "「プライバシーとセキュリティ」から画面収録を許可してください。"
+            )
+            return
+        }
+        guard GatewaySuggestClient.make() != nil else {
+            composeSession.takeDownReviewSurface()
+            composeSession.markSuggestionFailed(
+                "文案サービスを利用できません。ログイン状態を確認してください。"
+            )
+            return
+        }
+        SuggestTrace.log("explicit request from the compose bubble")
+        composeSuggestionExplicitlyRequested = true
+        composeSession.takeDownReviewSurface()
+        composeSession.markSuggestionPreparing()
+        if let attachment = composePreCapture {
+            maybeStartComposeSuggestion(
+                attachment: attachment,
+                generation: composeGeneration
+            )
+        } else if composePreCaptureTask == nil {
+            startComposePreCapture()
+        }
+        // A capture still in flight needs nothing from here: its completion
+        // calls maybeStartComposeSuggestion, and the explicit flag is up.
     }
 
     /// Single entry point for all input events.
@@ -289,7 +340,8 @@ final class SessionCoordinator {
             }
             presentComposeSession(
                 focusEditable: snapshot.isEditable,
-                preCapture: preCapture
+                preCapture: preCapture,
+                anchorFrame: Self.cocoaFrame(fromAXFrame: snapshot.frame)
             )
         case .vision:
             handleVisionCaptureCompletion(
@@ -308,11 +360,40 @@ final class SessionCoordinator {
         presentComposeSession()
     }
 
+    /// Where the compose bubble ended up opening, as a closed vocabulary.
+    ///
+    /// Recorded because the difference is invisible from the outside: a bubble
+    /// in the centre looks the same whether the field was never measured or the
+    /// measurement was thrown away, and telling those apart from a screenshot
+    /// is guessing. Never the coordinates themselves — the trail carries codes
+    /// and counts, not places (README「データ保存」).
+    enum ComposeAnchorPlacement: String, DiagnosticCode {
+        case besideField
+        case centre
+
+        var diagnosticCode: String { rawValue }
+    }
+
+    /// An AX frame in Cocoa global coordinates, for sitting the bubble beside
+    /// the field the user summoned from.
+    ///
+    /// The arithmetic is `VisionPointerResolver`'s, not this file's. It briefly
+    /// was this file's, with the main display's height read a second way
+    /// (`NSScreen.screens.first?.frame.maxY`); the two spellings agree, which
+    /// is exactly why keeping both was a trap.
+    private static func cocoaFrame(fromAXFrame frame: CGRect?) -> CGRect? {
+        VisionPointerResolver.cocoaGlobalRect(
+            axFrame: frame,
+            mainDisplayHeight: VisionPointerResolver.mainDisplayHeight
+        )
+    }
+
     /// Compose summon captures the paste target and L1 context before the
     /// panel activates and steals focus from the originating app.
     private func presentComposeSession(
         focusEditable: Bool? = nil,
-        preCapture: ScreenshotAttachment? = nil
+        preCapture: ScreenshotAttachment? = nil,
+        anchorFrame: CGRect? = nil
     ) {
         let target = NSWorkspace.shared.frontmostApplication
         summonTargetApp = target
@@ -320,11 +401,35 @@ final class SessionCoordinator {
         // screen it is on, and whether it has an editable field focused. After
         // our panel activates, neither is answerable.
         ActiveDisplay.pin(to: target)
-        // Capture focus editability synchronously, before the panel activates
-        // and the source app loses first responder.
-        composeFocusEditable = focusEditable ?? target.map {
-            SituationalContextService.focusedFieldIsEditable(pid: $0.processIdentifier)
-        } ?? false
+        // Capture focus editability — and where the field is — synchronously,
+        // before the panel activates and the source app loses first responder.
+        //
+        // Both come from the one read. The double-tap has already taken its own
+        // AX snapshot and passes both in; the summons that have not (hold to
+        // talk, the menu bar) do it here, and this is the only chance: after
+        // activation the source app no longer reports a focused element.
+        let verdict = focusEditable == nil
+            ? target.flatMap {
+                SituationalContextService.focusedFieldVerdict(pid: $0.processIdentifier)
+            }
+            : nil
+        composeFocusEditable = focusEditable ?? verdict?.isEditable ?? false
+        // Beside the field only when it *is* the field being written into. An
+        // element that is not editable is not the subject of input completion,
+        // and a secure field is one this product keeps away from — sitting
+        // beside either would be pointing at the wrong thing rather than
+        // opening where the work is.
+        composeAnchorFrame = anchorFrame
+            ?? (composeFocusEditable
+                ? Self.cocoaFrame(fromAXFrame: verdict?.frame)
+                : nil)
+        Diagnostics.record("coordinator.composeAnchor", mode: stateMachine.mode, details: [
+            ("placement", .code(composeAnchorFrame == nil
+                ? ComposeAnchorPlacement.centre
+                : ComposeAnchorPlacement.besideField)),
+            ("editable", .flag(composeFocusEditable)),
+        ])
+        composeSuggestionExplicitlyRequested = false
         let rootContextTask = SituationalContextService.captureTask()
         let deployer = PasteDeployer(targetApp: target) { [weak self] in
             self?.close(reason: .composeDeploy)
@@ -335,6 +440,7 @@ final class SessionCoordinator {
         )
         visionSession?.tearDown()
         session.onToggleDictation = { [weak self] in self?.toggleDictation() }
+        session.onRequestSuggestion = { [weak self] in self?.requestComposeSuggestionNow() }
         visionSession = nil
         composeSession = session
         guard stateMachine.transition(to: .compose, reason: .summon) else {
@@ -395,6 +501,8 @@ final class SessionCoordinator {
         stopActiveWork()
         discardComposePreCapture()
         visionIdentityTask = nil
+        composeAnchorFrame = nil
+        composeSuggestionExplicitlyRequested = false
         composeSession?.tearDown()
         composeSession = nil
         visionSession?.tearDown()
@@ -691,12 +799,17 @@ final class SessionCoordinator {
             }
         }
 
-        guard AppSettings.isProactiveSuggestEnabled() else {
+        // One explicit press opens every politeness gate below. The always-on
+        // setting, the empty-draft rule and the editable-focus requirement all
+        // exist so the automatic path never spends a model call the user did
+        // not ask for — and this one they asked for by name.
+        let explicitlyRequested = composeSuggestionExplicitlyRequested
+        guard AppSettings.isProactiveSuggestEnabled() || explicitlyRequested else {
             SuggestTrace.log("skip: feature disabled")
             retractPlaceholder()
             return
         }
-        guard let composeSession, composeSession.isEmptyDraft else {
+        guard let composeSession, explicitlyRequested || composeSession.isEmptyDraft else {
             SuggestTrace.log("skip: no session or draft not empty")
             retractPlaceholder()
             return
@@ -711,7 +824,7 @@ final class SessionCoordinator {
         // the new routing, compose is normally only reached when a field was
         // focused, but guard here too so other summon paths (menu, hold-to-talk)
         // don't spend a model call with no target field.
-        guard composeFocusEditable else {
+        guard explicitlyRequested || composeFocusEditable else {
             SuggestTrace.log("skip: no editable field focused at summon")
             retractPlaceholder()
             return
@@ -719,6 +832,9 @@ final class SessionCoordinator {
 
         let session = composeSession
         let captureID = attachment.id
+        // Consumed by the request it lets through: the next automatic pass
+        // answers to the ordinary gates again.
+        composeSuggestionExplicitlyRequested = false
         suggestionTask?.cancel()
         suggestionTask = Task { [weak self] in
             guard let self else { return }
@@ -1004,14 +1120,19 @@ final class SessionCoordinator {
                     ("sinceSummon", .ms(summonClock.elapsedMs)),
                 ])
             }
-            panelController.present(
+            panelController.presentCompose(
                 FoundationComposeRootView(
                     session: composeSession,
-                    onExpansionChange: { [weak self] expanded in
-                        self?.panelController.setComposeExpanded(expanded)
-                    }
+                    // The only place that knows which display the bubble is
+                    // for, so the only place that can say how much room the
+                    // growing surfaces may share — same contract as Vision.
+                    heightBudget: ComposeBubbleView.heightBudget(
+                        visibleHeight: (ActiveDisplay.screen() ?? NSScreen.main)?
+                            .visibleFrame.height ?? 900
+                    ),
+                    onClose: { [weak self] in self?.close(reason: .closeRequested) }
                 ),
-                for: mode
+                anchorFrame: composeAnchorFrame
             )
         case .vision:
             guard let visionSession else { return }
@@ -1096,7 +1217,7 @@ final class SessionCoordinator {
             VisionPointerResolver.screenLocalRect(
                 normalized: box,
                 captureRect: captureRect,
-                mainDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height,
+                mainDisplayHeight: VisionPointerResolver.mainDisplayHeight,
                 screenFrame: pointingOverlay.coveredScreenFrame
             )
         )
@@ -1124,7 +1245,7 @@ final class SessionCoordinator {
         session.beginPointing()
         pointingTask?.cancel()
         let screenFrame = pointingOverlay.coveredScreenFrame
-        let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+        let mainHeight = VisionPointerResolver.mainDisplayHeight
         pointingTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -1217,7 +1338,7 @@ final class SessionCoordinator {
         session.beginPointing()
         pointingTask?.cancel()
         let screenFrame = pointingOverlay.coveredScreenFrame
-        let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+        let mainHeight = VisionPointerResolver.mainDisplayHeight
         pointingTask = Task { [weak self] in
             guard let self else { return }
             do {

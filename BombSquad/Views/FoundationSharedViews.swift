@@ -1,26 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// One consistent send affordance across every transient panel surface.
-/// Callers provide a context-specific accessible name for the icon-only button.
-struct PanelSendButton: View {
-    let accessibilityLabel: String
-    let help: String
-    let isEnabled: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "paperplane.fill")
-                .frame(width: 18, height: 18)
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(!isEnabled)
-        .help(help)
-        .accessibilityLabel(accessibilityLabel)
-    }
-}
-
 /// Names the skill that shaped the answer on screen. A skill is injected
 /// knowledge about the product the user is looking at, and it is named wherever
 /// it acts: knowledge the user cannot see is knowledge they cannot correct or

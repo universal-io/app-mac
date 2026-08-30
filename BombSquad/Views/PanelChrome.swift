@@ -43,6 +43,48 @@ extension View {
     }
 }
 
+/// Chrome for a companion bubble — the card Vision's bubble established, kept
+/// as one definition so Compose's bubble is the same object on screen rather
+/// than a second card that drifts a radius or a hairline away from it.
+///
+/// Opaque, and deliberately not a material: what sits behind a bubble is the
+/// wash or the user's own screen, and a material would sample it into the one
+/// surface that has to stay readable. `windowBackgroundColor` keeps the default
+/// label colours legible in both appearances. The shadow is the window's
+/// (`hasShadow`), never drawn in here: a view-drawn shadow needs the window to
+/// be larger than the card to hold it, and that margin swallows clicks meant
+/// for whatever is underneath.
+struct BubbleChrome: ViewModifier {
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 16)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background(shape.fill(Color(nsColor: .windowBackgroundColor)).allowsHitTesting(false))
+            .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 1).allowsHitTesting(false))
+            .clipShape(shape)
+    }
+}
+
+extension View {
+    func bubbleChrome() -> some View {
+        modifier(BubbleChrome())
+    }
+}
+
+/// The two surfaces inside a bubble, as tone rather than as depth.
+///
+/// The place to read and the place to type have to be told apart — without
+/// that the answer, the empty space and the input box are one area with
+/// nothing saying where a click puts a cursor. A shade of the foreground does
+/// it in both appearances without either surface claiming to be a layer of its
+/// own. One definition for both bubbles, same reason as `BubbleChrome`.
+enum BubbleSurface {
+    static let reading = Color.primary.opacity(0.05)
+    static let typing = Color.primary.opacity(0.10)
+}
+
 /// Monochrome "I//O" glyph for the menu bar (template image so it follows
 /// the menu bar appearance). The logo glyph and the diff colors are the only
 /// custom visuals the design system allows.

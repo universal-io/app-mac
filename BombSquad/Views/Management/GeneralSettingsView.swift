@@ -6,7 +6,8 @@ struct GeneralSettingsView: View {
     @State private var didCopyDiagnostics = false
     @AppStorage(AppSettings.isHistoryEnabledKey) private var isHistoryEnabled = true
     @AppStorage(AppSettings.isContextCaptureEnabledKey) private var isContextCaptureEnabled = true
-    @AppStorage(AppSettings.isProactiveSuggestEnabledKey) private var isProactiveSuggestEnabled = true
+    // Off by default, same as AppSettings.isProactiveSuggestEnabled().
+    @AppStorage(AppSettings.isProactiveSuggestEnabledKey) private var isProactiveSuggestEnabled = false
     // Same fallback as AppSettings.outputLanguage(), so the picker never shows
     // a language the app is not actually using.
     @AppStorage(AppSettings.outputLanguageKey)

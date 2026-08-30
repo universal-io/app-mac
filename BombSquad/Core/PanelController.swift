@@ -1,18 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// The window's shape as a pure function of `AppMode`.
-/// One place decides size, placement, and activation behavior.
+/// What each mode needs from the app-active rule.
+///
+/// This used to also carry window size and placement; the compose bubble sizes
+/// itself to its content and sits beside the summoning field, so geometry left
+/// (2026-08-27). What remains is the one question every mode still has to
+/// answer: does losing app-active end the session?
 struct PanelSpec: Equatable {
-    enum Placement: Equatable {
-        /// Centered on the screen the user is working on (`ActiveDisplay`).
-        case centered
-        /// Bottom-right corner strip (copilot: never cover the navigated screen).
-        case bottomTrailing
-    }
-
-    let size: CGSize
-    let placement: Placement
     /// Whether losing app-active should close the panel in this mode.
     /// Copilot inverts the modal rule: clicking the target app IS the
     /// interaction (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
@@ -23,44 +18,44 @@ struct PanelSpec: Equatable {
         case .idle, .capturing:
             return nil
         case .compose:
-            return PanelSpec(
-                size: CGSize(width: 680, height: 660),
-                placement: .centered,
-                closesOnResignActive: true
-            )
+            return PanelSpec(closesOnResignActive: true)
         case .vision:
-            // Vision no longer draws in this window — it puts a wash over the
-            // real screen (R14) — but this spec still answers "does losing
-            // app-active end the session", and for pointing the answer has to
-            // be no. Measured 2026-08-23: another application can hold
-            // frontmost while every click on the covered display still arrives
-            // here, so a session that closed on resign-active would end itself
-            // while the user was still pointing at things.
-            return PanelSpec(
-                size: CGSize(width: 960, height: 640),
-                placement: .centered,
-                closesOnResignActive: false
-            )
+            // Vision draws on the pointing overlay, not in this panel, but this
+            // spec still answers the resign-active question — and for pointing
+            // the answer has to be no. Measured 2026-08-23: another application
+            // can hold frontmost while every click on the covered display still
+            // arrives here.
+            return PanelSpec(closesOnResignActive: false)
         case .copilot:
-            // No panel either: guidance is the pointing overlay with the wash
-            // lifted (R15). The spec still answers the resign-active question,
-            // and clicking the app being guided IS the interaction, so no.
-            return PanelSpec(
-                size: CGSize(width: 960, height: 640),
-                placement: .centered,
-                closesOnResignActive: false
-            )
+            // Guidance is the same overlay with the wash lifted (R15), and
+            // clicking the app being guided IS the interaction.
+            return PanelSpec(closesOnResignActive: false)
         }
     }
 }
 
-/// Owns the floating panel window: creation, layout, reveal/hide/close.
-/// The coordinator tells it *which mode* the app is in; this class is the
-/// only place that translates mode → window geometry and activation calls.
+/// Owns the compose bubble's window: creation, placement, reveal/hide/close.
+///
+/// The window is the same card Vision's bubble is — fixed width, height from
+/// the content, placed beside its subject — but where Vision's subject is the
+/// place the user pointed, Compose's is the field they were writing into when
+/// they summoned it. Unlike Vision's bubble it activates the app and takes
+/// key normally: Compose exists to be typed into, and losing app-active is
+/// still what closes it.
 @MainActor
 final class PanelController {
     private var panel: KeyablePanel?
-    private var appliedSpec: PanelSpec?
+    private var host: NSHostingView<AnyView>?
+    /// Where the bubble goes: beside the summoning field (`frame`), or where
+    /// the user dragged it (`userTopLeft`), which wins until the next summon.
+    /// Same one-value rule as Vision's bubble — see `BubbleAnchor`.
+    private var anchor = BubbleAnchor()
+    private var placedSize: CGSize = .zero
+    private var reflow: Timer?
+    private var moveObserver: Any?
+    /// True while `place()` is setting the frame, so the move it causes is not
+    /// mistaken for the user dragging the bubble there.
+    private var isPlacing = false
 
     /// Esc (or any in-window close request). The coordinator decides what
     /// closing means in the current mode.
@@ -68,50 +63,43 @@ final class PanelController {
 
     var isVisible: Bool { panel?.isVisible == true }
 
-    private static let compactComposeSize = CGSize(width: 680, height: 420)
-    private static let expandedComposeSize = CGSize(width: 680, height: 660)
-
-    /// Shows the panel with the given SwiftUI content, shaped for `mode`.
-    /// Reuses the existing window when one is up (content swap + relayout).
-    func present<Content: View>(_ content: Content, for mode: AppMode) {
-        guard let spec = PanelSpec.forMode(mode) else { return }
+    /// Shows the compose bubble with the given SwiftUI content.
+    ///
+    /// - Parameter anchorFrame: the summoning field's frame in global Cocoa
+    ///   coordinates, or nil when no field is known (menu-bar summon,
+    ///   hold-to-talk, an AX read that yielded nothing) — then the bubble opens
+    ///   at the centre of the working screen, where the panel it replaces did.
+    ///
+    /// Reuses the existing window when one is up (content swap + replace); a
+    /// window still alive from this same session keeps the place the user gave
+    /// it, so a capture round-trip does not shove the card back.
+    func presentCompose<Content: View>(_ content: Content, anchorFrame: CGRect?) {
+        let isNewWindow = panel == nil
         let panel = self.panel ?? makePanel()
-        panel.contentViewController = NSHostingController(rootView: content)
-        apply(spec, to: panel)
         self.panel = panel
-        reveal(panel, activating: true)
-    }
 
-    /// Re-applies geometry after a mode change without touching the content
-    /// (the SwiftUI root observes the state machine and re-renders itself).
-    func applyMode(_ mode: AppMode, activate: Bool = false) {
-        guard let panel, let spec = PanelSpec.forMode(mode) else { return }
-        guard spec != appliedSpec else { return }
-        apply(spec, to: panel)
-        if activate {
-            reveal(panel, activating: true)
+        if let host {
+            host.rootView = AnyView(content)
+        } else {
+            let host = NSHostingView(rootView: AnyView(content))
+            // The SwiftUI view's own ideal size, kept current as the content
+            // changes — same measurement Vision's bubble settled on.
+            host.sizingOptions = [.intrinsicContentSize]
+            host.frame = NSRect(
+                x: 0, y: 0,
+                width: VisionPointingOverlay.bubbleWidth, height: 1
+            )
+            panel.contentView = host
+            self.host = host
         }
-    }
 
-    /// Compose reserves no empty result area. It grows downward only after a
-    /// suggestion/review surface has content worth showing.
-    func setComposeExpanded(_ expanded: Bool) {
-        guard let panel else { return }
-        let contentSize = expanded
-            ? Self.expandedComposeSize
-            : Self.compactComposeSize
-        let currentFrame = panel.frame
-        var targetFrame = panel.frameRect(
-            forContentRect: NSRect(origin: .zero, size: contentSize)
-        )
-        targetFrame.origin.x = currentFrame.midX - targetFrame.width / 2
-        targetFrame.origin.y = currentFrame.maxY - targetFrame.height
-        guard currentFrame != targetFrame else { return }
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.2
-            panel.animator().setFrame(targetFrame, display: true)
+        if isNewWindow || anchor.frame != anchorFrame {
+            anchor = BubbleAnchor(frame: anchorFrame)
         }
+        place()
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
+        startWatching(panel)
     }
 
     /// Temporarily removes the panel from screen (capture, approved actions)
@@ -120,30 +108,28 @@ final class PanelController {
         panel?.orderOut(nil)
     }
 
-    /// Restores a hidden panel. After a synthetic click the TARGET app is
-    /// frontmost, and macOS 14's cooperative activation can silently refuse
-    /// `NSApp.activate` from a background app — `orderFrontRegardless`
-    /// bypasses activation and puts the floating panel back unconditionally.
-    func revealAfterAction() {
-        guard let panel else { return }
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        panel.orderFrontRegardless()
-    }
-
     /// Tears the window down. Idempotent.
     func close() {
+        reflow?.invalidate()
+        reflow = nil
+        if let moveObserver { NotificationCenter.default.removeObserver(moveObserver) }
+        moveObserver = nil
         panel?.onCloseRequested = nil
         panel?.orderOut(nil)
         panel = nil
-        appliedSpec = nil
+        host = nil
+        anchor = BubbleAnchor()
+        placedSize = .zero
     }
 
     // MARK: - Window construction
 
     private func makePanel() -> KeyablePanel {
         let panel = KeyablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 660),
+            contentRect: NSRect(
+                x: 0, y: 0,
+                width: VisionPointingOverlay.bubbleWidth, height: 1
+            ),
             styleMask: [.borderless],
             backing: .buffered, defer: false
         )
@@ -158,52 +144,95 @@ final class PanelController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // AppKit's shadow, cast from the card's own alpha — the view draws
+        // none, for the reason written on `BubbleChrome`.
         panel.hasShadow = true
-        // Every summon still starts centered, but after presentation the user
-        // can drag from any non-interactive background/padding. Editors,
-        // buttons, and screenshot tools keep their own pointer handling, while
-        // result headers continue to provide an explicit generous drag target.
+        // The bubble's own drag handle covers everything that is not a control,
+        // and this keeps any padding it misses draggable too.
         panel.isMovableByWindowBackground = true
         return panel
     }
 
-    private func reveal(_ panel: NSWindow, activating: Bool) {
-        if activating {
-            NSApp.activate(ignoringOtherApps: true)
+    // MARK: - Placement
+
+    /// The taller of the two answers AppKit will give, plus a point for the
+    /// final line's descender — same measurement as Vision's bubble.
+    private static func height(of host: NSView) -> CGFloat {
+        max(host.intrinsicContentSize.height, host.fittingSize.height) + 1
+    }
+
+    /// Where the compose bubble goes, as a pure rule so a test can hold the
+    /// window to it: beside the summoning field, at the centre of the working
+    /// screen when none was measured — where the panel this replaces opened —
+    /// and wherever the user dragged it, which wins until the next summon.
+    nonisolated static func bubbleOrigin(
+        for anchor: BubbleAnchor,
+        size: CGSize,
+        in bounds: CGRect
+    ) -> CGPoint {
+        if anchor.frame == nil, anchor.userTopLeft == nil {
+            return CGPoint(
+                x: bounds.midX - size.width / 2,
+                y: bounds.midY - size.height / 2
+            )
         }
-        panel.makeKeyAndOrderFront(nil)
+        return VisionBubblePlacement.origin(for: anchor, size: size, in: bounds)
     }
 
-    private func apply(_ spec: PanelSpec, to window: NSWindow) {
-        window.setContentSize(spec.size)
-        switch spec.placement {
-        case .centered:
-            centerOnActiveScreen(window)
-        case .bottomTrailing:
-            positionBottomTrailing(window)
+    private func place() {
+        guard let panel, let host else { return }
+        let size = CGSize(
+            width: VisionPointingOverlay.bubbleWidth,
+            height: max(1, Self.height(of: host))
+        )
+        // The screen the user is working on — the one showing the app they
+        // summoned us from, not the one the pointer happens to rest on.
+        guard let bounds = ActiveDisplay.screen()?.visibleFrame
+            ?? NSScreen.main?.visibleFrame else { return }
+
+        let origin = Self.bubbleOrigin(for: anchor, size: size, in: bounds)
+
+        isPlacing = true
+        defer { isPlacing = false }
+        panel.setFrame(CGRect(origin: origin, size: size), display: true)
+        // The shadow is cast from the window's own alpha, and a borderless
+        // window keeps the shape it had before the resize until told.
+        panel.invalidateShadow()
+        host.frame = CGRect(origin: .zero, size: size)
+        placedSize = size
+    }
+
+    private func startWatching(_ panel: KeyablePanel) {
+        // Any movement of the window this class did not perform is the user
+        // dragging it: the drag handle asks AppKit to move the window, and the
+        // placement finds out from AppKit.
+        if moveObserver == nil {
+            moveObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didMoveNotification,
+                object: panel,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.noteMoved() }
+            }
         }
-        appliedSpec = spec
+        // The bubble grows as a result surface appears or a field wraps, and
+        // AppKit does not tell a window that a hosting view's content got
+        // taller. Same cadence as Vision's bubble.
+        if reflow == nil {
+            reflow = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.placeIfResized() }
+            }
+        }
     }
 
-    /// Center on the screen the user is working on — the one showing the app
-    /// they summoned us from, not the one the pointer happens to rest on.
-    private func centerOnActiveScreen(_ window: NSWindow) {
-        guard let visible = ActiveDisplay.screen()?.visibleFrame else { return }
-        let size = window.frame.size
-        window.setFrameOrigin(NSPoint(
-            x: visible.midX - size.width / 2,
-            y: visible.midY - size.height / 2
-        ))
+    private func placeIfResized() {
+        guard let panel, panel.isVisible, let host else { return }
+        guard abs(Self.height(of: host) - placedSize.height) > 0.5 else { return }
+        place()
     }
 
-    /// Bottom-right corner of the working screen, with a margin.
-    private func positionBottomTrailing(_ window: NSWindow) {
-        guard let visible = ActiveDisplay.screen()?.visibleFrame else { return }
-        let margin: CGFloat = 24
-        let size = window.frame.size
-        window.setFrameOrigin(NSPoint(
-            x: visible.maxX - size.width - margin,
-            y: visible.minY + margin
-        ))
+    private func noteMoved() {
+        guard !isPlacing, let panel else { return }
+        anchor.userTopLeft = CGPoint(x: panel.frame.minX, y: panel.frame.maxY)
     }
 }

@@ -27,16 +27,6 @@ struct VisionBubbleView: View {
 
     private static let answerFontSize: CGFloat = 13
 
-    /// The two surfaces inside the bubble, as tone rather than as depth.
-    ///
-    /// The place to read and the place to type still have to be told apart —
-    /// without that the answer, the empty space and the input box are one area
-    /// with nothing saying where a click puts a cursor. A shade of the
-    /// foreground does it in both appearances without either surface claiming
-    /// to be a layer of its own.
-    private static let readingSurface = Color.primary.opacity(0.05)
-    private static let typingSurface = Color.primary.opacity(0.10)
-
     /// One line of the answer, in the answer's own font.
     ///
     /// Ascender to descender plus leading is what text layout uses for a line
@@ -177,7 +167,7 @@ struct VisionBubbleView: View {
                 // front of it and still selects.
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(Self.readingSurface)
+                        .fill(BubbleSurface.reading)
                         .allowsHitTesting(false)
                 )
                 guidanceStatus
@@ -199,27 +189,10 @@ struct VisionBubbleView: View {
         // No label on it. A grip that has to be labelled is not a grip
         // (`app-web/docs/pointing.md` §3).
         .background(WindowDragHandle())
-        // Opaque, and deliberately not a material. A material samples what is
-        // behind it *within the same window*, and what is behind this one is the
-        // wash — so the bubble came out tinted purple, sitting in the colour it
-        // is supposed to be readable against. `windowBackgroundColor` also keeps
-        // the default label colours legible in both appearances, which a fixed
-        // dark card would not.
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(nsColor: .windowBackgroundColor))
-                .allowsHitTesting(false)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-                .allowsHitTesting(false)
-        )
-        // The shadow is the window's (`NonactivatingOverlayPanel.hasShadow`),
-        // not one drawn in here. A shadow inside the view needs the window to
-        // be larger than the card to hold it, and that margin swallows clicks
-        // meant for the app underneath.
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        // The card itself — one definition, shared with Compose's bubble
+        // (`BubbleChrome`): why it is opaque, and why the shadow belongs to the
+        // window, is written there.
+        .bubbleChrome()
     }
 
     /// Skill and close, on their own bar. A close button floating in the body
@@ -364,7 +337,7 @@ struct VisionBubbleView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(Self.readingSurface).allowsHitTesting(false))
+                .background(Capsule().fill(BubbleSurface.reading).allowsHitTesting(false))
                 .allowsHitTesting(false)
                 .accessibilityLabel("解説中")
         }
@@ -509,7 +482,7 @@ struct VisionBubbleView: View {
         // The one surface that keeps its clicks. Everywhere else in the bubble
         // is a place to pick it up by; here a press has to put a cursor in the
         // sentence being written.
-        .background(Self.typingSurface, in: RoundedRectangle(cornerRadius: 8))
+        .background(BubbleSurface.typing, in: RoundedRectangle(cornerRadius: 8))
         .accessibilityLabel("Visionへの質問")
         .help("Enterで送信、Shift+Enterで改行")
     }
