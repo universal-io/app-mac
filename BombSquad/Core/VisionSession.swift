@@ -860,8 +860,21 @@ final class VisionSession: ObservableObject {
     }
 
     private func scheduleCopilotProgressCheck(after delay: UInt64, waitForChange: Bool) {
-        guard isCopilotActive, !isCopilotChecking, !isLoading,
+        guard isCopilotActive,
               copilotState != .complete, copilotState != .stepLimit else { return }
+        // Acting while a step is still running is not an error and must not
+        // start a second one — the capture that step is about to take will
+        // include what the user just did. But dropping it without a trace made
+        // a real click invisible: a step that looks like it ignored the user
+        // left nothing behind to say so. Record, then drop.
+        guard !isCopilotChecking, !isLoading else {
+            if isCopilotChecking {
+                Diagnostics.record("guide.act.folded", details: [("into", .literal("runningStep"))])
+            } else {
+                Diagnostics.record("guide.act.folded", details: [("into", .literal("openQuestion"))])
+            }
+            return
+        }
         guard client != nil else {
             errorMessage = Self.noClientMessage
             return
@@ -1031,24 +1044,26 @@ final class VisionSession: ObservableObject {
                 copilotState = .complete
                 removeCopilotClickMonitor()
                 Diagnostics.record("guide.done", details: [("state", .literal("complete"))])
-            case .guide:
+            case .guide, .clarification:
+                // Both spend a step, and the stop valve counts both.
+                //
+                // Clarification is a decision point ("this needs sign-in —
+                // continue?"), not only a dead end, so the click monitor stays
+                // on and the loop continues; apply() already set/cleared the
+                // highlight based on whether a target was returned. But a run
+                // that keeps clarifying costs exactly what a run that keeps
+                // guiding costs — a capture and a model call per click. Only
+                // counting `guide` left a hole where the valve never closes,
+                // which is the one thing `stepLimit` exists to prevent.
                 copilotStepCount += 1
                 if copilotStepCount >= Self.maxGuideSteps {
                     copilotState = .stepLimit
                     removeCopilotClickMonitor()
                     Diagnostics.record("guide.done", details: [("state", .literal("stepLimit"))])
                 } else {
-                    copilotState = .idle
+                    copilotState = response.result.mode == .clarification ? .clarification : .idle
                     installCopilotClickMonitor()
                 }
-            case .clarification:
-                // Clarification is now also a decision point ("this needs
-                // sign-in — continue?"), not only a dead end. Keep watching
-                // for clicks so that if the user decides to proceed by
-                // acting, the copilot follows; apply() already set/cleared
-                // the highlight based on whether a target was returned.
-                copilotState = .clarification
-                installCopilotClickMonitor()
             case .observation:
                 break
             }
