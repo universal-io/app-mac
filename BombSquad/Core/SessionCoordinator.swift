@@ -13,7 +13,6 @@ enum AppEvent: CustomStringConvertible {
     case longPressBegan
     case longPressEnded
     /// Explicit panel command from the menu-bar item.
-    case menuPanelToggle
     /// Explicit camera button in the compose surface.
     case screenshotCaptureRequested
     /// Esc or an in-window close request.
@@ -27,7 +26,6 @@ enum AppEvent: CustomStringConvertible {
         case .doubleTap: return "doubleTap"
         case .longPressBegan: return "longPressBegan"
         case .longPressEnded: return "longPressEnded"
-        case .menuPanelToggle: return "menuPanelToggle"
         case .screenshotCaptureRequested: return "screenshotCaptureRequested"
         case .closeRequested: return "closeRequested"
         case .appResignedActive: return "appResignedActive"
@@ -191,12 +189,6 @@ final class SessionCoordinator {
         switch event {
         case .doubleTap:
             handleDoubleTap(in: mode)
-        case .menuPanelToggle:
-            if mode == .idle {
-                summonCompose()
-            } else {
-                close(reason: .menuPanelToggle)
-            }
         case .screenshotCaptureRequested:
             guard mode == .compose else { return }
             beginVisionCaptureFromCompose()
@@ -317,6 +309,15 @@ final class SessionCoordinator {
                         ("passes", .count(snapshot.collectionPasses)),
                         ("status", .code(snapshot.status)),
                         ("destination", .code(AXFocusLaunchDecision.destination(for: snapshot))),
+                        // Whether the user's own selection reached the session.
+                        // Without this the two ways a selection summon can go
+                        // wrong — the read found nothing, or it found text that
+                        // something later dropped — look identical from the
+                        // outside, which is how this regressed twice unnoticed.
+                        // The length, never the text: a count cannot carry what
+                        // was on screen.
+                        ("selection", .flag(snapshot.selection != nil)),
+                        ("selectionChars", .count(snapshot.selection?.text.count ?? 0)),
                     ]
                 )
                 self.completeIdleSummon(snapshot: snapshot, capture: completion)

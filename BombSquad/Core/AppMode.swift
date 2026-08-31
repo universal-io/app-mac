@@ -88,7 +88,6 @@ enum TransitionReason: String {
     case doubleTapOnVision
     case emptyComposeCapture
     case idleAXFocusSummon
-    case menuPanelToggle
     case resignActive
     case summon
     case visionRequestedClose

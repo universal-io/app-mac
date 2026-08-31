@@ -82,10 +82,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         MainActor.assumeIsolated {
             let commandCenter = AppCommandCenter.shared
-            commandCenter.onShowPanelRequested = { [weak self] in
-                self?.trace("command.showPanel")
-                self?.coreCoordinator?.handle(.menuPanelToggle)
-            }
             commandCenter.onShowManagementRequested = { [weak self] in
                 self?.trace("command.showManagement")
                 self?.showManagementWindow()

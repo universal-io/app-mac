@@ -28,11 +28,6 @@ struct BombSquadApp: App {
             }
             Divider()
 
-            Button("パネルを表示") {
-                AppCommandCenter.shared.requestShowPanel()
-            }
-            Divider()
-
             Button(auth.hasSession ? "アカウント…" : "ログイン / 新規登録…") {
                 openManagement(.account)
             }
