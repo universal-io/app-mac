@@ -44,6 +44,7 @@ struct FoundationComposeRootView: View {
 struct ComposeBubbleView: View {
     @ObservedObject var session: ComposeSession
     @ObservedObject private var noticeCenter = OperationalNoticeCenter.shared
+    @ObservedObject private var availability = GatewayAvailability.shared
     let heightBudget: CGFloat
     let onClose: () -> Void
 
@@ -51,7 +52,6 @@ struct ComposeBubbleView: View {
     /// into, not the resting state of an input surface.
     @AppStorage(AppSettings.isProactiveSuggestEnabledKey)
     private var isProactiveSuggestEnabled = false
-    @State private var showHelp = false
     @State private var draftContentHeight: CGFloat = VisionBubbleView.inputMinHeight
     @State private var resultContentHeight: CGFloat = VisionBubbleView.inputMinHeight
 
@@ -182,7 +182,12 @@ struct ComposeBubbleView: View {
 
     @ViewBuilder
     private var messages: some View {
-        if let error = session.errorMessage {
+        if let refusal = availability.refusal {
+            ServiceRefusalBanner(message: refusal)
+        }
+        // An error that only repeats the standing refusal is the same sentence
+        // twice in one bubble, which reads as two separate problems.
+        if let error = session.errorMessage, error != availability.refusal {
             ErrorBanner(message: error)
         }
         if let notice = noticeCenter.current {
@@ -394,7 +399,6 @@ struct ComposeBubbleView: View {
     /// whatever is on screen and in the field right now.
     private var actions: some View {
         HStack(spacing: 8) {
-            helpButton
             Button(action: session.requestReview) {
                 HStack(spacing: 5) {
                     if session.isReviewing {
@@ -426,37 +430,6 @@ struct ComposeBubbleView: View {
             .disabled(session.suggestionStatus == .preparing)
             .help("この画面への返信文案をその場で作ります")
             .accessibilityLabel("自動返信の文案を作成")
-        }
-    }
-
-    private var helpButton: some View {
-        Button {
-            showHelp.toggle()
-        } label: {
-            Image(systemName: "questionmark.circle")
-        }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .help("使い方を表示します")
-        .accessibilityLabel("使い方")
-        .popover(isPresented: $showHelp, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("使い方").font(.headline)
-                shortcut("Enter", "送信")
-                shortcut("Shift+Enter", "改行")
-                shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×1", "文案とフォーカス切替")
-                shortcut("\(KeybindingSettings.gestureKey().hintLabel) ×2", "起動 / ビジョン / 閉じる")
-                shortcut("\(KeybindingSettings.gestureKey().hintLabel) 長押し", "音声（マイクのクリックでも可）")
-                shortcut("Esc", "閉じる")
-            }
-            .padding(12)
-        }
-    }
-
-    private func shortcut(_ key: String, _ action: String) -> some View {
-        HStack(spacing: 8) {
-            Text(key).font(.caption.monospaced()).frame(width: 96, alignment: .leading)
-            Text(action).font(.caption)
         }
     }
 

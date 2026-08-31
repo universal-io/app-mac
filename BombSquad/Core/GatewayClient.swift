@@ -201,8 +201,15 @@ struct GatewayClient {
             throw ProviderError.http(status: -1, body: "no HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw GatewayAPI.error(status: http.statusCode, data: data)
+            let error = GatewayAPI.error(status: http.statusCode, data: data)
+            // Every request passes through here, including the GET each AI
+            // route answers with its own auth/quota preflight — which is how a
+            // spent month becomes something the app can say before the user
+            // asks rather than after they are refused.
+            GatewayAvailability.shared.observe(error)
+            throw error
         }
+        GatewayAvailability.shared.observeSuccess()
         return data
     }
 

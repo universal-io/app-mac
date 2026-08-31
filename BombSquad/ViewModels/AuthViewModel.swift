@@ -133,6 +133,7 @@ final class AuthViewModel: ObservableObject {
                 try await authClient.signOut()
                 try await self.activateLocalAccount(userID: nil, migrateLegacyData: false)
                 GatewayQuotaStore.shared.clear()
+                GatewayAvailability.shared.clear()
                 await MainActor.run {
                     self.initializedUserID = nil
                     self.tenantID = nil
@@ -278,6 +279,7 @@ final class AuthViewModel: ObservableObject {
                 ScreenshotCaptureService.cleanupTemporaryCaptures()
                 try? await authClient.signOut()
                 GatewayQuotaStore.shared.clear()
+                GatewayAvailability.shared.clear()
 
                 await MainActor.run {
                     self.initializedUserID = nil

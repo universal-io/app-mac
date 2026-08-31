@@ -112,6 +112,32 @@ struct ErrorBanner: View {
     }
 }
 
+/// The one thing a surface says when the account cannot make a request at all.
+///
+/// Distinct from `ErrorBanner` on purpose: an error reports an attempt that
+/// went wrong, and this reports an attempt that would. It appears before the
+/// user does anything, carries no dismiss (the condition does not go away
+/// because it was read), and reads the same sentence in Compose and in Vision
+/// because it is one condition of the account, not of a feature.
+struct ServiceRefusalBanner: View {
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "exclamationmark.octagon.fill")
+            Text(message)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.red.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(.red)
+        .accessibilityLabel("利用できません: \(message)")
+    }
+}
+
 /// A successful request that switched to its secondary model must not look
 /// identical to a clean request. The user can dismiss the notice after reading.
 struct OperationalNoticeBanner: View {

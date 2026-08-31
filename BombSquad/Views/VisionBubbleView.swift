@@ -13,6 +13,8 @@ import SwiftUI
 /// and the frame belong to the overlay; the turn belongs to the session.
 struct VisionBubbleView: View {
     @ObservedObject var session: VisionSession
+    /// One condition of the account, read by every surface from the same place.
+    @ObservedObject private var availability = GatewayAvailability.shared
     /// How much room the answer may take, decided by the caller from the screen
     /// this is being shown on. Passed in rather than read here: a view that
     /// measured the screen itself could disagree with the one the overlay
@@ -134,6 +136,9 @@ struct VisionBubbleView: View {
                         .background(MarkStyle.swiftUIColor, in: RoundedRectangle(cornerRadius: 8))
                         .allowsHitTesting(false)
                         .accessibilityLabel("送信した質問: \(question)")
+                }
+                if let refusal = availability.refusal {
+                    ServiceRefusalBanner(message: refusal)
                 }
                 // Two surfaces, because there are two jobs: this is the place to
                 // read, the field below is the place to type. Both sat directly
@@ -259,7 +264,7 @@ struct VisionBubbleView: View {
 
     @ViewBuilder
     private var answer: some View {
-        if let error = session.errorMessage {
+        if let error = session.errorMessage, error != availability.refusal {
             Text(error)
                 .font(.system(size: Self.answerFontSize))
                 .foregroundStyle(.orange)
