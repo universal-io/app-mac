@@ -140,18 +140,7 @@ struct ComposeBubbleView: View {
             composeToolInfo
             Spacer(minLength: 0)
             autoReplyToggle
-            Button(action: onClose) {
-                HStack(spacing: 5) {
-                    Label("閉じる", systemImage: "xmark")
-                        .font(.system(size: 11))
-                    Text("Esc")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .accessibilityLabel("閉じる")
+            BubbleCloseButton(action: onClose)
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)

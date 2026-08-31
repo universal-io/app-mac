@@ -224,38 +224,7 @@ struct VisionBubbleView: View {
             }
             stateChip
             Spacer(minLength: 0)
-            // Named, not just an ×. This is the way out of a mode that has taken
-            // over the whole screen, and a bare glyph in a corner asks the user
-            // to guess what dismissing it does — whether the explanation goes
-            // away, or the wash, or the app. "終了" was avoided for the same
-            // reason: it reads as quitting the application.
-            Button(action: onClose) {
-                HStack(spacing: 5) {
-                    Label("解説を閉じる", systemImage: "xmark")
-                        .font(.system(size: 11))
-                    // The key, on the button, the way a menu item carries its
-                    // equivalent. A tooltip only teaches somebody who already
-                    // waited on the control long enough to be told, and Esc is
-                    // the thing a user reaches for first when a mode has taken
-                    // the screen. Not shown while guiding: the screen is the
-                    // app's then, and so is Esc — it reaches this bubble only
-                    // while somebody is typing in it.
-                    if !session.isCopilotActive {
-                        Text("Esc")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .arrowCursorOnHover()
-            .accessibilityLabel("解説を閉じる")
-            .hoverHint(
-                "この解説モードを抜けます",
-                alignment: .bottomTrailing,
-                offset: CGSize(width: 0, height: 30)
-            )
+            BubbleCloseButton(action: onClose)
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
@@ -300,10 +269,10 @@ struct VisionBubbleView: View {
     /// absence (`app-web/docs/solo-mode.md` §1). The wash already says
     /// "pointing" to anyone who knows the product; the chip says it to anyone
     /// who does not, and says "案内" once the wash is gone and a click will
-    /// press things. The cross on the guidance chip goes back to pointing;
-    /// "解説を閉じる" beside it ends the whole session. Two exits on one bar,
-    /// told apart by their words — a bare glyph would make the user guess
-    /// which of the two a click gives up.
+    /// press things. The cross on this chip goes back to pointing; the one at
+    /// the far right of the bar ends the session. Two exits on one bar, told
+    /// apart by where they sit rather than by wording: this one is inside the
+    /// purple token, against the word it dismisses.
     ///
     /// Guidance wears the product's purple: it is "the actions that lead to
     /// this", which is what the colour means. Pointing wears none — it is not
@@ -414,7 +383,7 @@ struct VisionBubbleView: View {
         case .timedOut:
             return "画面を撮影できませんでした。「再確認」を押してください"
         case .complete:
-            return "目的に到達しました。「解説を閉じる」で終わります"
+            return "目的に到達しました"
         case .clarification:
             return "案内をご確認ください。進める場合はそのまま操作すると続きます"
         case .stepLimit:

@@ -112,6 +112,40 @@ struct ErrorBanner: View {
     }
 }
 
+/// The way out of a bubble, in the corner every card keeps it in.
+///
+/// This carried its name and its key — "解説を閉じる" with "Esc" beside it —
+/// on the reasoning that a bare glyph makes the user guess what dismissing a
+/// full-screen mode gives up. In the bubble that reasoning cost too much: it is
+/// the narrowest surface in the product, and two words plus a key spent that
+/// width on the one control a person is least likely to need explained. A cross
+/// at the top-right of a card is not a convention this product has to teach.
+///
+/// The other cross in the Vision bubble lives inside the purple 案内 chip, next
+/// to the word it dismisses, and that is what tells the two apart now that
+/// neither carries a label: a cross inside a token removes the token, a cross at
+/// the far right closes the card. Placement, not wording.
+///
+/// Esc still closes. Only its advertisement is gone — dropping the key itself
+/// would take away the first thing anyone reaches for when a mode has the
+/// screen (HIG 5.3).
+struct BubbleCloseButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.secondary)
+        // The overlay panel never becomes main, so nothing resets the cursor a
+        // text field set — every control on it has to claim the arrow itself.
+        .arrowCursorOnHover()
+        .accessibilityLabel("閉じる")
+    }
+}
+
 /// The one thing a surface says when the account cannot make a request at all.
 ///
 /// Distinct from `ErrorBanner` on purpose: an error reports an attempt that
