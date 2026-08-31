@@ -115,13 +115,67 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertTrue(text.contains("error=provider.http.502"))
     }
 
-    /// Gateway errors arrive with server-written text in the payload. The class
-    /// is worth recording; the message is exactly what must not be.
-    func testGatewayMessageIsReducedToItsClass() {
+    /// Gateway errors arrive with server-written text in the payload. The
+    /// contract's code is worth recording; the message beside it is exactly
+    /// what must not be.
+    func testGatewayMessageIsReducedToItsCode() {
         let code = DiagnosticErrorClass(
-            ProviderError.gateway(message: "画面の読み取りに失敗しました（mail.google.com）")
+            ProviderError.gateway(
+                message: "画面の読み取りに失敗しました（mail.google.com）",
+                code: "QUOTA_EXCEEDED"
+            )
         ).diagnosticCode
-        XCTAssertEqual(code, "provider.gateway")
+        XCTAssertEqual(code, "gateway.QUOTA_EXCEEDED")
+    }
+
+    /// The code arrives as a plain string in a JSON body. Recording it is only
+    /// safe while unknown values cannot ride along, so an unrecognized code
+    /// collapses and a missing contract body says so.
+    func testUnknownGatewayCodesCollapseInsteadOfPassingThrough() {
+        XCTAssertEqual(
+            DiagnosticErrorClass(
+                ProviderError.gateway(message: "…", code: "松本さんのトークン")
+            ).diagnosticCode,
+            "gateway.other"
+        )
+        XCTAssertEqual(
+            DiagnosticErrorClass(
+                ProviderError.gateway(message: "…", code: nil)
+            ).diagnosticCode,
+            "gateway.none"
+        )
+    }
+
+    /// The failure this session started from: a refused request whose reason
+    /// the user was never told. The reason is the gateway's own sentence, so it
+    /// replaces the surface's "try again"; an internal fault has no such
+    /// sentence and leaves the surface's wording alone.
+    func testOnlySelfExplainingFailuresReplaceTheSurfaceWording() {
+        XCTAssertEqual(
+            UserFacingError.serverExplanation(
+                for: ProviderError.gateway(
+                    message: "今月の利用枠を使い切りました。",
+                    code: "QUOTA_EXCEEDED"
+                )
+            ),
+            "今月の利用枠を使い切りました。"
+        )
+        XCTAssertNil(
+            UserFacingError.serverExplanation(for: ProviderError.decoding("bad json"))
+        )
+        XCTAssertNil(
+            UserFacingError.serverExplanation(
+                for: ProviderError.http(status: 502, body: "upstream said no")
+            )
+        )
+        XCTAssertNotNil(
+            UserFacingError.serverExplanation(
+                for: ProviderError.transport(
+                    code: URLError.Code.notConnectedToInternet.rawValue,
+                    description: "offline"
+                )
+            )
+        )
     }
 
     /// The AX collector carries its stop reason as a `String?` because the wire

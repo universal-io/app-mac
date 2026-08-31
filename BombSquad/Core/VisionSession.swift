@@ -708,12 +708,22 @@ final class VisionSession: ObservableObject {
                     ("total", .ms(Self.elapsedMs(since: started))),
                     ("error", .code(DiagnosticErrorClass(error))),
                 ])
+                // A refusal the gateway explained (quota spent, session
+                // expired, provider down) is the reason the user needs, and
+                // hiding it behind "少し待ってから" turns an actionable stop into
+                // a wait that changes nothing. Anything without such a reason
+                // keeps the generic sentence, so an HTTP body still never
+                // reaches a shipped panel.
+                if let explained = UserFacingError.serverExplanation(for: error) {
+                    self.errorMessage = explained
+                } else {
 #if DEBUG
-                self.errorMessage =
-                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    self.errorMessage =
+                        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 #else
-                self.errorMessage = "画面の読み取りに失敗しました。少し待ってからもう一度お試しください。"
+                    self.errorMessage = "画面の読み取りに失敗しました。少し待ってからもう一度お試しください。"
 #endif
+                }
             }
         }
     }
@@ -949,12 +959,16 @@ final class VisionSession: ObservableObject {
                 self.errorMessage = "画面の確認が中断されました。「再確認」を押してください。"
             } catch {
                 self.copilotState = .timedOut
+                if let explained = UserFacingError.serverExplanation(for: error) {
+                    self.errorMessage = explained
+                } else {
 #if DEBUG
-                self.errorMessage =
-                    (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    self.errorMessage =
+                        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 #else
-                self.errorMessage = "画面を確認できませんでした。「再確認」を押してください。"
+                    self.errorMessage = "画面を確認できませんでした。「再確認」を押してください。"
 #endif
+                }
             }
         }
     }
@@ -1079,11 +1093,15 @@ final class VisionSession: ObservableObject {
                 ("sinceAsk", .ms(askClock.elapsedMs)),
                 ("error", .code(DiagnosticErrorClass(error))),
             ])
+            if let explained = UserFacingError.serverExplanation(for: error) {
+                errorMessage = explained
+            } else {
 #if DEBUG
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 #else
-            errorMessage = "次の案内を確認できませんでした。「再確認」を押してください。"
+                errorMessage = "次の案内を確認できませんでした。「再確認」を押してください。"
 #endif
+            }
         }
     }
 

@@ -413,8 +413,10 @@ final class AuthViewModel: ObservableObject {
 
     private func fetchAccountSummary() async throws -> BombSquadAccountSummary {
         guard let client = GatewayAccountClient.make() else {
+            // Locally raised, so there is no contract code to carry.
             throw ProviderError.gateway(
-                message: "アカウント情報を取得できませんでした。API の設定とログイン状態を確認してください。"
+                message: "アカウント情報を取得できませんでした。API の設定とログイン状態を確認してください。",
+                code: nil
             )
         }
         return try await client.fetchAccount()

@@ -249,9 +249,11 @@ struct GatewayVisionClient {
     }
 
     private static func streamError(_ json: [String: Any]) -> Error {
-        let message = (json["error"] as? [String: Any])?["message"] as? String
+        let error = json["error"] as? [String: Any]
+        let message = error?["message"] as? String
         return ProviderError.gateway(
-            message: message ?? "画面の読み取りに失敗しました。"
+            message: message ?? "画面の読み取りに失敗しました。",
+            code: error?["code"] as? String
         )
     }
 

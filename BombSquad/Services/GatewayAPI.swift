@@ -5,9 +5,32 @@ import Foundation
 struct GatewayQuota: Codable, Equatable {
     let plan: String
     let used: Int
-    let limit: Int
-    let remaining: Int
+    /// Nil on a plan with no monthly ceiling. The gateway sends `null` for
+    /// those (`quotaInfo`), so a non-optional `Int` here failed the whole
+    /// decode and the account page lost its usage row rather than saying
+    /// "unlimited".
+    let limit: Int?
+    let remaining: Int?
     let resetsAt: String
+
+    /// How full the month is, 0...1, or nil when nothing bounds it.
+    var fraction: Double? {
+        guard let limit, limit > 0 else { return nil }
+        return min(1, Double(used) / Double(limit))
+    }
+
+    /// How far past the ceiling this month went. Zero unless a limit was
+    /// lowered under a month already spent, which is exactly when the number
+    /// needs saying out loud.
+    var overage: Int {
+        guard let limit else { return 0 }
+        return max(0, used - limit)
+    }
+
+    var isExhausted: Bool {
+        guard let remaining else { return false }
+        return remaining == 0
+    }
 
     enum CodingKeys: String, CodingKey {
         case plan, used, limit, remaining
@@ -111,7 +134,7 @@ struct GatewayAPI {
                 let message = status == 404
                     ? "必要なGateway APIが本番環境に配備されていません（HTTP 404）。"
                     : "Gatewayから想定外のHTML応答が返されました（HTTP \(status)）。"
-                return ProviderError.gateway(message: message)
+                return ProviderError.gateway(message: message, code: nil)
             }
             return ProviderError.http(status: status, body: String(body.prefix(500)))
         }
@@ -134,6 +157,6 @@ struct GatewayAPI {
         default:
             message = (errorObject["message"] as? String) ?? "サーバーエラーが発生しました。"
         }
-        return ProviderError.gateway(message: message)
+        return ProviderError.gateway(message: message, code: code)
     }
 }

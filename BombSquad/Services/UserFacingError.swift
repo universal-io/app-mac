@@ -51,6 +51,37 @@ enum UserFacingError {
         return "問題が発生しました。もう一度お試しください。"
     }
 
+    /// The reason, when the failure already explains itself in terms the user
+    /// can act on; nil when it does not.
+    ///
+    /// A surface that fails has two things it can say: its own sentence about
+    /// what did not happen ("文字起こしに失敗しました"), or the reason it did
+    /// not happen ("今月の利用枠を使い切りました"). The first is the only one
+    /// the caller can write in advance, so that is what every catch block held
+    /// — and a user out of quota was told to try again, which is advice that
+    /// cannot work. The gateway's own refusals and the transport's own failures
+    /// arrive already phrased for a person and already actionable; those
+    /// replace the surface's sentence. Everything else (a decode failure, an
+    /// HTTP body) is an internal fact, not an instruction, and is left to the
+    /// caller's wording.
+    static func serverExplanation(for error: Error) -> String? {
+        if let provider = error as? ProviderError {
+            switch provider {
+            case let .gateway(message, _):
+                return message
+            case .transport:
+                return provider.errorDescription
+            default:
+                return nil
+            }
+        }
+        if (error as NSError).domain == NSURLErrorDomain,
+           !isUserCancellation(error) {
+            return message(for: error)
+        }
+        return nil
+    }
+
     /// Whether the error is the user intentionally backing out (closing the
     /// web sign-in sheet, cancelling a request) — a normal action, not a
     /// failure, so callers can avoid an alarming red banner.

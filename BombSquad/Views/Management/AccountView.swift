@@ -54,12 +54,18 @@ struct AccountView: View {
                         // one: a cancelled plan stays `active` for weeks, so the
                         // bare status would look like nothing happened.
                         infoRow("契約状態", summary.stateText)
-                        Divider()
-                        infoRow("月間利用枠", "\(summary.monthlyReviewLimit) 回")
+                        // 月間利用枠 as its own row only when there is no meter
+                        // to carry it: the meter already names the ceiling as
+                        // its denominator, and the same number twice reads as
+                        // two different facts.
+                        if quotaStore.latest == nil {
+                            Divider()
+                            infoRow("月間利用枠", limitText(summary.monthlyReviewLimit))
+                        }
                     }
                     if let quota = quotaStore.latest {
                         Divider()
-                        infoRow("今月の利用", "\(quota.used) / \(quota.limit) 回（残り \(quota.remaining) 回）")
+                        usageRow(quota)
                         Divider()
                         infoRow("次回リセット", formatResetDate(quota.resetsAt))
                     }
@@ -144,6 +150,74 @@ struct AccountView: View {
                 Text(subtitle).foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// This month's usage as a capacity meter.
+    ///
+    /// It was one sentence — "622 / 200 回（残り 0 回）" — and a stopped account
+    /// looked no different from a healthy one: the number that mattered was the
+    /// same size, the same weight and the same colour as the tenant id. A bar
+    /// says "how full" before anything is read, and red says "stopped" without
+    /// being read at all. The bar fills to the ceiling and no further, because a
+    /// meter that overflows its own track states nothing a person can use; the
+    /// overage is said in words instead.
+    @ViewBuilder
+    private func usageRow(_ quota: GatewayQuota) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("今月の利用").foregroundStyle(.secondary)
+                Spacer()
+                Text(usageValueText(quota))
+                    .monospacedDigit()
+                    .textSelection(.enabled)
+            }
+            if let fraction = quota.fraction, let limit = quota.limit {
+                Gauge(value: fraction) { EmptyView() }
+                .gaugeStyle(.linearCapacity)
+                .tint(usageTint(quota))
+                .labelsHidden()
+                .accessibilityLabel("今月の利用")
+                .accessibilityValue("\(quota.used) / \(limit) 回")
+                Text(usageStateText(quota))
+                    .font(.caption)
+                    // Exhausted is a state the user must act on, so it takes
+                    // the semantic colour rather than the accent: the accent
+                    // means "interactive" everywhere else in the app.
+                    .foregroundStyle(quota.isExhausted ? Color.red : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+    }
+
+    private func usageValueText(_ quota: GatewayQuota) -> String {
+        guard let limit = quota.limit else { return "\(quota.used) 回（上限なし）" }
+        return "\(quota.used) / \(limit) 回"
+    }
+
+    private func usageStateText(_ quota: GatewayQuota) -> String {
+        guard let remaining = quota.remaining else { return "上限はありません。" }
+        if remaining > 0 { return "残り \(remaining) 回" }
+        // A ceiling lowered under a month already spent is the difference
+        // between "you just ran out" and "you were already past it", and only
+        // the second one explains why nothing worked from the first attempt.
+        let overage = quota.overage
+        return overage > 0
+            ? "上限に達しています（\(overage) 回超過）。月が変わるとリセットされます。"
+            : "上限に達しました。月が変わるとリセットされます。"
+    }
+
+    private func usageTint(_ quota: GatewayQuota) -> Color {
+        guard let fraction = quota.fraction else { return .accentColor }
+        if quota.isExhausted { return .red }
+        // One step before the wall, so running out is not the first news of it.
+        return fraction >= 0.8 ? .orange : .accentColor
+    }
+
+    private func limitText(_ limit: Int?) -> String {
+        guard let limit else { return "上限なし" }
+        return "\(limit) 回"
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {

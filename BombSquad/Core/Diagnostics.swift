@@ -232,7 +232,11 @@ struct DiagnosticErrorClass: DiagnosticCode {
             case .noStructuredOutput: diagnosticCode = "provider.noStructuredOutput"
             case .decoding: diagnosticCode = "provider.decoding"
             case .emptyDraft: diagnosticCode = "provider.emptyDraft"
-            case .gateway: diagnosticCode = "provider.gateway"
+            // The contract's code, not the sentence beside it. "refused" and
+            // "refused because the month is spent" are different facts, and
+            // only the second one tells a stopped user what to do.
+            case .gateway(_, let code):
+                diagnosticCode = "gateway.\(GatewayErrorCode(code).diagnosticCode)"
             }
         } else {
             let nsError = error as NSError
@@ -240,6 +244,33 @@ struct DiagnosticErrorClass: DiagnosticCode {
                 ? "url.\(nsError.code)"
                 : "\(type(of: error))"
         }
+    }
+}
+
+/// A gateway refusal reduced to the API contract's error code.
+///
+/// The code is a closed vocabulary our own server writes, which is what makes
+/// it recordable — but it arrives as a plain string in a JSON body, so it is
+/// matched against the known set rather than passed through. An unrecognized
+/// value collapses to `other`, so the trail cannot begin carrying free text
+/// the day someone puts something else in that field.
+struct GatewayErrorCode: DiagnosticCode {
+    private static let known: Set<String> = [
+        "UNAUTHENTICATED", "QUOTA_EXCEEDED", "SERVICE_CAPACITY_REACHED",
+        "PAYMENT_REQUIRED", "REAUTH_REQUIRED", "PROVIDER_ERROR", "RATE_LIMITED",
+        "BAD_REQUEST", "INVALID_REQUEST", "FORBIDDEN", "NOT_FOUND",
+        "TENANT_ACCESS_DENIED", "INTERNAL_ERROR",
+    ]
+
+    let diagnosticCode: String
+
+    init(_ code: String?) {
+        guard let code else {
+            // No contract body at all: an HTML page or a bare status.
+            diagnosticCode = "none"
+            return
+        }
+        diagnosticCode = Self.known.contains(code) ? code : "other"
     }
 }
 

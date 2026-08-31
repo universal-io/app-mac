@@ -632,6 +632,10 @@ final class SessionCoordinator {
 
             if let clip = AudioRecorder.inspect(url: url),
                clip.duration < 0.4 || clip.averagePower < -45 {
+                Diagnostics.record("transcribe.dropped", details: [
+                    ("ms", .ms(Int(clip.duration * 1000))),
+                    ("silent", .flag(clip.averagePower < -45)),
+                ])
                 switch sink {
                 case .compose(let composeSession):
                     if self.composeSession === composeSession {
@@ -645,6 +649,8 @@ final class SessionCoordinator {
                 return
             }
 
+            let started = Date()
+            Diagnostics.record("transcribe.request", mode: self.stateMachine.mode)
             do {
                 let text = try await transcriber.transcribe(fileURL: url)
                 try Task.checkCancellation()
@@ -663,17 +669,26 @@ final class SessionCoordinator {
             } catch is CancellationError {
                 return
             } catch {
+                Diagnostics.record("transcribe.failed", details: [
+                    ("total", .ms(Int(Date().timeIntervalSince(started) * 1000))),
+                    ("error", .code(DiagnosticErrorClass(error))),
+                ])
+                // The gateway's refusal, when it gave one. Telling someone whose
+                // month is spent to "try again" is advice that cannot work —
+                // and this path threw the reason away unconditionally, which is
+                // why dictation was the first place the exhausted quota looked
+                // like a broken feature.
+                let message = UserFacingError.serverExplanation(for: error)
+                    ?? "文字起こしに失敗しました。もう一度お試しください。"
                 switch sink {
                 case .compose(let composeSession):
                     guard self.composeSession === composeSession else { return }
                     composeSession.isTranscribing = false
-                    composeSession.errorMessage =
-                        "文字起こしに失敗しました。もう一度お試しください。"
+                    composeSession.errorMessage = message
                 case .vision(let session):
                     guard self.visionSession === session else { return }
                     session.isTranscribing = false
-                    session.errorMessage =
-                        "文字起こしに失敗しました。もう一度お試しください。"
+                    session.errorMessage = message
                 }
             }
         }

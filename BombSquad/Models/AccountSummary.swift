@@ -85,7 +85,8 @@ struct BombSquadAccountSummary: Equatable {
     let tenantID: UUID
     let plan: BombSquadPlan
     let state: BombSquadAccountState
-    let monthlyReviewLimit: Int
+    /// Nil on a plan with no monthly ceiling.
+    let monthlyReviewLimit: Int?
     /// Whether the gateway can open a Stripe customer portal for this account.
     /// False for an account that has never had a Stripe customer, so the app can
     /// omit a payment-management button that could only report its own absence.

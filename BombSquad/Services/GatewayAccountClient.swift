@@ -58,7 +58,7 @@ private struct AccountResponse: Decodable {
         let tenantID: UUID
         let plan: String
         let status: String
-        let monthlyReviewLimit: Int
+        let monthlyReviewLimit: Int?
         // Optional so a build running against a gateway that predates this field
         // still decodes; absence means "no portal", which is the safe reading.
         let hasBillingAccount: Bool?
