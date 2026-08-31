@@ -195,7 +195,10 @@ final class SessionCoordinator {
         case .closeRequested:
             close(reason: .closeRequested)
         case .appResignedActive:
-            guard let spec = PanelSpec.forMode(mode), spec.closesOnResignActive else { return }
+            guard let spec = PanelSpec.forMode(
+                mode,
+                overlayIsPresented: pointingOverlay.isVisible
+            ), spec.closesOnResignActive else { return }
             close(reason: .resignActive)
         case .singleTap:
             guard mode == .compose else { return }
@@ -217,7 +220,16 @@ final class SessionCoordinator {
         case .idle:
             summonSelectionAware()
         case .vision, .copilot:
-            close(reason: .doubleTapOnVision)
+            // A selection session has no overlay: the user pointed by
+            // selecting, so there was nothing left to point at. Asking for the
+            // wash is asking to point at the screen as well — the same two taps
+            // that take compose to Vision, meaning the same thing (owner
+            // decision 2026-09-01: no new control for it).
+            if !pointingOverlay.isVisible, let visionSession {
+                enterPointingFromSelection(visionSession)
+            } else {
+                close(reason: .doubleTapOnVision)
+            }
         case .compose:
             // The cycle is 閉 → コンポーズ → Vision → 閉: a double-tap always
             // advances compose to Vision. Review is an explicit button, never
@@ -1136,7 +1148,7 @@ final class SessionCoordinator {
                     ("sinceSummon", .ms(summonClock.elapsedMs)),
                 ])
             }
-            panelController.presentCompose(
+            panelController.present(
                 FoundationComposeRootView(
                     session: composeSession,
                     // The only place that knows which display the bubble is
@@ -1155,6 +1167,11 @@ final class SessionCoordinator {
             if pointingOverlay.isVisible {
                 // Back from guidance: the same overlay, with the wash returning.
                 pointingOverlay.enterPointing()
+            } else if visionSession.selection != nil {
+                Diagnostics.record("coordinator.panelShown", mode: mode, details: [
+                    ("sinceSummon", .ms(summonClock.elapsedMs)),
+                ])
+                presentSelectionBubble(for: visionSession)
             } else {
                 Diagnostics.record("coordinator.panelShown", mode: mode, details: [
                     ("sinceSummon", .ms(summonClock.elapsedMs)),
@@ -1178,6 +1195,58 @@ final class SessionCoordinator {
     }
 
     // MARK: - Pointing
+
+    /// A selection summon: the bubble beside the selected text, and nothing
+    /// else on screen.
+    ///
+    /// The wash exists to say "this screen is not for operating, it is for
+    /// pointing". Somebody who has selected text has already pointed, so the
+    /// layer has no job — and it takes every click on the way to saying
+    /// nothing, which is worse than absent. Same session, same request, same
+    /// screenshot as any Vision turn (`Focused Vision = Vision Core +
+    /// Selection Extension`); only the presentation differs.
+    ///
+    /// No answer highlight is wired: marks are drawn on the overlay, and there
+    /// isn't one. Nothing is lost — the subject is the text the user selected,
+    /// which is already highlighted by their own selection.
+    private func presentSelectionBubble(for session: VisionSession) {
+        pointingOverlay.close()
+        let screen = ActiveDisplay.screen() ?? NSScreen.main
+        panelController.present(
+            VisionBubbleView(
+                session: session,
+                answerHeightBudget: VisionBubbleView.answerHeightBudget(
+                    visibleHeight: screen?.visibleFrame.height ?? 900
+                ),
+                onClose: { [weak self] in self?.close(reason: .closeRequested) }
+            ),
+            anchorFrame: Self.selectionAnchorFrame(session.selection)
+        )
+    }
+
+    /// Adds the screen to a selection session: the overlay comes up with the
+    /// same bubble and the same conversation. The selection stays the subject
+    /// until a click makes a new one (`beginPointing`).
+    private func enterPointingFromSelection(_ session: VisionSession) {
+        panelController.close()
+        Diagnostics.record("coordinator.panelShown", mode: stateMachine.mode, details: [
+            ("sinceSummon", .ms(summonClock.elapsedMs)),
+        ])
+        presentPointing(for: session)
+    }
+
+    /// Where the selection is, in the coordinates the bubble is placed in.
+    ///
+    /// The union rather than the first frame: a selection that crosses lines or
+    /// nodes has several, and the bubble belongs beside the whole of what the
+    /// user chose. Converted through the one AX-to-screen function this app has
+    /// (`VisionPointerResolver`), never a fourth arrangement of the same
+    /// arithmetic.
+    static func selectionAnchorFrame(_ selection: VisionSelectionContext?) -> CGRect? {
+        guard let frames = selection?.frames, !frames.isEmpty else { return nil }
+        let union = frames.dropFirst().reduce(frames[0]) { $0.union($1) }
+        return cocoaFrame(fromAXFrame: union)
+    }
 
     private func presentPointing(for session: VisionSession) {
         guard let screen = ActiveDisplay.screen() else { return }

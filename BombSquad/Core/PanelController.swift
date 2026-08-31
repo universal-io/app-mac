@@ -13,23 +13,29 @@ struct PanelSpec: Equatable {
     /// interaction (docs/navigator-copilot-plan.md 正のユーザー体験 §5).
     let closesOnResignActive: Bool
 
-    static func forMode(_ mode: AppMode) -> PanelSpec? {
+    /// The rule is about the overlay, not about which surface is running.
+    ///
+    /// Vision used to answer "never close on resign" from its name alone, which
+    /// was right only because Vision always covered the screen. A selection
+    /// summon does not: the user pointed by selecting, so there is nothing to
+    /// point at and no overlay is presented. A bubble that looks like Compose
+    /// and appears like Compose has to leave like Compose — staying behind when
+    /// every other bare bubble goes away reads as the app failing to notice it
+    /// was done (owner decision 2026-09-01, accepting that a long explanation
+    /// cannot be scrolled while working in the app underneath).
+    ///
+    /// While the overlay IS presented the answer stays no, wash or no wash:
+    /// measured 2026-08-23, another application can hold frontmost while every
+    /// click on the covered display still arrives here, and under guidance
+    /// clicking the app being guided IS the interaction (R15).
+    static func forMode(_ mode: AppMode, overlayIsPresented: Bool) -> PanelSpec? {
         switch mode {
         case .idle, .capturing:
             return nil
         case .compose:
             return PanelSpec(closesOnResignActive: true)
-        case .vision:
-            // Vision draws on the pointing overlay, not in this panel, but this
-            // spec still answers the resign-active question — and for pointing
-            // the answer has to be no. Measured 2026-08-23: another application
-            // can hold frontmost while every click on the covered display still
-            // arrives here.
-            return PanelSpec(closesOnResignActive: false)
-        case .copilot:
-            // Guidance is the same overlay with the wash lifted (R15), and
-            // clicking the app being guided IS the interaction.
-            return PanelSpec(closesOnResignActive: false)
+        case .vision, .copilot:
+            return PanelSpec(closesOnResignActive: !overlayIsPresented)
         }
     }
 }
@@ -73,7 +79,7 @@ final class PanelController {
     /// Reuses the existing window when one is up (content swap + replace); a
     /// window still alive from this same session keeps the place the user gave
     /// it, so a capture round-trip does not shove the card back.
-    func presentCompose<Content: View>(_ content: Content, anchorFrame: CGRect?) {
+    func present<Content: View>(_ content: Content, anchorFrame: CGRect?) {
         let isNewWindow = panel == nil
         let panel = self.panel ?? makePanel()
         self.panel = panel
