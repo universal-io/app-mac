@@ -193,6 +193,29 @@ final class DiagnosticsTests: XCTestCase {
         )
     }
 
+    func testPointCollectionOutcomeSeparatesEmptyCollectorFromOrdinaryMiss() {
+        XCTAssertEqual(
+            VisionPointCollectionOutcome.classify(candidateCount: 0, hit: false),
+            .collectorEmpty
+        )
+        XCTAssertEqual(
+            VisionPointCollectionOutcome.classify(candidateCount: 12, hit: false),
+            .pointMiss
+        )
+        XCTAssertEqual(
+            VisionPointCollectionOutcome.classify(candidateCount: 12, hit: true),
+            .measured
+        )
+    }
+
+    func testUnknownCollectionRootCannotEnterOperationalTrail() {
+        XCTAssertEqual(AXCollectionRootCode("focused_window").diagnosticCode, "focused_window")
+        XCTAssertEqual(
+            AXCollectionRootCode("mail.google.com - 山田さん").diagnosticCode,
+            "other"
+        )
+    }
+
     /// D7 exercised this for real: with Wi-Fi off, Vision failed explicitly in
     /// 51ms — correct — but recorded `provider.http.-1`, because the client
     /// flattened every transport failure into an HTTP error with a sentinel

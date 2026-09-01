@@ -22,6 +22,71 @@ struct VisionDisplayTurn: Identifiable, Equatable {
     let uncertainties: [String]
 }
 
+/// The one placement decision owned by a pointing gesture.
+///
+/// Geometry and readable content are deliberately separate phases. A locally
+/// measured element or a region the user drew can commit immediately; a point
+/// with no AX hit stays resolving until the validated answer supplies a box (or
+/// confirms that none is available). Only then may its words become visible.
+struct VisionTurnPlacementState: Equatable {
+    enum Resolution: Equatable {
+        case measured
+        case region
+        case answer
+        case unavailable
+    }
+
+    enum Phase: Equatable {
+        case inactive
+        case resolving
+        case committed(Resolution)
+        case contentVisible(Resolution)
+    }
+
+    private(set) var phase: Phase = .inactive
+
+    var buffersStreamedContent: Bool {
+        phase == .resolving
+    }
+
+    var allowsAnswerPlacementCommit: Bool {
+        phase == .resolving
+    }
+
+    mutating func begin() {
+        phase = .resolving
+    }
+
+    /// First writer wins. A gesture never accepts a second placement, even if
+    /// a later source claims to be more specific.
+    @discardableResult
+    mutating func commit(_ resolution: Resolution) -> Bool {
+        guard phase == .resolving else { return false }
+        phase = .committed(resolution)
+        return true
+    }
+
+    mutating func contentBecameVisible() {
+        guard case .committed(let resolution) = phase else { return }
+        phase = .contentVisible(resolution)
+    }
+
+    mutating func reset() {
+        phase = .inactive
+    }
+}
+
+/// Which source already owns a pointing turn's subject geometry.
+enum VisionPointingPlacement: Equatable {
+    /// The click had no usable AX rectangle. The validated answer gets one
+    /// opportunity to place it before content is shown.
+    case unresolved
+    /// Accessibility measured the element under the click.
+    case measured
+    /// The user explicitly enclosed the subject; the path itself is authority.
+    case region
+}
+
 @MainActor
 final class VisionSession: ObservableObject {
     @Published private(set) var attachment: ScreenshotAttachment
@@ -34,11 +99,11 @@ final class VisionSession: ObservableObject {
     /// both the draft and the finished version of the same answer.
     @Published private(set) var streamingMessage: String?
 
-    /// Whether words for this turn are already on screen.
+    /// Whether streamed words for this turn are already on screen.
     ///
-    /// The moment after which the card must not be moved: somebody reading a
-    /// sentence should not have it taken out from under them, whatever new
-    /// thing the app has just learned about where the subject is.
+    /// Pointing uses `turnPlacement` as the stronger rule. This remains the
+    /// guard for ordinary questions, whose answer may update a guidance frame
+    /// but must not take a sentence out from under somebody reading it.
     var isBeingRead: Bool {
         !(streamingMessage ?? "").isEmpty
     }
@@ -70,14 +135,11 @@ final class VisionSession: ObservableObject {
     @Published private(set) var pointedCandidate: VisionObservation.Candidate?
     /// The box the answer is about, in the current capture's normalized space.
     ///
-    /// Measured from accessibility when the model named a candidate, the model's
-    /// own estimate when it did not. This is what the overlay draws: the point
-    /// the user clicked and the thing the answer explains are not always the
-    /// same — the model reaches for the nearest meaningful element when the exact
-    /// pixel is between things — and of the two, **the one worth marking is the
-    /// one being explained**. A mark on the click with an answer about something
-    /// else tells the user the app misunderstood them; a mark on the neighbour
-    /// tells them what it understood, which they can accept or correct.
+    /// Measured from accessibility when the click hit an element; otherwise
+    /// resolved once from the final answer's candidate or annotation. A local
+    /// measurement and a region the user drew are authoritative and cannot be
+    /// replaced by a later model estimate: one gesture has one subject and one
+    /// placement decision.
     @Published private(set) var answerHighlight: CGRect?
     /// Told when `answerHighlight` settles, for surfaces outside SwiftUI's
     /// observation — the overlay draws on the real screen and has no view here.
@@ -147,6 +209,11 @@ final class VisionSession: ObservableObject {
     /// Increments received but not yet shown, and the timer that will show them.
     private var pendingStreamText = ""
     private var streamFlushTask: Task<Void, Never>?
+    /// One explicit placement state per pointing gesture. This replaces three
+    /// indirect proxies (ring shown, streaming text nonempty, answer callback)
+    /// that could disagree about whether moving the bubble was still legal.
+    private(set) var turnPlacement = VisionTurnPlacementState()
+    private var pointingPlacement: VisionPointingPlacement = .unresolved
 
     init(
         attachment: ScreenshotAttachment,
@@ -281,6 +348,8 @@ final class VisionSession: ObservableObject {
         isPointing = true
         pointer = nil
         pointedCandidate = nil
+        pointingPlacement = .unresolved
+        turnPlacement.begin()
         // A new gesture retires every earlier statement of scope, the
         // launch-time selection included. Selection outranks geometry in the
         // Gateway's prompt, so a stale one is not clutter — it would keep
@@ -293,6 +362,7 @@ final class VisionSession: ObservableObject {
 
     /// The gesture could not become a question. Says why and stops waiting.
     func failPointing(_ message: String) {
+        settleUnplacedPointingTurn()
         isLoading = false
         errorMessage = message
     }
@@ -314,12 +384,22 @@ final class VisionSession: ObservableObject {
         capture: ScreenshotAttachment,
         candidates: [VisionObservation.Candidate],
         diagnostics: VisionObservationCaptureService.Diagnostics?,
-        hit: VisionObservation.Candidate?
+        hit: VisionObservation.Candidate?,
+        placement: VisionPointingPlacement
     ) {
         askClock = SummonClock()
         adopt(capture: capture, candidates: candidates, diagnostics: diagnostics)
         self.pointer = pointer
         pointedCandidate = hit
+        pointingPlacement = placement
+        switch placement {
+        case .unresolved:
+            break
+        case .measured:
+            _ = turnPlacement.commit(.measured)
+        case .region:
+            _ = turnPlacement.commit(.region)
+        }
         selectedCandidate = nil
         publishAnswerHighlight(nil)
         turns = [VisionDisplayTurn(
@@ -552,10 +632,15 @@ final class VisionSession: ObservableObject {
             if question != nil { return .question }
             return pointer == nil ? .first : .pointing
         }()
+        if turnKind != .pointing {
+            pointingPlacement = .unresolved
+            turnPlacement.reset()
+        }
         requestCancellation?.cause = .supersededByNewerRequest
         requestTask?.cancel()
         OperationalNoticeCenter.shared.beginOperation()
         guard let client else {
+            settleUnplacedPointingTurn()
             errorMessage = Self.noClientMessage
             return
         }
@@ -691,7 +776,8 @@ final class VisionSession: ObservableObject {
                 try self.apply(
                     response,
                     candidates: fixedCandidates,
-                    toleratingUnplaceableTarget: pointer != nil
+                    toleratingUnplaceableTarget: pointer != nil,
+                    pointingPlacement: pointer == nil ? nil : self.pointingPlacement
                 )
                 if let question {
                     self.noteQuestionAnswered(question, mode: response.result.mode, turn: turnKind)
@@ -704,6 +790,7 @@ final class VisionSession: ObservableObject {
                 // a word, which is the failure mode this project exists to
                 // remove (docs/reliability-hardening-plan.md D6).
                 guard ledger.cause == nil else { return }
+                self.settleUnplacedPointingTurn()
                 Diagnostics.record("vision.cancelledUnexplained", details: [
                     ("turn", .code(turnKind)),
                     ("sinceAsk", .ms(self.askClock.elapsedMs)),
@@ -711,6 +798,7 @@ final class VisionSession: ObservableObject {
                 ])
                 self.errorMessage = "画面の読み取りが中断されました。もう一度お試しください。"
             } catch {
+                self.settleUnplacedPointingTurn()
                 Diagnostics.record("vision.failed", details: [
                     ("turn", .code(turnKind)),
                     ("sinceAsk", .ms(self.askClock.elapsedMs)),
@@ -754,6 +842,7 @@ final class VisionSession: ObservableObject {
         guard !hasIssuedRequest else { return }
         requestCancellation?.cause = .deadlineExceeded
         requestTask?.cancel()
+        settleUnplacedPointingTurn()
         isLoading = false
         errorMessage = "画面の読み取りを開始できませんでした。もう一度お試しください。"
         Diagnostics.record("vision.startFailed")
@@ -765,6 +854,7 @@ final class VisionSession: ObservableObject {
         guard isLoading, ledger.cause == nil else { return }
         ledger.cause = .deadlineExceeded
         requestTask?.cancel()
+        settleUnplacedPointingTurn()
         isLoading = false
         errorMessage = "画面の読み取りが時間内に完了しませんでした。もう一度お試しください。"
         Diagnostics.record("vision.deadlineExceeded", details: [
@@ -785,8 +875,13 @@ final class VisionSession: ObservableObject {
     private static let streamFlushInterval = Duration.milliseconds(100)
 
     private func appendStreamingText(_ text: String) {
-        noteFirstContent(via: "stream")
         pendingStreamText += text
+        // A click with no local geometry cannot move after somebody starts
+        // reading. Keep the draft private until the validated result has first
+        // committed an answer box (or explicitly settled without one).
+        guard !turnPlacement.buffersStreamedContent else { return }
+        noteFirstContent(via: "stream")
+        turnPlacement.contentBecameVisible()
         guard streamFlushTask == nil else { return }
         streamFlushTask = Task { [weak self] in
             try? await Task.sleep(for: Self.streamFlushInterval)
@@ -818,6 +913,13 @@ final class VisionSession: ObservableObject {
             ("sinceAsk", .ms(askClock.elapsedMs)),
         ])
         clearStreamingText()
+    }
+
+    /// Ends the placement wait on terminal paths that have no validated answer.
+    /// There is no content to reveal, but the next turn must not inherit a
+    /// permanently resolving state.
+    private func settleUnplacedPointingTurn() {
+        _ = turnPlacement.commit(.unavailable)
     }
 
     /// Marks when this turn first showed the user something readable, which is
@@ -1121,41 +1223,64 @@ final class VisionSession: ObservableObject {
         /// placed. Losing a correct sentence because a rectangle went missing
         /// is the wrong trade when the sentence is what the user asked for; for
         /// guidance it is not, because "click here" with no here is not an answer.
-        toleratingUnplaceableTarget tolerant: Bool = false
+        toleratingUnplaceableTarget tolerant: Bool = false,
+        pointingPlacement: VisionPointingPlacement? = nil
     ) throws {
         metadata = response.metadata
         activeSkillName = response.skillName
         let highlight: VisionHighlightOutcome
-        if let targetID = response.result.targetCandidateID,
-           let candidate = fixedCandidates.first(where: { $0.id == targetID }),
-           let rect = candidate.rect {
+        if pointingPlacement == .region {
+            // The user drew the subject. Its path was committed before the
+            // request and remains the placement authority; a model-estimated
+            // box inside it must not shrink or move that explicit scope.
+            selectedCandidate = nil
+            highlight = .resolved
+        } else if pointingPlacement == .measured,
+                  let candidate = pointedCandidate,
+                  let rect = candidate.rect {
+            // The OS measurement won before streaming began. Re-publish it as
+            // the answer-owned frame, but never replace it with model geometry.
             selectedCandidate = candidate
             publishAnswerHighlight(rect)
             highlight = .resolved
-            // The frame is up on the control to press; the app under it has to
-            // be frontmost, or the first click is spent activating its window.
-            if isCopilotActive { activateTargetApp() }
-        } else if response.result.targetCandidateID != nil, !tolerant {
-            Diagnostics.record("vision.result", details: [
-                ("mode", .code(response.result.mode)),
-                ("highlight", .code(VisionHighlightOutcome.unresolvable)),
-                ("candidates", .count(fixedCandidates.count)),
-            ])
-            throw ProviderError.decoding(
-                "Vision selected a candidate without a usable capture rectangle."
-            )
-        } else if let box = response.result.annotations.first?.box {
-            // No measured rectangle, but the model drew one. Second choice by
-            // construction — an estimate rather than a measurement — and still
-            // the only way to mark body text, an image or a graph, none of which
-            // accessibility offers as a candidate at all.
-            selectedCandidate = nil
-            publishAnswerHighlight(box)
-            highlight = .resolved
         } else {
-            selectedCandidate = nil
-            publishAnswerHighlight(nil)
-            highlight = .none
+            if let targetID = response.result.targetCandidateID,
+               let candidate = fixedCandidates.first(where: { $0.id == targetID }),
+               let rect = candidate.rect {
+                selectedCandidate = candidate
+                publishAnswerHighlight(rect)
+                highlight = .resolved
+                // The frame is up on the control to press; the app under it has to
+                // be frontmost, or the first click is spent activating its window.
+                if isCopilotActive { activateTargetApp() }
+            } else if response.result.targetCandidateID != nil, !tolerant {
+                Diagnostics.record("vision.result", details: [
+                    ("mode", .code(response.result.mode)),
+                    ("highlight", .code(VisionHighlightOutcome.unresolvable)),
+                    ("candidates", .count(fixedCandidates.count)),
+                ])
+                throw ProviderError.decoding(
+                    "Vision selected a candidate without a usable capture rectangle."
+                )
+            } else if let box = response.result.annotations.first?.box {
+                // No measured rectangle, but the model drew one. Second choice by
+                // construction — an estimate rather than a measurement — and still
+                // the only way to mark body text, an image or a graph, none of which
+                // accessibility offers as a candidate at all.
+                selectedCandidate = nil
+                publishAnswerHighlight(box)
+                highlight = .resolved
+            } else {
+                selectedCandidate = nil
+                publishAnswerHighlight(nil)
+                highlight = .none
+            }
+        }
+        if pointingPlacement == .unresolved {
+            // `publishAnswerHighlight` is synchronous. The overlay therefore
+            // receives its one legal move while the phase is still resolving;
+            // only after that do we unlock readable content.
+            _ = turnPlacement.commit(highlight == .resolved ? .answer : .unavailable)
         }
         // Whether the user got a highlight, and why not when they did not.
         // A missing ring has three different causes — the model named no
@@ -1178,11 +1303,20 @@ final class VisionSession: ObservableObject {
             mode: response.result.mode,
             uncertainties: response.result.uncertainties
         ))
+        turnPlacement.contentBecameVisible()
     }
 
     private func publishAnswerHighlight(_ rect: CGRect?) {
         answerHighlight = rect
         onAnswerHighlight?(rect)
+    }
+
+    /// The overlay asks at the exact callback that could move the bubble.
+    /// Pointing turns use the explicit phase; ordinary questions retain the
+    /// existing "do not move text already being read" rule.
+    var shouldMoveBubbleForAnswerHighlight: Bool {
+        turnPlacement.allowsAnswerPlacementCommit ||
+            (turnPlacement.phase == .inactive && !isBeingRead)
     }
 
     /// Returns frontmost status to the app being navigated. No-op when it is

@@ -1305,12 +1305,10 @@ final class SessionCoordinator {
                 mainDisplayHeight: VisionPointerResolver.mainDisplayHeight,
                 screenFrame: pointingOverlay.coveredScreenFrame
             ),
-            // Only while there is nothing to interrupt. When accessibility
-            // measured the element the card went beside it within a third of a
-            // second and this changes nothing; when it measured nothing, this
-            // is the first time anybody knows where the subject is — and by
-            // then the answer has been arriving for seconds.
-            movesBubble: !session.isBeingRead
+            // One gesture owns one placement. An unresolved pointing turn gets
+            // this single move before any words are exposed; a locally measured
+            // element, an enclosed region, and visible content are committed.
+            movesBubble: session.shouldMoveBubbleForAnswerHighlight
         )
     }
 
@@ -1374,8 +1372,21 @@ final class SessionCoordinator {
                     at: normalized, in: snapshot.axCandidates
                 )
                 Diagnostics.record("vision.point", details: [
+                    ("outcome", .code(VisionPointCollectionOutcome.classify(
+                        candidateCount: snapshot.axCandidates.count,
+                        hit: hit != nil
+                    ))),
                     ("candidates", .count(snapshot.axCandidates.count)),
                     ("hit", .flag(hit != nil)),
+                    ("visited", .count(snapshot.diagnostics.visitedNodes)),
+                    ("root", .code(AXCollectionRootCode(
+                        snapshot.diagnostics.collectionRoot
+                    ))),
+                    ("passes", .count(snapshot.diagnostics.collectionPasses)),
+                    ("webArea", .flag(snapshot.diagnostics.webAreaPresent)),
+                    ("truncated", .code(AXTruncationCode(
+                        snapshot.diagnostics.truncatedReason
+                    ))),
                 ])
                 // Once per gesture, hit or miss: with a frame the bubble sits
                 // beside the element, without one beside the click the ring is
@@ -1402,7 +1413,8 @@ final class SessionCoordinator {
                     capture: capture,
                     candidates: snapshot.axCandidates,
                     diagnostics: snapshot.diagnostics,
-                    hit: hit
+                    hit: hit,
+                    placement: hit == nil ? .unresolved : .measured
                 )
             } catch is CancellationError {
                 return
@@ -1486,7 +1498,8 @@ final class SessionCoordinator {
                     capture: capture,
                     candidates: snapshot.axCandidates,
                     diagnostics: snapshot.diagnostics,
-                    hit: nil
+                    hit: nil,
+                    placement: .region
                 )
             } catch is CancellationError {
                 return
@@ -1496,6 +1509,22 @@ final class SessionCoordinator {
         }
     }
 
+}
+
+/// The three observably different outcomes hidden by the old `hit=false`.
+/// Empty collection is a collector problem candidate; a miss in a populated
+/// collection is expected for body text, images, graphs, and canvases.
+enum VisionPointCollectionOutcome: String, DiagnosticCode {
+    case collectorEmpty
+    case pointMiss
+    case measured
+
+    static func classify(candidateCount: Int, hit: Bool) -> Self {
+        if hit { return .measured }
+        return candidateCount == 0 ? .collectorEmpty : .pointMiss
+    }
+
+    var diagnosticCode: String { rawValue }
 }
 
 /// Debug-only trace for the proactive-suggestion path, so a tester can see in

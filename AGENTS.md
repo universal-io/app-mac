@@ -115,10 +115,9 @@ Rules:
 - If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `main`（`v0.2.2` build `8`を公開済み、`main`は`0.2.3`を開いている）。
-  次の作業はR14（実画面の上で指して聞くVision）で、要件は
-  `docs/universal-io-master-plan.md` のR14節が正本。実装に入る時は
-  短命ブランチと復帰点tagをここへ書く。
+- `fix/vision-bubble-placement-state`（R14バブルの1ターン1配置とAX miss時の本文表示順を修正）。
+  復帰点は`pre-vision-bubble-placement-20260902`（`7804ad1`）。要件と経緯は
+  `docs/universal-io-master-plan.md` R14と`docs/vision-bubble-placement-review.md`。
 
 Current operational note:
 - 2026-07-18: Vision/Copilotを単一の本番経路へ統合。旧Navigator、実験名、

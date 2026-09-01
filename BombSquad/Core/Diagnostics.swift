@@ -296,6 +296,21 @@ struct AXTruncationCode: DiagnosticCode {
     }
 }
 
+/// Where the AX collector began its walk. The payload uses a string because it
+/// also crosses the Gateway boundary; the local operational trail admits only
+/// the three values the collector itself writes.
+struct AXCollectionRootCode: DiagnosticCode {
+    private static let known: Set<String> = [
+        "none", "application", "focused_window",
+    ]
+
+    let diagnosticCode: String
+
+    init(_ root: String) {
+        diagnosticCode = Self.known.contains(root) ? root : "other"
+    }
+}
+
 /// Which shape of answer came back. A fixed four-case vocabulary defined by the
 /// gateway contract, never text read off the screen.
 extension VisionResult.Mode: DiagnosticCode {

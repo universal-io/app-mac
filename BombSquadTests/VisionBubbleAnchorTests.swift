@@ -233,15 +233,12 @@ final class VisionBubbleAnchorTests: XCTestCase {
         XCTAssertEqual(overlay.bubbleAnchor, settled)
     }
 
-    /// An answer about a different element is a different subject, and that
-    /// move is the one the design asks for: the words belong beside the thing
-    /// they are about.
-    func testTheAnswerAboutAnotherElementStillMovesTheCard() {
+    /// With no local measurement, the final validated answer gets the gesture's
+    /// one placement decision. The session guarantees this happens before the
+    /// answer becomes visible.
+    func testTheAnswerFrameCommitsAnUnresolvedPlacement() {
         let overlay = VisionPointingOverlay()
-        overlay.setMark(
-            point: CGPoint(x: 1500, y: 200),
-            frame: CGRect(x: 1460, y: 180, width: 80, height: 40)
-        )
+        overlay.setMark(point: CGPoint(x: 1500, y: 200), frame: nil)
         let elsewhere = CGRect(x: 200, y: 800, width: 120, height: 60)
 
         overlay.showAnswerFrame(elsewhere)

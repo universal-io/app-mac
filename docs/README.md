@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-最終更新: 2026-08-16 ／ ステータス: 現行
+最終更新: 2026-09-02 ／ ステータス: 現行
 
 このファイルがドキュメントの唯一の入口です。実装の正は現行コード、製品計画の正は
 `universal-io-master-plan.md` です。
@@ -44,6 +44,7 @@
 
 ## 参照資料
 
+- [vision-bubble-placement-review.md](vision-bubble-placement-review.md) — R14のバブル配置が4回再発した経緯、実測、2026-09-02のレビュー決定
 - [pitch/](pitch/) — ピッチとGTM資料
 - [promo/](promo/) — 紹介動画シナリオ
 

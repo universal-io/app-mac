@@ -352,12 +352,9 @@ final class VisionPointingOverlay {
     ///
     /// In guiding this is the whole display: the frame around the control to
     /// press, beating, until the press.
-    /// - Parameter movesBubble: false once the user has started reading. The
-    ///   answer's target is only known from the final validated object, so on a
-    ///   turn that streamed its text this arrives seconds after the first line —
-    ///   and moving the card out from under somebody mid-sentence is worse than
-    ///   the card being a little away from the frame. The mark still goes to the
-    ///   right place; only the card stays put.
+    /// - Parameter movesBubble: true only while this gesture's placement is
+    ///   unresolved. Locally measured geometry, an enclosed region, and visible
+    ///   content have already committed the card and cannot be revised here.
     func showAnswerFrame(_ frame: CGRect, movesBubble: Bool = true) {
         showsAnswerFrame = true
         canvas?.wash?.markShape = .frame(frame)
@@ -365,11 +362,11 @@ final class VisionPointingOverlay {
         canvas?.wash?.hitFrame = frame
         guard movesBubble else { return }
         // The bubble follows the frame: from here on the words sit beside the
-        // element they are about, which is not always the one that was measured
-        // under the click. When it is the same one, nothing moves — the card is
-        // already beside it, and a move to where it already is would only be
-        // visible as a twitch. A position the user chose is left standing: they
-        // moved the card during this same turn, about this same subject.
+        // element they are about. For a pointing turn this path is reachable as
+        // a move only when AX had no hit; measured elements and regions commit
+        // before the request. Guidance can also ask for an ordinary move.
+        // A position the user chose is left standing: they moved the card during
+        // this same turn, about this same subject.
         guard !Self.isEssentiallyTheSame(bubbleAnchor.frame, frame) else {
             return
         }
