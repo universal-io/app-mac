@@ -273,15 +273,39 @@ final class VisionPointingOverlay {
         // position the user chose for the last one is spent (pointing somewhere
         // else is the gesture that says "put it where it belongs again"), and
         // whatever the previous answer pointed at no longer decides where this
-        // one appears. The measured frame is not the anchor — the bubble goes
-        // beside the click and merely avoids the frame, below.
-        bubbleAnchor = BubbleAnchor(point: point)
+        // one appears.
+        //
+        // **The measured frame is the anchor when there is one.** It used to be
+        // the click, with the frame only kept out from under the card, and that
+        // made two moves out of one gesture: here, to beside the pixel the
+        // finger landed on, and again a second later when the answer named the
+        // element — which is usually the very element measured here, in the very
+        // same place. Anchoring on what was measured means the answer about it
+        // asks for the position the card already has. Without a measurement the
+        // click is all there is to go on, and the ring is already marking it.
+        bubbleAnchor = BubbleAnchor(point: point, frame: frame)
         showsAnswerFrame = false
         canvas?.wash?.stroke = nil
         canvas?.wash?.markShape = frame.map(MarkShape.frame)
             ?? Self.drawnMark(point: point, frame: frame).map(MarkShape.ring)
         canvas?.wash?.hitFrame = frame
         placeBubble()
+    }
+
+    /// Same element, measured twice by two different paths.
+    ///
+    /// The rect the accessibility walk returns and the one the answer points at
+    /// travel through separate conversions, so the same control can arrive a
+    /// fraction of a point apart. That is not a new subject and must not move
+    /// the card; a point is far below what anybody can see and far above the
+    /// rounding involved.
+    nonisolated static func isEssentiallyTheSame(_ lhs: CGRect?, _ rhs: CGRect?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        let tolerance: CGFloat = 1
+        return abs(lhs.minX - rhs.minX) <= tolerance
+            && abs(lhs.minY - rhs.minY) <= tolerance
+            && abs(lhs.width - rhs.width) <= tolerance
+            && abs(lhs.height - rhs.height) <= tolerance
     }
 
     /// Which of the two marks is drawn. A rule with no failure mode of its own —
@@ -335,9 +359,14 @@ final class VisionPointingOverlay {
         canvas?.wash?.stroke = nil
         canvas?.wash?.hitFrame = frame
         // The bubble follows the frame: from here on the words sit beside the
-        // element they are about, which is not always the one under the click.
-        // A position the user chose is left standing — they moved the card
-        // during this same turn, about this same subject.
+        // element they are about, which is not always the one that was measured
+        // under the click. When it is the same one, nothing moves — the card is
+        // already beside it, and a move to where it already is would only be
+        // visible as a twitch. A position the user chose is left standing: they
+        // moved the card during this same turn, about this same subject.
+        guard !Self.isEssentiallyTheSame(bubbleAnchor.frame, frame) else {
+            return
+        }
         bubbleAnchor.frame = frame
         placeBubble()
     }

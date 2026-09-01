@@ -170,4 +170,65 @@ final class VisionBubbleAnchorTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(grown.minY, bounds.minY)
         XCTAssertLessThanOrEqual(grown.maxY, bounds.maxY)
     }
+
+    // MARK: - One gesture, one move
+
+    /// The measured element is what the card is placed beside, not the pixel
+    /// the finger landed on. Anchoring on the click made two moves out of one
+    /// gesture: to the ring first, then to the element a second later when the
+    /// answer named it — which is usually the element measured here, in the
+    /// same place.
+    func testTheCardIsPlacedBesideWhatWasMeasured() {
+        let overlay = VisionPointingOverlay()
+        let element = CGRect(x: 1460, y: 180, width: 80, height: 40)
+        overlay.setMark(point: CGPoint(x: 1500, y: 200), frame: element)
+
+        XCTAssertEqual(overlay.bubbleAnchor.frame, element)
+        XCTAssertEqual(
+            placed(overlay.bubbleAnchor),
+            VisionBubblePlacement.origin(besideFrame: element, size: size, in: bounds)
+        )
+    }
+
+    /// Nothing measured means the click is all there is to go on, and the ring
+    /// is already marking it.
+    func testAnUnmeasuredClickStillPlacesTheCardBesideTheRing() {
+        let overlay = VisionPointingOverlay()
+        overlay.setMark(point: CGPoint(x: 1500, y: 200), frame: nil)
+
+        XCTAssertNil(overlay.bubbleAnchor.frame)
+        XCTAssertEqual(overlay.bubbleAnchor.point, CGPoint(x: 1500, y: 200))
+    }
+
+    /// The answer naming the element that was already measured asks for the
+    /// position the card is already in. The two rects travel through separate
+    /// conversions, so they can differ by a fraction of a point — which is not
+    /// a new subject and must not show up as a twitch.
+    func testTheAnswerAboutTheMeasuredElementDoesNotMoveTheCard() {
+        let overlay = VisionPointingOverlay()
+        let element = CGRect(x: 1460, y: 180, width: 80, height: 40)
+        overlay.setMark(point: CGPoint(x: 1500, y: 200), frame: element)
+        let settled = overlay.bubbleAnchor
+
+        overlay.showAnswerFrame(element)
+        XCTAssertEqual(overlay.bubbleAnchor, settled)
+
+        overlay.showAnswerFrame(element.offsetBy(dx: 0.4, dy: -0.3))
+        XCTAssertEqual(overlay.bubbleAnchor, settled)
+    }
+
+    /// An answer about a different element is a different subject, and that
+    /// move is the one the design asks for: the words belong beside the thing
+    /// they are about.
+    func testTheAnswerAboutAnotherElementStillMovesTheCard() {
+        let overlay = VisionPointingOverlay()
+        overlay.setMark(
+            point: CGPoint(x: 1500, y: 200),
+            frame: CGRect(x: 1460, y: 180, width: 80, height: 40)
+        )
+        let elsewhere = CGRect(x: 200, y: 800, width: 120, height: 60)
+
+        overlay.showAnswerFrame(elsewhere)
+        XCTAssertEqual(overlay.bubbleAnchor.frame, elsewhere)
+    }
 }
