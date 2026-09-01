@@ -352,11 +352,18 @@ final class VisionPointingOverlay {
     ///
     /// In guiding this is the whole display: the frame around the control to
     /// press, beating, until the press.
-    func showAnswerFrame(_ frame: CGRect) {
+    /// - Parameter movesBubble: false once the user has started reading. The
+    ///   answer's target is only known from the final validated object, so on a
+    ///   turn that streamed its text this arrives seconds after the first line —
+    ///   and moving the card out from under somebody mid-sentence is worse than
+    ///   the card being a little away from the frame. The mark still goes to the
+    ///   right place; only the card stays put.
+    func showAnswerFrame(_ frame: CGRect, movesBubble: Bool = true) {
         showsAnswerFrame = true
         canvas?.wash?.markShape = .frame(frame)
         canvas?.wash?.stroke = nil
         canvas?.wash?.hitFrame = frame
+        guard movesBubble else { return }
         // The bubble follows the frame: from here on the words sit beside the
         // element they are about, which is not always the one that was measured
         // under the click. When it is the same one, nothing moves — the card is

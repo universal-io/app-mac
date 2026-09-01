@@ -1304,7 +1304,13 @@ final class SessionCoordinator {
                 captureRect: captureRect,
                 mainDisplayHeight: VisionPointerResolver.mainDisplayHeight,
                 screenFrame: pointingOverlay.coveredScreenFrame
-            )
+            ),
+            // Only while there is nothing to interrupt. When accessibility
+            // measured the element the card went beside it within a third of a
+            // second and this changes nothing; when it measured nothing, this
+            // is the first time anybody knows where the subject is — and by
+            // then the answer has been arriving for seconds.
+            movesBubble: !session.isBeingRead
         )
     }
 

@@ -247,4 +247,22 @@ final class VisionBubbleAnchorTests: XCTestCase {
         overlay.showAnswerFrame(elsewhere)
         XCTAssertEqual(overlay.bubbleAnchor.frame, elsewhere)
     }
+
+    /// The answer's target is only readable from the final validated object, so
+    /// on a turn that streamed its text it lands seconds after the first line.
+    /// Moving the card then takes a sentence out from under somebody who is
+    /// reading it — worse than the card sitting a little away from the frame.
+    /// The mark still goes to the right place.
+    func testAFrameThatArrivesMidSentenceMovesTheMarkButNotTheCard() {
+        let overlay = VisionPointingOverlay()
+        overlay.setMark(point: CGPoint(x: 1500, y: 200), frame: nil)
+        let settled = overlay.bubbleAnchor
+
+        overlay.showAnswerFrame(
+            CGRect(x: 200, y: 800, width: 120, height: 60),
+            movesBubble: false
+        )
+
+        XCTAssertEqual(overlay.bubbleAnchor, settled)
+    }
 }

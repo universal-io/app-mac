@@ -33,6 +33,15 @@ final class VisionSession: ObservableObject {
     /// validated result has taken its place in `turns`, so the panel never holds
     /// both the draft and the finished version of the same answer.
     @Published private(set) var streamingMessage: String?
+
+    /// Whether words for this turn are already on screen.
+    ///
+    /// The moment after which the card must not be moved: somebody reading a
+    /// sentence should not have it taken out from under them, whatever new
+    /// thing the app has just learned about where the subject is.
+    var isBeingRead: Bool {
+        !(streamingMessage ?? "").isEmpty
+    }
     @Published private(set) var isLoading = false
     @Published private(set) var metadata: VisionMetadata?
     @Published private(set) var candidates: [VisionObservation.Candidate] = []
