@@ -263,32 +263,31 @@ final class VisionPointingOverlay {
         canvas?.wash?.hitFrame = nil
     }
 
-    /// What the screen turned out to hold there, and the bubble's one move.
+    /// What the screen turned out to hold there.
     ///
-    /// Called once per gesture, after the accessibility walk, whether or not it
-    /// measured anything: with a frame the bubble goes beside the element, and
-    /// without one it goes beside the click the ring is already marking.
+    /// Called once per gesture, after the accessibility walk. **The card moves
+    /// only if something was measured.** A ring says a click was heard; it does
+    /// not say where the subject is, and the element under it is somewhere else
+    /// — so going to the ring first and to the element a moment later is two
+    /// moves for one gesture, in the order that looks worst: the card runs to
+    /// the finger, starts explaining there, and then leaves. With nothing
+    /// measured there is no place to go, so the card stays where it is and the
+    /// answer's own frame moves it later if one arrives.
     func setMark(point: CGPoint?, frame: CGRect?) {
-        // The whole anchor at once: a new subject re-places the bubble, so a
-        // position the user chose for the last one is spent (pointing somewhere
-        // else is the gesture that says "put it where it belongs again"), and
-        // whatever the previous answer pointed at no longer decides where this
-        // one appears.
-        //
-        // **The measured frame is the anchor when there is one.** It used to be
-        // the click, with the frame only kept out from under the card, and that
-        // made two moves out of one gesture: here, to beside the pixel the
-        // finger landed on, and again a second later when the answer named the
-        // element — which is usually the very element measured here, in the very
-        // same place. Anchoring on what was measured means the answer about it
-        // asks for the position the card already has. Without a measurement the
-        // click is all there is to go on, and the ring is already marking it.
-        bubbleAnchor = BubbleAnchor(point: point, frame: frame)
+        // The whole anchor at once: a new subject spends the position the user
+        // chose for the last one (pointing somewhere else is the gesture that
+        // says "put it where it belongs again"), and whatever the previous
+        // answer pointed at no longer decides where this one appears.
+        bubbleAnchor = BubbleAnchor(frame: frame)
         showsAnswerFrame = false
         canvas?.wash?.stroke = nil
         canvas?.wash?.markShape = frame.map(MarkShape.frame)
             ?? Self.drawnMark(point: point, frame: frame).map(MarkShape.ring)
         canvas?.wash?.hitFrame = frame
+        // Nothing measured, nothing to move to. Placing here would put the card
+        // in the corner it waits in, which is a move away from the subject
+        // rather than towards one.
+        guard frame != nil else { return }
         placeBubble()
     }
 
@@ -487,7 +486,7 @@ final class VisionPointingOverlay {
     }
 
     private func placeBubble() {
-        guard let bubble, let bubblePanel, let canvas else { return }
+        guard let bubble, let bubblePanel else { return }
         let size = CGSize(
             width: Self.bubbleWidth,
             height: max(1, Self.height(of: bubble))
@@ -507,8 +506,7 @@ final class VisionPointingOverlay {
         let origin = VisionBubblePlacement.origin(
             for: bubbleAnchor,
             size: size,
-            in: bounds,
-            avoid: [canvas.wash?.hitFrame].compactMap { $0 }
+            in: bounds
         )
         // The placement is screen-local and the window is global.
         isPlacingBubble = true

@@ -15,13 +15,21 @@ import CoreGraphics
 /// So: the only things entitled to change this are a new subject (a
 /// measurement, an enclosure), the answer pointing somewhere, and the user
 /// dragging the card. Showing a mark is not one of them.
+/// **There is deliberately no case for "beside where the user clicked".**
+///
+/// Three fixes tried to keep the card away from the ring by agreeing not to
+/// anchor on the click, and the click came back every time — as an assignment
+/// left behind when a call was removed, and then as the value `setMark` chose
+/// while the measured frame was kept only as something to avoid. A rule nobody
+/// can express is the only kind that holds: a ring says a click was heard, it
+/// does not say where the subject is, and until something does the card has
+/// nowhere to be but where it already is.
 struct BubbleAnchor: Equatable {
-    /// The place the answer is about, when nothing was measured there.
-    var point: CGPoint?
-    /// The element or the enclosure the answer is about. Beats `point`: it says
-    /// where the subject *is* rather than where the hand landed.
+    /// The element or the enclosure the answer is about — the only thing that
+    /// moves the card, because it is the only thing that knows where the
+    /// subject is.
     var frame: CGRect?
-    /// Where the user dragged the card. Beats both, until they point anew.
+    /// Where the user dragged the card. Beats the frame, until they point anew.
     var userTopLeft: CGPoint?
 }
 
@@ -73,63 +81,20 @@ enum VisionBubblePlacement {
         return CGRect(origin: origin, size: size)
     }
 
-    /// - Parameters:
-    ///   - point: the pointed-at spot, or nil when nothing has been pointed at.
-    ///   - size: the bubble's measured size.
-    ///   - bounds: the area the bubble may occupy (screen-local; pass the
-    ///     visible frame so the Dock and the menu bar are already excluded).
-    ///   - avoid: rectangles the bubble must not cover — the frame drawn around
-    ///     what the user pointed at, and any frame the answer points at. Those
-    ///     are the two things a bubble sitting on top of them would hide.
-    static func origin(
-        for point: CGPoint?,
-        size: CGSize,
-        in bounds: CGRect,
-        avoid: [CGRect] = []
-    ) -> CGPoint {
-        guard let point else {
-            // Bottom-right, where a notice with no place on the picture
-            // belongs. On macOS this is inside the visible frame, so it clears
-            // the Dock without knowing anything about it.
-            return CGPoint(
-                x: bounds.maxX - size.width - idleMargin,
-                y: bounds.minY + idleMargin
-            )
-        }
-
-        // Right-below first, then the three mirrors. The order matters: reading
-        // order puts the answer where the eye already travels after clicking.
-        let candidates = [
-            CGPoint(x: point.x + gap, y: point.y - gap - size.height),
-            CGPoint(x: point.x - gap - size.width, y: point.y - gap - size.height),
-            CGPoint(x: point.x + gap, y: point.y + gap),
-            CGPoint(x: point.x - gap - size.width, y: point.y + gap),
-        ]
-
-        for origin in candidates {
-            let rect = CGRect(origin: origin, size: size)
-            guard fits(rect, in: bounds) else { continue }
-            guard !avoid.contains(where: { $0.intersects(rect) }) else { continue }
-            return origin
-        }
-        // Nothing was clean: keep the preferred side and push it on screen.
-        // A bubble half off the display is worse than one that overlaps a
-        // frame, because the text stops being readable at all.
-        return clamp(CGRect(origin: candidates[0], size: size), into: bounds).origin
+    /// Where the bubble waits when nothing has said where the subject is.
+    ///
+    /// Bottom-right, where a notice with no place on the picture belongs. On
+    /// macOS this is inside the visible frame, so it clears the Dock without
+    /// knowing anything about it. A session opens here, and a click that
+    /// measures nothing leaves it here — saying "beside this" about a place
+    /// nothing has identified would be a claim the app cannot support.
+    static func idleOrigin(size: CGSize, in bounds: CGRect) -> CGPoint {
+        CGPoint(
+            x: bounds.maxX - size.width - idleMargin,
+            y: bounds.minY + idleMargin
+        )
     }
 
-    /// Where the answer sits when the answer itself has pointed at a frame.
-    ///
-    /// The frame is the thing being explained, so the bubble keeps to its side.
-    /// The click and the frame are not always the same place — the model
-    /// reaches for what it believes the subject is — and words anchored to the
-    /// click while the frame sits on another element read as two unrelated
-    /// claims about the screen (2026-08-24: GitLab has two "+" buttons; the
-    /// frame landed on one while the bubble stayed beside the other, and the
-    /// pair looked broken rather than merely mistaken).
-    ///
-    /// Right of the frame first, top edges aligned — after looking at the
-    /// frame the eye continues in reading order — then its three mirrors.
     static func origin(
         besideFrame frame: CGRect,
         size: CGSize,
@@ -161,8 +126,7 @@ enum VisionBubblePlacement {
     static func origin(
         for anchor: BubbleAnchor,
         size: CGSize,
-        in bounds: CGRect,
-        avoid: [CGRect] = []
+        in bounds: CGRect
     ) -> CGPoint {
         if let userTopLeft = anchor.userTopLeft {
             return origin(movedTo: userTopLeft, size: size, in: bounds)
@@ -170,7 +134,7 @@ enum VisionBubblePlacement {
         if let frame = anchor.frame {
             return origin(besideFrame: frame, size: size, in: bounds)
         }
-        return origin(for: anchor.point, size: size, in: bounds, avoid: avoid)
+        return idleOrigin(size: size, in: bounds)
     }
 
     /// Where a bubble the user dragged goes.

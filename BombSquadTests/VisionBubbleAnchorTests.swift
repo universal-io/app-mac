@@ -34,9 +34,12 @@ final class VisionBubbleAnchorTests: XCTestCase {
 
     func testRingDoesNotChangeWhereTheBubbleWouldGo() {
         let overlay = VisionPointingOverlay()
-        overlay.setMark(point: CGPoint(x: 300, y: 900), frame: nil)
+        overlay.setMark(
+            point: CGPoint(x: 300, y: 900),
+            frame: CGRect(x: 280, y: 880, width: 60, height: 30)
+        )
         let settled = overlay.bubbleAnchor
-        XCTAssertNotNil(settled.point)
+        XCTAssertNotNil(settled.frame)
 
         // The next click, far from the last one, while the previous answer is
         // still the thing on screen.
@@ -48,7 +51,10 @@ final class VisionBubbleAnchorTests: XCTestCase {
 
     func testRingLeavesAPositionTheUserChoseAlone() {
         let overlay = VisionPointingOverlay()
-        overlay.setMark(point: CGPoint(x: 300, y: 900), frame: nil)
+        overlay.setMark(
+            point: CGPoint(x: 300, y: 900),
+            frame: CGRect(x: 280, y: 880, width: 60, height: 30)
+        )
         overlay.showRing(at: CGPoint(x: 1500, y: 200))
         XCTAssertNil(overlay.bubbleAnchor.userTopLeft)
 
@@ -66,18 +72,24 @@ final class VisionBubbleAnchorTests: XCTestCase {
 
     func testMeasurementIsTheOneMove() {
         let overlay = VisionPointingOverlay()
-        overlay.setMark(point: CGPoint(x: 300, y: 900), frame: nil)
+        overlay.setMark(
+            point: CGPoint(x: 300, y: 900),
+            frame: CGRect(x: 280, y: 880, width: 60, height: 30)
+        )
         let before = placed(overlay.bubbleAnchor)
 
         overlay.showRing(at: CGPoint(x: 1500, y: 200))
         overlay.setMark(point: CGPoint(x: 1500, y: 200), frame: CGRect(x: 1460, y: 180, width: 80, height: 40))
 
-        XCTAssertEqual(overlay.bubbleAnchor.point, CGPoint(x: 1500, y: 200))
+        XCTAssertEqual(
+            overlay.bubbleAnchor.frame,
+            CGRect(x: 1460, y: 180, width: 80, height: 40)
+        )
         XCTAssertNotEqual(placed(overlay.bubbleAnchor), before)
     }
 
     func testANewSubjectSpendsAPositionTheUserDragged() {
-        var anchor = BubbleAnchor(point: CGPoint(x: 300, y: 900))
+        var anchor = BubbleAnchor(frame: CGRect(x: 300, y: 900, width: 40, height: 20))
         anchor.userTopLeft = CGPoint(x: 20, y: 600)
         XCTAssertEqual(
             placed(anchor),
@@ -86,13 +98,16 @@ final class VisionBubbleAnchorTests: XCTestCase {
         )
 
         let overlay = VisionPointingOverlay()
-        overlay.setMark(point: CGPoint(x: 300, y: 900), frame: nil)
+        overlay.setMark(
+            point: CGPoint(x: 300, y: 900),
+            frame: CGRect(x: 280, y: 880, width: 60, height: 30)
+        )
         XCTAssertNil(overlay.bubbleAnchor.userTopLeft)
     }
 
     func testTheAnswersFrameWinsOverTheClick() {
         let frame = CGRect(x: 800, y: 500, width: 120, height: 40)
-        let anchor = BubbleAnchor(point: CGPoint(x: 300, y: 900), frame: frame)
+        let anchor = BubbleAnchor(frame: frame)
         XCTAssertEqual(
             placed(anchor),
             VisionBubblePlacement.origin(besideFrame: frame, size: size, in: bounds)
@@ -106,24 +121,21 @@ final class VisionBubbleAnchorTests: XCTestCase {
     /// others change during the ring phase, and the reflow timer re-solves the
     /// placement every tenth of a second with whatever they now are.
     func testGuardingTheAnchorCannotHoldTheCardStill() {
-        let anchor = BubbleAnchor(point: CGPoint(x: 900, y: 600))
-        let measured = CGRect(x: 880, y: 560, width: 300, height: 80)
+        let anchor = BubbleAnchor(frame: CGRect(x: 1400, y: 560, width: 300, height: 80))
 
-        let withFrameAvoided = VisionBubblePlacement.origin(
-            for: anchor, size: size, in: bounds, avoid: [measured]
+        let placedTall = VisionBubblePlacement.origin(
+            for: anchor, size: size, in: bounds
         )
-        let afterTheFrameIsCleared = VisionBubblePlacement.origin(
-            for: anchor, size: size, in: bounds, avoid: []
-        )
-        let afterTheAnswerIsSwappedForALoadingLine = VisionBubblePlacement.origin(
+        let placedShort = VisionBubblePlacement.origin(
             for: anchor,
             size: CGSize(width: size.width, height: 90),
-            in: bounds,
-            avoid: []
+            in: bounds
         )
 
-        XCTAssertNotEqual(withFrameAvoided, afterTheFrameIsCleared)
-        XCTAssertNotEqual(withFrameAvoided, afterTheAnswerIsSwappedForALoadingLine)
+        XCTAssertNotEqual(
+            placedTall, placedShort,
+            "the same anchor puts the card in two places once its height changes"
+        )
     }
 
     /// A card that grew keeps its top edge: the text arrives below what is
@@ -192,12 +204,16 @@ final class VisionBubbleAnchorTests: XCTestCase {
 
     /// Nothing measured means the click is all there is to go on, and the ring
     /// is already marking it.
-    func testAnUnmeasuredClickStillPlacesTheCardBesideTheRing() {
+    /// A click that measured nothing does not move the card at all. The ring
+    /// says the click was heard; it does not say where the subject is, so there
+    /// is nowhere to go and the card stays where it already was. The answer's
+    /// own frame moves it later if one arrives.
+    func testAnUnmeasuredClickMovesTheCardNowhere() {
         let overlay = VisionPointingOverlay()
         overlay.setMark(point: CGPoint(x: 1500, y: 200), frame: nil)
 
         XCTAssertNil(overlay.bubbleAnchor.frame)
-        XCTAssertEqual(overlay.bubbleAnchor.point, CGPoint(x: 1500, y: 200))
+        XCTAssertNil(overlay.bubbleAnchor.userTopLeft)
     }
 
     /// The answer naming the element that was already measured asks for the

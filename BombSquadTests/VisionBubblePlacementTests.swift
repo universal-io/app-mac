@@ -5,43 +5,6 @@ final class VisionBubblePlacementTests: XCTestCase {
     private let bounds = CGRect(x: 0, y: 0, width: 1600, height: 1000)
     private let size = CGSize(width: 360, height: 200)
 
-    func testTheBubbleSitsBesideAndBelowThePointedSpot() {
-        let origin = VisionBubblePlacement.origin(
-            for: CGPoint(x: 400, y: 700),
-            size: size,
-            in: bounds
-        )
-        // Right of the point by the gap, and below it (Cocoa y grows upward, so
-        // "below" is a smaller y).
-        XCTAssertEqual(origin.x, 420, accuracy: 0.001)
-        XCTAssertEqual(origin.y, 700 - 20 - 200, accuracy: 0.001)
-    }
-
-    func testItNeverCoversWhatWasPointedAt() {
-        let point = CGPoint(x: 400, y: 700)
-        let origin = VisionBubblePlacement.origin(for: point, size: size, in: bounds)
-        let rect = CGRect(origin: origin, size: size)
-        XCTAssertFalse(rect.contains(point), "the bubble is sitting on the spot it explains")
-    }
-
-    func testItFlipsToTheLeftRatherThanRunningOffTheRightEdge() {
-        let origin = VisionBubblePlacement.origin(
-            for: CGPoint(x: 1500, y: 700),
-            size: size,
-            in: bounds
-        )
-        XCTAssertEqual(origin.x, 1500 - 20 - 360, accuracy: 0.001)
-    }
-
-    func testItFlipsAboveRatherThanRunningOffTheBottomEdge() {
-        let origin = VisionBubblePlacement.origin(
-            for: CGPoint(x: 400, y: 80),
-            size: size,
-            in: bounds
-        )
-        XCTAssertEqual(origin.y, 80 + 20, accuracy: 0.001)
-    }
-
     /// A bubble the user dragged stays where they put it, and stays anchored by
     /// its top: an answer arriving makes the card taller, and holding the origin
     /// instead would slide the whole thing up out from under someone reading it.
@@ -74,59 +37,6 @@ final class VisionBubblePlacementTests: XCTestCase {
             )
             XCTAssertTrue(bounds.contains(rect), "bubble left the screen from \(topLeft): \(rect)")
         }
-    }
-
-    /// All four corners, because a rule that works in the middle of the screen
-    /// and fails at the edges fails exactly where menus and toolbars live.
-    func testEveryCornerStaysOnScreen() {
-        for point in [
-            CGPoint(x: 4, y: 4),
-            CGPoint(x: 1596, y: 4),
-            CGPoint(x: 4, y: 996),
-            CGPoint(x: 1596, y: 996),
-        ] {
-            let rect = CGRect(
-                origin: VisionBubblePlacement.origin(for: point, size: size, in: bounds),
-                size: size
-            )
-            XCTAssertTrue(
-                bounds.contains(rect),
-                "bubble left the screen for point \(point): \(rect)"
-            )
-        }
-    }
-
-    /// The frame the answer points at carries information the bubble does not.
-    /// Covering it turns two marks into one blur — the web client saw this and
-    /// made avoidance part of the placement rather than a later fix.
-    func testItMovesAsideRatherThanCoveringTheAnswersOwnFrame() {
-        let point = CGPoint(x: 400, y: 700)
-        let inTheWay = CGRect(x: 420, y: 480, width: 300, height: 180)
-        let origin = VisionBubblePlacement.origin(
-            for: point,
-            size: size,
-            in: bounds,
-            avoid: [inTheWay]
-        )
-        let rect = CGRect(origin: origin, size: size)
-        XCTAssertFalse(rect.intersects(inTheWay))
-        XCTAssertTrue(bounds.contains(rect))
-    }
-
-    /// When every side is blocked, staying readable beats staying clear: a
-    /// bubble pushed half off the display cannot be read at all.
-    func testAnImpossibleSituationKeepsTheBubbleOnScreen() {
-        let everywhere = [CGRect(x: 0, y: 0, width: 1600, height: 1000)]
-        let rect = CGRect(
-            origin: VisionBubblePlacement.origin(
-                for: CGPoint(x: 800, y: 500),
-                size: size,
-                in: bounds,
-                avoid: everywhere
-            ),
-            size: size
-        )
-        XCTAssertTrue(bounds.contains(rect))
     }
 
     /// Once the answer has pointed at a frame, the words belong beside that
@@ -187,7 +97,7 @@ final class VisionBubblePlacementTests: XCTestCase {
     }
 
     func testWithNothingPointedAtItWaitsInTheBottomRight() {
-        let origin = VisionBubblePlacement.origin(for: nil, size: size, in: bounds)
+        let origin = VisionBubblePlacement.idleOrigin(size: size, in: bounds)
         XCTAssertEqual(origin.x, 1600 - 360 - 24, accuracy: 0.001)
         XCTAssertEqual(origin.y, 24, accuracy: 0.001)
     }
@@ -219,7 +129,7 @@ final class VisionBubblePlacementTests: XCTestCase {
     func testItRespectsAnOffsetVisibleFrame() {
         let offset = CGRect(x: -1440, y: 120, width: 1440, height: 780)
         let rect = CGRect(
-            origin: VisionBubblePlacement.origin(for: nil, size: size, in: offset),
+            origin: VisionBubblePlacement.idleOrigin(size: size, in: offset),
             size: size
         )
         XCTAssertTrue(offset.contains(rect))
