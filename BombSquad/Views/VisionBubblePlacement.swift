@@ -44,6 +44,35 @@ enum VisionBubblePlacement {
     /// Where the bubble waits when nothing has been pointed at yet.
     static let idleMargin: CGFloat = 24
 
+    /// The frame a card keeps when only its height changed.
+    ///
+    /// **Growing is not moving, so growing does not re-solve the placement.**
+    /// This is the rule that kept coming undone. Where the card sits is decided
+    /// by three things — the anchor, the card's size, and the rectangles it must
+    /// not cover — and the invariant has only ever been written about the first
+    /// of them. But a click changes the other two on its own: the answer is
+    /// swapped for "ここを読んでいます…" so the height changes, and the measured
+    /// frame is cleared out of `avoid`. Re-solving then lands the card somewhere
+    /// else with nobody having touched the anchor, and a reflow timer re-solves
+    /// every tenth of a second. Guarding the anchor could never hold this shut;
+    /// only not re-solving can.
+    ///
+    /// So a reflow keeps the top-left and lets the card grow downward, the way a
+    /// paragraph arrives. The only movement left is the clamp that keeps it on
+    /// screen. The current frame is read from the window rather than stored,
+    /// which is also what makes a position the user dragged the card to survive
+    /// every resize after it.
+    static func resized(_ frame: CGRect, to size: CGSize, in bounds: CGRect) -> CGRect {
+        var origin = CGPoint(x: frame.minX, y: frame.maxY - size.height)
+        let lowest = bounds.minY + margin
+        let highest = max(lowest, bounds.maxY - margin - size.height)
+        origin.y = min(max(origin.y, lowest), highest)
+        let leftmost = bounds.minX + margin
+        let rightmost = max(leftmost, bounds.maxX - margin - size.width)
+        origin.x = min(max(origin.x, leftmost), rightmost)
+        return CGRect(origin: origin, size: size)
+    }
+
     /// - Parameters:
     ///   - point: the pointed-at spot, or nil when nothing has been pointed at.
     ///   - size: the bubble's measured size.

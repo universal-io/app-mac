@@ -424,10 +424,25 @@ final class VisionPointingOverlay {
     /// speaking. The view inside uses the same constant, so there is one width.
     static let bubbleWidth: CGFloat = 380
 
+    /// The card got taller or shorter. That is not a new subject, so the
+    /// placement is not solved again — see `VisionBubblePlacement.resized`.
     private func placeBubbleIfResized() {
-        guard let bubble else { return }
-        guard abs(Self.height(of: bubble) - placedSize.height) > 0.5 else { return }
-        placeBubble()
+        guard let bubble, let bubblePanel else { return }
+        let height = Self.height(of: bubble)
+        guard abs(height - placedSize.height) > 0.5 else { return }
+        let size = CGSize(width: Self.bubbleWidth, height: max(1, height))
+        let bounds = NSScreen.screens
+            .first { $0.frame == screenFrame }?
+            .visibleFrame ?? screenFrame
+        isPlacingBubble = true
+        defer { isPlacingBubble = false }
+        bubblePanel.setFrame(
+            VisionBubblePlacement.resized(bubblePanel.frame, to: size, in: bounds),
+            display: true
+        )
+        bubblePanel.invalidateShadow()
+        bubble.frame = CGRect(origin: .zero, size: size)
+        placedSize = size
     }
 
     /// The taller of the two answers AppKit will give, plus a point.

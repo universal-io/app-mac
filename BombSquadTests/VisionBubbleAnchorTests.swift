@@ -14,6 +14,15 @@ import XCTest
 ///
 /// So the rule is stated against the anchor, not against the call: showing a
 /// mark must not change where the placement would put the card.
+///
+/// That was still not enough, and the tests below are why it took a third time
+/// to see it: every one of them asks about the anchor, so all five passed while
+/// the card was visibly jumping. Where it sits is solved from three things, and
+/// a click changes the other two by itself — the answer becomes
+/// "ここを読んでいます…" so the card's height changes, and the measured frame is
+/// cleared out of what it must avoid. `testGuardingTheAnchorCannotHoldTheCardStill`
+/// states that directly, and the resize tests state the fix: a reflow keeps the
+/// top-left instead of solving the placement again.
 @MainActor
 final class VisionBubbleAnchorTests: XCTestCase {
     private let size = CGSize(width: 380, height: 300)
@@ -88,5 +97,77 @@ final class VisionBubbleAnchorTests: XCTestCase {
             placed(anchor),
             VisionBubblePlacement.origin(besideFrame: frame, size: size, in: bounds)
         )
+    }
+
+    // MARK: - Growing is not moving
+
+    /// The finding behind the third recurrence: the anchor is one of three
+    /// inputs, so holding it still does not hold the card still. Both of the
+    /// others change during the ring phase, and the reflow timer re-solves the
+    /// placement every tenth of a second with whatever they now are.
+    func testGuardingTheAnchorCannotHoldTheCardStill() {
+        let anchor = BubbleAnchor(point: CGPoint(x: 900, y: 600))
+        let measured = CGRect(x: 880, y: 560, width: 300, height: 80)
+
+        let withFrameAvoided = VisionBubblePlacement.origin(
+            for: anchor, size: size, in: bounds, avoid: [measured]
+        )
+        let afterTheFrameIsCleared = VisionBubblePlacement.origin(
+            for: anchor, size: size, in: bounds, avoid: []
+        )
+        let afterTheAnswerIsSwappedForALoadingLine = VisionBubblePlacement.origin(
+            for: anchor,
+            size: CGSize(width: size.width, height: 90),
+            in: bounds,
+            avoid: []
+        )
+
+        XCTAssertNotEqual(withFrameAvoided, afterTheFrameIsCleared)
+        XCTAssertNotEqual(withFrameAvoided, afterTheAnswerIsSwappedForALoadingLine)
+    }
+
+    /// A card that grew keeps its top edge: the text arrives below what is
+    /// already being read, which is where a paragraph goes.
+    func testAGrowingCardKeepsItsTopEdge() {
+        let frame = CGRect(x: 400, y: 500, width: 380, height: 200)
+        let grown = VisionBubblePlacement.resized(
+            frame, to: CGSize(width: 380, height: 320), in: bounds
+        )
+        XCTAssertEqual(grown.maxY, frame.maxY)
+        XCTAssertEqual(grown.minX, frame.minX)
+    }
+
+    func testAShrinkingCardKeepsItsTopEdgeToo() {
+        let frame = CGRect(x: 400, y: 500, width: 380, height: 320)
+        let shrunk = VisionBubblePlacement.resized(
+            frame, to: CGSize(width: 380, height: 120), in: bounds
+        )
+        XCTAssertEqual(shrunk.maxY, frame.maxY)
+        XCTAssertEqual(shrunk.minX, frame.minX)
+    }
+
+    /// The current frame is read from the window rather than stored, so a card
+    /// the user dragged stays where they put it through every later resize —
+    /// the case that used to snap back the moment an answer arrived.
+    func testAPositionTheUserDraggedSurvivesEveryResize() {
+        var frame = CGRect(x: 1200, y: 800, width: 380, height: 140)
+        for height in [220.0, 340.0, 180.0] {
+            frame = VisionBubblePlacement.resized(
+                frame, to: CGSize(width: 380, height: height), in: bounds
+            )
+            XCTAssertEqual(frame.maxY, 940)
+            XCTAssertEqual(frame.minX, 1200)
+        }
+    }
+
+    /// Off the bottom of the screen is the one thing worse than moving, so the
+    /// clamp still applies — and it is the only movement a resize can cause.
+    func testACardTooTallToGrowDownwardStaysOnScreen() {
+        let frame = CGRect(x: 400, y: 40, width: 380, height: 120)
+        let grown = VisionBubblePlacement.resized(
+            frame, to: CGSize(width: 380, height: 600), in: bounds
+        )
+        XCTAssertGreaterThanOrEqual(grown.minY, bounds.minY)
+        XCTAssertLessThanOrEqual(grown.maxY, bounds.maxY)
     }
 }

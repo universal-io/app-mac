@@ -231,10 +231,26 @@ final class PanelController {
         }
     }
 
+    /// Growing is not moving here either. The compose bubble solves its
+    /// placement from an anchor, a size and a screen exactly as Vision's does,
+    /// so re-solving on every reflow would shove it around for the same reason
+    /// — a result surface appearing or a line wrapping is not a new subject.
     private func placeIfResized() {
         guard let panel, panel.isVisible, let host else { return }
-        guard abs(Self.height(of: host) - placedSize.height) > 0.5 else { return }
-        place()
+        let height = Self.height(of: host)
+        guard abs(height - placedSize.height) > 0.5 else { return }
+        let size = CGSize(width: VisionPointingOverlay.bubbleWidth, height: max(1, height))
+        guard let bounds = ActiveDisplay.screen()?.visibleFrame
+            ?? NSScreen.main?.visibleFrame else { return }
+        isPlacing = true
+        defer { isPlacing = false }
+        panel.setFrame(
+            VisionBubblePlacement.resized(panel.frame, to: size, in: bounds),
+            display: true
+        )
+        panel.invalidateShadow()
+        host.frame = CGRect(origin: .zero, size: size)
+        placedSize = size
     }
 
     private func noteMoved() {
