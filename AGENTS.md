@@ -115,10 +115,10 @@ Rules:
 - If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `fix/vision-bubble-placement-state`（R14バブルの1ターン1配置、AX miss時の本文表示順、印とカードの
-  独立を実装し、2026-09-02に実機確認完了）。この修正自体に残タスクはない。復帰点は
-  `pre-vision-bubble-placement-20260902`（`7804ad1`）。要件と経緯は
-  `docs/universal-io-master-plan.md` R14と`docs/vision-bubble-placement-review.md`。
+- `main`（`v0.2.2` build `8`を公開済み、`main`は`0.2.3`を開いている）。
+  `fix/vision-bubble-placement-state`は2026-09-02に実機確認まで済ませてmainへfast-forward統合した。
+  次のリリース候補は`0.2.3` build `10`（build `9`は候補ソースから実装が大きく進んだため公開せず破棄。
+  経緯はREADMEのリリース運用）。
 
 Current operational note:
 - 2026-07-18: Vision/Copilotを単一の本番経路へ統合。旧Navigator、実験名、
