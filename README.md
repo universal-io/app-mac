@@ -749,7 +749,18 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 連続稼働したプロセスでD7（[manual-golden-paths.md](docs/manual-golden-paths.md)）9項目を通過し、
 公開ダウンロードを build `8` へ切り替えました。
 
-**`0.2.3`の候補は build `10` として作り直します（2026-09-02）。build `9` は公開せず破棄しました。**
+**`0.2.3` build `10` を候補として作成しました（2026-09-03）。まだ公開ダウンロードではありません。**
+
+```text
+dist/Universal-IO-0.2.3-build10.dmg
+SHA-256: fe1f1796737ec95cc6c90462d120e70f22ebf14070673f3c76e6f96dd644c7e8
+バイナリソース: db1feba
+```
+
+Developer ID署名、notarization（app・DMGとも`Accepted`）、staple、Gatekeeper評価
+（`source=Notarized Developer ID`）を確認済みです。
+
+**build `9` は公開せず破棄しました。**
 
 build `9`（2026-08-30、ソース `d23c86f`、`dist/Universal-IO-0.2.3-build9.dmg`、SHA-256
 `a5aa6f20…`）は署名・notarizationまで済んでいたが、その実機確認の最中に見つかった欠陥の修正 —
