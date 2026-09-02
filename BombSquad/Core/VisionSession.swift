@@ -22,12 +22,14 @@ struct VisionDisplayTurn: Identifiable, Equatable {
     let uncertainties: [String]
 }
 
-/// The one placement decision owned by a pointing gesture.
+/// The one **card** placement decision owned by a pointing gesture.
 ///
-/// Geometry and readable content are deliberately separate phases. A locally
-/// measured element or a region the user drew can commit immediately; a point
-/// with no AX hit stays resolving until the validated answer supplies a box (or
-/// confirms that none is available). Only then may its words become visible.
+/// Card placement and readable content are deliberately separate phases. The
+/// mark is not governed by this state: it keeps telling the truth as resolution
+/// improves from ring, to AX frame, to answer frame. A locally measured element
+/// or a region can place the card immediately; a point with no AX hit stays
+/// resolving until the validated answer supplies a box (or confirms none is
+/// available). Only then may its words become visible.
 struct VisionTurnPlacementState: Equatable {
     enum Resolution: Equatable {
         case measured
@@ -83,7 +85,8 @@ enum VisionPointingPlacement: Equatable {
     case unresolved
     /// Accessibility measured the element under the click.
     case measured
-    /// The user explicitly enclosed the subject; the path itself is authority.
+    /// The user's enclosure already supplied a place for the card. The answer
+    /// may still replace the drawn path with a more precise subject frame.
     case region
 }
 
@@ -135,11 +138,10 @@ final class VisionSession: ObservableObject {
     @Published private(set) var pointedCandidate: VisionObservation.Candidate?
     /// The box the answer is about, in the current capture's normalized space.
     ///
-    /// Measured from accessibility when the click hit an element; otherwise
-    /// resolved once from the final answer's candidate or annotation. A local
-    /// measurement and a region the user drew are authoritative and cannot be
-    /// replaced by a later model estimate: one gesture has one subject and one
-    /// placement decision.
+    /// The latest resolved subject: first an AX frame when the click hit an
+    /// element, then the final answer's candidate or annotation when available.
+    /// This mark may change without moving the card; showing what the answer
+    /// actually refers to is independent of the one-card-placement rule.
     @Published private(set) var answerHighlight: CGRect?
     /// Told when `answerHighlight` settles, for surfaces outside SwiftUI's
     /// observation — the overlay draws on the real screen and has no view here.
@@ -1229,52 +1231,35 @@ final class VisionSession: ObservableObject {
         metadata = response.metadata
         activeSkillName = response.skillName
         let highlight: VisionHighlightOutcome
-        if pointingPlacement == .region {
-            // The user drew the subject. Its path was committed before the
-            // request and remains the placement authority; a model-estimated
-            // box inside it must not shrink or move that explicit scope.
-            selectedCandidate = nil
-            highlight = .resolved
-        } else if pointingPlacement == .measured,
-                  let candidate = pointedCandidate,
-                  let rect = candidate.rect {
-            // The OS measurement won before streaming began. Re-publish it as
-            // the answer-owned frame, but never replace it with model geometry.
-            selectedCandidate = candidate
-            publishAnswerHighlight(rect)
-            highlight = .resolved
-        } else {
-            if let targetID = response.result.targetCandidateID,
-               let candidate = fixedCandidates.first(where: { $0.id == targetID }),
-               let rect = candidate.rect {
-                selectedCandidate = candidate
+        do {
+            switch try Self.answerHighlight(
+                for: response.result,
+                candidates: fixedCandidates,
+                toleratingUnplaceableTarget: tolerant
+            ) {
+            case .candidate(let index, let rect):
+                selectedCandidate = fixedCandidates[index]
                 publishAnswerHighlight(rect)
                 highlight = .resolved
                 // The frame is up on the control to press; the app under it has to
                 // be frontmost, or the first click is spent activating its window.
                 if isCopilotActive { activateTargetApp() }
-            } else if response.result.targetCandidateID != nil, !tolerant {
-                Diagnostics.record("vision.result", details: [
-                    ("mode", .code(response.result.mode)),
-                    ("highlight", .code(VisionHighlightOutcome.unresolvable)),
-                    ("candidates", .count(fixedCandidates.count)),
-                ])
-                throw ProviderError.decoding(
-                    "Vision selected a candidate without a usable capture rectangle."
-                )
-            } else if let box = response.result.annotations.first?.box {
-                // No measured rectangle, but the model drew one. Second choice by
-                // construction — an estimate rather than a measurement — and still
-                // the only way to mark body text, an image or a graph, none of which
-                // accessibility offers as a candidate at all.
+            case .annotation(let box):
                 selectedCandidate = nil
                 publishAnswerHighlight(box)
                 highlight = .resolved
-            } else {
+            case .none:
                 selectedCandidate = nil
                 publishAnswerHighlight(nil)
                 highlight = .none
             }
+        } catch {
+            Diagnostics.record("vision.result", details: [
+                ("mode", .code(response.result.mode)),
+                ("highlight", .code(VisionHighlightOutcome.unresolvable)),
+                ("candidates", .count(fixedCandidates.count)),
+            ])
+            throw error
         }
         if pointingPlacement == .unresolved {
             // `publishAnswerHighlight` is synchronous. The overlay therefore
@@ -1306,6 +1291,33 @@ final class VisionSession: ObservableObject {
         turnPlacement.contentBecameVisible()
     }
 
+    /// Resolves what the answer is pointing at, independently of where the card
+    /// has already committed. The mark always follows this ladder; only the
+    /// later overlay callback asks the placement state whether the card follows.
+    static func answerHighlight(
+        for result: VisionResult,
+        candidates: [VisionObservation.Candidate],
+        toleratingUnplaceableTarget tolerant: Bool
+    ) throws -> VisionAnswerHighlightResolution {
+        if let targetID = result.targetCandidateID,
+           let index = candidates.firstIndex(where: { $0.id == targetID }),
+           let rect = candidates[index].rect {
+            return .candidate(index: index, rect: rect)
+        }
+        if result.targetCandidateID != nil, !tolerant {
+            throw ProviderError.decoding(
+                "Vision selected a candidate without a usable capture rectangle."
+            )
+        }
+        if let box = result.annotations.first?.box {
+            // No measured answer rectangle, but the model drew one. This is the
+            // only answer frame available for body text, images, graphs, and
+            // canvases that accessibility does not expose as candidates.
+            return .annotation(box)
+        }
+        return .none
+    }
+
     private func publishAnswerHighlight(_ rect: CGRect?) {
         answerHighlight = rect
         onAnswerHighlight?(rect)
@@ -1327,6 +1339,15 @@ final class VisionSession: ObservableObject {
               !app.isActive else { return }
         app.activate()
     }
+}
+
+/// The answer's latest subject mark. It intentionally knows nothing about the
+/// card's placement phase: a committed card may stay still while this advances
+/// from an AX frame or enclosure to what the answer actually resolved.
+enum VisionAnswerHighlightResolution: Equatable {
+    case candidate(index: Int, rect: CGRect)
+    case annotation(CGRect)
+    case none
 }
 
 /// Why an in-flight request was cancelled, recorded by whoever cancelled it.

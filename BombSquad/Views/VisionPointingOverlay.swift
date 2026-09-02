@@ -352,9 +352,9 @@ final class VisionPointingOverlay {
     ///
     /// In guiding this is the whole display: the frame around the control to
     /// press, beating, until the press.
-    /// - Parameter movesBubble: true only while this gesture's placement is
-    ///   unresolved. Locally measured geometry, an enclosed region, and visible
-    ///   content have already committed the card and cannot be revised here.
+    /// - Parameter movesBubble: whether this new mark also moves the card.
+    ///   Locally measured geometry, an enclosed region, and visible content can
+    ///   commit the card while the mark remains free to show the latest result.
     func showAnswerFrame(_ frame: CGRect, movesBubble: Bool = true) {
         showsAnswerFrame = true
         canvas?.wash?.markShape = .frame(frame)
@@ -363,8 +363,9 @@ final class VisionPointingOverlay {
         guard movesBubble else { return }
         // The bubble follows the frame: from here on the words sit beside the
         // element they are about. For a pointing turn this path is reachable as
-        // a move only when AX had no hit; measured elements and regions commit
-        // before the request. Guidance can also ask for an ordinary move.
+        // a card move only when AX had no hit; measured elements and regions
+        // commit its position before the request. The frame itself always
+        // updates above. Guidance can also ask for an ordinary move.
         // A position the user chose is left standing: they moved the card during
         // this same turn, about this same subject.
         guard !Self.isEssentiallyTheSame(bubbleAnchor.frame, frame) else {
