@@ -44,7 +44,7 @@
 
 ## 参照資料
 
-- [vision-bubble-placement-review.md](vision-bubble-placement-review.md) — R14のバブル配置が4回再発した経緯、実測、2026-09-02のレビュー決定
+- [vision-bubble-placement-review.md](vision-bubble-placement-review.md) — R14のバブル配置が4回再発した経緯、実測、2026-09-02のレビュー・実装・実機確認記録
 - [pitch/](pitch/) — ピッチとGTM資料
 - [promo/](promo/) — 紹介動画シナリオ
 
