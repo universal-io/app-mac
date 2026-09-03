@@ -745,20 +745,19 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 
 ## リリース運用
 
-**公開ダウンロードは `v0.2.2`（build `8`、バイナリソース `3a9ed03`）です。** 2026-08-11、26時間20分
-連続稼働したプロセスでD7（[manual-golden-paths.md](docs/manual-golden-paths.md)）9項目を通過し、
-公開ダウンロードを build `8` へ切り替えました。
-
-**`0.2.3` build `10` を候補として作成しました（2026-09-03）。まだ公開ダウンロードではありません。**
+**公開ダウンロードは `v0.2.3`（build `10`、バイナリソース `db1feba`）です。** 2026-09-03に公開しました。
 
 ```text
-dist/Universal-IO-0.2.3-build10.dmg
+https://dl.universal-io.com/Universal-IO.dmg
 SHA-256: fe1f1796737ec95cc6c90462d120e70f22ebf14070673f3c76e6f96dd644c7e8
-バイナリソース: db1feba
 ```
 
+実画面の上のVision（R14）とその上の案内（R15）、Composeのバブル化が公開版へ入った初めての版です。
+候補検証の過程で見つかった修正 — 拒否の理由を述べるエラー、試す前に告げる利用不能表示、選択起動で
+覆いを出さない提示、1ジェスチャー1配置（印とカードの分離） — も同じ版に含みます。
 Developer ID署名、notarization（app・DMGとも`Accepted`）、staple、Gatekeeper評価
-（`source=Notarized Developer ID`）を確認済みです。
+（`source=Notarized Developer ID`）、Universal binary（x86_64 + arm64）、公開URLからの再取得で
+version/build/SHA-256の一致を確認済みです。
 
 **build `9` は公開せず破棄しました。**
 
