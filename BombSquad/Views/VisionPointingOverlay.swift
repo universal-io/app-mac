@@ -740,11 +740,7 @@ private final class WashView: NSView {
         context.setAlpha(washOpacity)
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         defer { context.endTransparencyLayer() }
-        // The cursor bends the lattice as well as lighting it. Not under Reduce
-        // Motion: a field that follows the pointer is the same kind of motion
-        // as parallax, which that setting exists to turn off.
-        let gravity = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : cursor
-        WashStyle.drawSheet(in: bounds, gravity: gravity, context: context)
+        WashStyle.drawSheet(in: bounds, context: context)
 
         guard let cursor else { return }
         context.saveGState()

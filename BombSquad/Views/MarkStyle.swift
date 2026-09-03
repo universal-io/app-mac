@@ -178,72 +178,34 @@ enum WashStyle {
     static let latticeDotWidth: CGFloat = 4
     static let latticeAlpha: CGFloat = 0.16
 
-    // MARK: Gravity
-
-    /// How far the cursor's pull on the lattice reaches, and how hard it pulls
-    /// at the centre.
+    /// The sheet: tint, then the lattice.
     ///
-    /// The dots gather toward the pointer the way a field bends toward a mass:
-    /// strongest close in, easing off smoothly to nothing at `gravityReach`.
-    /// The spotlight erases the lattice nearest the cursor (clear to 336pt,
-    /// faded out by 672pt), so the well itself is never seen — what shows is
-    /// the surrounding field leaning in. The reach is set so that field has an
-    /// outside: dots past it stand still, and the eye can see where the pull
-    /// ends. A reach wide enough to move every dot on the display was tried
-    /// first (1400pt) and read as nothing in particular, because there was
-    /// nothing unmoved to compare against.
-    ///
-    /// `gravityPull` is the fraction of its distance a dot at the centre moves
-    /// inward; 0.35 makes the grid there about 2.4× as dense.
-    static let gravityReach: CGFloat = 900
-    static let gravityPull: CGFloat = 0.35
-
-    /// Where a lattice point ends up under the pull of `centre`.
-    ///
-    /// Pure geometry so it can be tested: the pull is always toward the centre,
-    /// falls off as the square of the remaining distance, is zero at and beyond
-    /// the reach, and never carries a point past the centre.
-    static func gravity(displacing point: CGPoint, toward centre: CGPoint) -> CGPoint {
-        let dx = point.x - centre.x
-        let dy = point.y - centre.y
-        let distance = (dx * dx + dy * dy).squareRoot()
-        guard distance > 0, distance < gravityReach else { return point }
-        let remaining = 1 - distance / gravityReach
-        let pull = gravityPull * remaining * remaining
-        return CGPoint(x: centre.x + dx * (1 - pull), y: centre.y + dy * (1 - pull))
-    }
-
-    /// The sheet: tint, then the lattice, optionally bent toward `gravity`.
-    ///
-    /// Drawn dot by dot rather than as a pattern tile, because a bent grid is not
-    /// a repeating tile. Each dot is its own `fillEllipse` on purpose: measured
-    /// on a 1728×1117 sheet (4,134 dots), one path holding every ellipse took
-    /// 14 ms to fill and one fill per dot took 5 ms — a single huge path pays
-    /// for a scanline pass over the whole sheet. The grid extends past the
-    /// bounds by the furthest any dot can travel, so dots pulled in from just
-    /// outside arrive instead of leaving a bare edge.
-    static func drawSheet(in bounds: CGRect, gravity centre: CGPoint?, context: CGContext) {
+    /// Drawn dot by dot: each dot is its own `fillEllipse` on purpose, measured
+    /// on a 1728×1117 sheet (4,134 dots) at 5 ms against 14 ms for one path
+    /// holding every ellipse — a single huge path pays for a scanline pass over
+    /// the whole sheet. The lattice used to bend toward the cursor ("gravity",
+    /// 2026-08-26); that was removed on 2026-09-03 as reading cheap, and the
+    /// grid is now still. The dots stay a grid of points rather than a pattern
+    /// tile so the drawing has one code path whether or not anything is ever
+    /// done to them again.
+    static func drawSheet(in bounds: CGRect, context: CGContext) {
         context.setFillColor(tint.cgColor)
         context.fill(bounds)
 
         let spacing = latticeSpacing
         let dot = latticeDotWidth
-        // The furthest a dot moves is at a third of the reach: r·pull·(2/3)².
-        let margin = spacing * ceil(gravityReach / 3 * gravityPull * 4 / 9 / spacing)
-        let columns = Int(ceil((bounds.width + margin * 2) / spacing))
-        let rows = Int(ceil((bounds.height + margin * 2) / spacing))
-        let originX = bounds.minX - margin + spacing / 2
-        let originY = bounds.minY - margin + spacing / 2
+        let columns = Int(ceil(bounds.width / spacing))
+        let rows = Int(ceil(bounds.height / spacing))
+        let originX = bounds.minX + spacing / 2
+        let originY = bounds.minY + spacing / 2
 
         context.setFillColor(NSColor(srgbRed: 1, green: 1, blue: 1, alpha: latticeAlpha).cgColor)
         for row in 0..<rows {
             for column in 0..<columns {
-                var point = CGPoint(
+                let point = CGPoint(
                     x: originX + CGFloat(column) * spacing,
                     y: originY + CGFloat(row) * spacing
                 )
-                if let centre { point = gravity(displacing: point, toward: centre) }
-                guard bounds.insetBy(dx: -dot, dy: -dot).contains(point) else { continue }
                 context.fillEllipse(in: CGRect(
                     x: point.x - dot / 2, y: point.y - dot / 2, width: dot, height: dot
                 ))

@@ -624,7 +624,7 @@ private final class CopilotCaptureCueView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        WashStyle.drawSheet(in: bounds, gravity: nil, context: context)
+        WashStyle.drawSheet(in: bounds, context: context)
     }
 }
 
