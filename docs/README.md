@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-最終更新: 2026-09-02 ／ ステータス: 現行
+最終更新: 2026-09-03 ／ ステータス: 現行
 
 このファイルがドキュメントの唯一の入口です。実装の正は現行コード、製品計画の正は
 `universal-io-master-plan.md` です。
@@ -19,6 +19,7 @@
 | [macos-ux-polish-checklist.md](macos-ux-polish-checklist.md) | リリース前 UX 磨き込みチェックリスト（TCC/ウィンドウ/署名） |
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
 | [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9、Selection Extension改修（R10）、将来のAX直接入力研究の正本 |
+| [ga4-complete-skill-plan.md](ga4-complete-skill-plan.md) | R8 M6: GA4を1本目の「完全サポート」Skillにする実証実験。用事一覧・器の論点・実測記録 |
 
 ## 他リポジトリにある正本
 

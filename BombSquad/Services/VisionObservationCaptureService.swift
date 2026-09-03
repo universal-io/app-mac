@@ -97,6 +97,10 @@ enum VisionObservationCaptureService {
         let visitedNodes: Int
         let truncatedReason: String?
         let sawWebArea: Bool
+        /// Measured elements dropped for sitting outside the page (browser
+        /// furniture). Recorded so the filter stays visible in the trail rather
+        /// than silently shrinking the evidence.
+        let chromeDropped: Int
     }
 
     private enum Budget {
@@ -210,6 +214,7 @@ enum VisionObservationCaptureService {
                     let overallDeadline = started.addingTimeInterval(Budget.totalDeadline)
                     var previousVisited = 0
                     var firstPassCandidates = 0
+                    var chromeDropped = 0
                     while collectionPasses < Budget.maxPasses {
                         collectionPasses += 1
                         let result = collectCandidates(
@@ -224,12 +229,14 @@ enum VisionObservationCaptureService {
                             candidates = result.candidates
                             visitedNodes = result.visitedNodes
                             truncatedReason = result.truncatedReason
+                            chromeDropped = result.chromeDropped
                         }
 #if DEBUG
                         NSLog(
-                            "Vision AX collection pass=%d visited=%d candidates=%d webArea=%d reason=%@",
+                            "Vision AX collection pass=%d visited=%d candidates=%d chrome=%d webArea=%d reason=%@",
                             collectionPasses, result.visitedNodes, result.candidates.count,
-                            result.sawWebArea ? 1 : 0, result.truncatedReason ?? "complete"
+                            result.chromeDropped, result.sawWebArea ? 1 : 0,
+                            result.truncatedReason ?? "complete"
                         )
 #endif
                         // Retry while the lazily built web tree is still
@@ -258,6 +265,10 @@ enum VisionObservationCaptureService {
                         ("elapsed", .ms(Int(Date().timeIntervalSince(started) * 1_000))),
                         ("candidates", .count(candidates.count)),
                         ("gained", .count(candidates.count - firstPassCandidates)),
+                        // Measured elements left out for belonging to the browser
+                        // rather than the page. Recorded so a filter that starts
+                        // removing too much is visible, not inferred.
+                        ("chrome", .count(chromeDropped)),
                         ("webArea", .flag(webAreaPresent)),
                         ("truncated", .code(AXTruncationCode(truncatedReason))),
                     ])
@@ -416,9 +427,16 @@ enum VisionObservationCaptureService {
     ) -> CollectionResult {
         let deadline = Date().addingTimeInterval(Budget.deadline)
         var visited = 0
-        var candidates: [VisionObservation.Candidate] = []
-        var stack: [(element: AXUIElement, parentLabel: String?, unlabeledActionRole: String?)] = [
-            (root, nil, nil),
+        var found: [(element: VisionObservation.Candidate, insideWebArea: Bool)] = []
+        var stack: [
+            (
+                element: AXUIElement,
+                parentLabel: String?,
+                unlabeledActionRole: String?,
+                insideWebArea: Bool
+            )
+        ] = [
+            (root, nil, nil, false),
         ]
 
         var truncatedReason: String?
@@ -429,7 +447,7 @@ enum VisionObservationCaptureService {
                 truncatedReason = "node_limit"
                 break
             }
-            if candidates.count >= Budget.maxCandidates {
+            if found.count >= Budget.maxCandidates {
                 truncatedReason = "candidate_limit"
                 break
             }
@@ -442,6 +460,7 @@ enum VisionObservationCaptureService {
 
             let node = nodeFacts(item.element)
             let role = node.role
+            let insideWebArea = item.insideWebArea || role == "AXWebArea"
             if role == "AXWebArea" { sawWebArea = true }
             let isSecure = node.subrole == "AXSecureTextField"
             let elementLabel = isSecure ? nil : node.label
@@ -451,14 +470,17 @@ enum VisionObservationCaptureService {
                let elementLabel,
                let frame = node.frame,
                let normalizedRect = normalized(frame, within: captureRect) {
-                candidates.append(VisionObservation.Candidate(
-                    id: "ax:\(visited - 1)",
-                    source: "ax",
-                    role: normalizedRole(candidateRole),
-                    label: String(elementLabel.prefix(512)),
-                    rect: normalizedRect,
-                    parentLabel: item.parentLabel.map { String($0.prefix(512)) },
-                    states: states(for: item.element, role: role)
+                found.append((
+                    element: VisionObservation.Candidate(
+                        id: "ax:\(visited - 1)",
+                        source: "ax",
+                        role: normalizedRole(candidateRole),
+                        label: String(elementLabel.prefix(512)),
+                        rect: normalizedRect,
+                        parentLabel: item.parentLabel.map { String($0.prefix(512)) },
+                        states: states(for: item.element, role: role)
+                    ),
+                    insideWebArea: insideWebArea
                 ))
             }
 
@@ -470,14 +492,18 @@ enum VisionObservationCaptureService {
                 nearestUnlabeledActionRole = item.unlabeledActionRole
             }
             for child in node.children.reversed() {
-                stack.append((child, nearestParentLabel, nearestUnlabeledActionRole))
+                stack.append((child, nearestParentLabel, nearestUnlabeledActionRole, insideWebArea))
             }
         }
+        // The browser's own furniture is a different tool from the one on the
+        // page; VisionCandidateScope carries the reasoning and the measurements.
+        let candidates = VisionCandidateScope.inTool(found, sawWebArea: sawWebArea)
         return CollectionResult(
             candidates: candidates,
             visitedNodes: visited,
             truncatedReason: truncatedReason,
-            sawWebArea: sawWebArea
+            sawWebArea: sawWebArea,
+            chromeDropped: found.count - candidates.count
         )
     }
 
@@ -566,8 +592,9 @@ enum VisionObservationCaptureService {
         if copyBool(element, kAXEnabledAttribute) == false { result.append("disabled") }
         if copyBool(element, kAXFocusedAttribute) == true { result.append("focused") }
         if copyBool(element, kAXSelectedAttribute) == true { result.append("selected") }
-        if let expanded = copyBool(element, "AXExpanded") {
-            result.append(expanded ? "expanded" : "collapsed")
+        if let expanded = copyBool(element, "AXExpanded"),
+           let state = VisionCandidateScope.expansionState(role: role, isExpanded: expanded) {
+            result.append(state)
         }
         if role == "AXCheckBox" || role == "AXRadioButton" {
             if let selected = copyBool(element, kAXValueAttribute) {
