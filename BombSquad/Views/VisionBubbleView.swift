@@ -21,6 +21,12 @@ struct VisionBubbleView: View {
     /// covers, and on two displays those are different heights.
     let answerHeightBudget: CGFloat
     let onClose: () -> Void
+    /// The face on the user's side of the thread, already loaded. Injected, not
+    /// read from the account here: the bubble is measured in tests without an
+    /// account, and the coordinator is the one place that already knows who is
+    /// signed in.
+    var userAvatar: NSImage? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// What the question being typed currently needs. The field grows with it:
     /// a fixed box shows the user three lines of their own sentence and hides
@@ -79,10 +85,12 @@ struct VisionBubbleView: View {
     ///
     /// Derived from the layout below rather than guessed: the handle with its
     /// state chip and named close button (44), the body's own padding (24), the
-    /// gaps between its rows (40), the sent question's chip (25), the answer
-    /// surface's padding (20), guidance's status row with its note (52), the
-    /// input at its ceiling (160), the guidance button (22) and the margin the
-    /// placement keeps on both edges (24). It exists so the answer can be told
+    /// gaps between its rows (40), guidance's status row (52), the input at its
+    /// ceiling (160), the guidance button (22) and the margin the placement
+    /// keeps on both edges (24). The question chip and the answer pane's own
+    /// padding (45 together) moved into the thread, which is measured by the
+    /// answer budget; the number is kept rather than lowered, since being wrong
+    /// low is the failure this guards against. It exists so the answer can be told
     /// how much of the screen is left, instead of being given a share of it and
     /// letting the total run off the top — the placement can move a bubble that
     /// is too tall, but it cannot shrink one.
@@ -123,57 +131,36 @@ struct VisionBubbleView: View {
         VStack(alignment: .leading, spacing: 0) {
             handle
             VStack(alignment: .leading, spacing: 10) {
-                if let question = latestQuestion {
-                    Text(question)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        // The product's own purple, not the system accent: the
-                        // chip is the user's own words in the one place the
-                        // product speaks, and iris is what that place is made
-                        // of. State never borrows it — this is not state.
-                        .background(MarkStyle.swiftUIColor, in: RoundedRectangle(cornerRadius: 8))
-                        .allowsHitTesting(false)
-                        .accessibilityLabel("送信した質問: \(question)")
-                }
                 if let refusal = availability.refusal {
                     ServiceRefusalBanner(message: refusal)
                 }
-                // Two surfaces, because there are two jobs: this is the place to
-                // read, the field below is the place to type. Both sat directly
-                // on the card, which made the answer, the empty space and the
-                // input box one undifferentiated area — there was nothing to
-                // tell the user where a click would put a cursor.
-                //
-                // Told apart by tone alone. `controlBackgroundColor` and
-                // `textBackgroundColor` with a hairline around each read as two
-                // panes stacked on the card, and the bubble then had depth
-                // inside it as well as under it — a card floating over the
-                // screen, holding two more cards. One shadow in the whole thing,
-                // and it belongs to the bubble.
+                // The conversation, newest at the bottom, on the card's own
+                // ground: each thing said has its own surface now, so the
+                // pane that used to hold one answer is gone. Plain when it
+                // fits — the empty part then belongs to the drag — and
+                // scrolling when it does not, with its end kept in view,
+                // because the end is where the words are arriving.
                 ViewThatFits(in: .vertical) {
-                    answer
-                    ScrollView { answer }
+                    thread
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            thread
+                            Color.clear.frame(height: 1).id(Self.threadEnd)
+                        }
+                        .onAppear { proxy.scrollTo(Self.threadEnd, anchor: .bottom) }
+                        .onChange(of: threadRows) {
+                            proxy.scrollTo(Self.threadEnd, anchor: .bottom)
+                        }
+                    }
                 }
-                // Top-left, not centre: with a floor under it a short answer
+                // Top-left, not centre: with a floor under it a short thread
                 // would otherwise sit in the middle of its own box, which reads
-                // as a caption rather than as the start of an explanation.
+                // as a caption rather than as the start of an exchange.
                 .frame(
                     maxWidth: .infinity,
                     minHeight: Self.answerMinHeight(within: answerHeightBudget),
                     maxHeight: Self.answerHeight(within: answerHeightBudget),
                     alignment: .topLeading
-                )
-                .padding(10)
-                // The surface takes no clicks so the empty part of the reading
-                // pane — most of it, for an ordinary answer, since the box has
-                // a ten-line floor — belongs to the drag. The answer text is in
-                // front of it and still selects.
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(BubbleSurface.reading)
-                        .allowsHitTesting(false)
                 )
                 guidanceStatus
                 ask
@@ -231,37 +218,6 @@ struct VisionBubbleView: View {
         .padding(.bottom, 2)
     }
 
-    @ViewBuilder
-    private var answer: some View {
-        if let error = session.errorMessage, error != availability.refusal {
-            Text(error)
-                .font(.system(size: Self.answerFontSize))
-                .foregroundStyle(.orange)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if let streaming = session.streamingMessage, !streaming.isEmpty {
-            Text(streaming)
-                .font(.system(size: Self.answerFontSize))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if let answered = latestAnswer {
-            Text(answered)
-                .font(.system(size: Self.answerFontSize))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if session.isLoading {
-            // Named, not spun: a spinner says work is happening, this says what
-            // the work is.
-            Label(session.isPointing ? "ここを読んでいます…" : "画面を読んでいます…", systemImage: "eye")
-                .font(.system(size: Self.answerFontSize))
-                .foregroundStyle(.secondary)
-        } else {
-            Text("画面のどこかをクリックすると、その場所について説明します。")
-                .font(.system(size: Self.answerFontSize))
-                .foregroundStyle(.secondary)
-        }
-    }
-
     /// Which of the two states this is, named — both of them.
     ///
     /// The web client learned this the hard way: it labelled one state and let
@@ -281,9 +237,18 @@ struct VisionBubbleView: View {
     private var stateChip: some View {
         if session.isCopilotActive {
             HStack(spacing: 6) {
-                Label("案内", systemImage: "location.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
+                // "案内中", and the icon beats: this is a mode the user is in
+                // right now, with the screen live under it, and a still label
+                // reads as a heading rather than as a state. Still under Reduce
+                // Motion, like every other beat in the product.
+                Label {
+                    Text("案内中")
+                } icon: {
+                    Image(systemName: "location.fill")
+                        .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white)
                 Button {
                     session.leaveGuidance()
                 } label: {
@@ -326,26 +291,23 @@ struct VisionBubbleView: View {
     @ViewBuilder
     private var guidanceStatus: some View {
         if session.isCopilotActive {
+            // The note about an unchanged screen is a row of the thread now
+            // (`VisionThreadRow.note`), beside the step it qualifies.
+            // Outcomes only. "Click where the frame is; the screen is checked
+            // automatically afterwards" and the two progress lines described
+            // the pipeline to somebody who can already see the frame, and the
+            // wait itself is the thread's last row now. What remains is what
+            // the user could not know otherwise: arrived, stuck, or asked.
             VStack(alignment: .leading, spacing: 6) {
-                if session.copilotSawNoChange {
-                    Label(
-                        "操作は検知しましたが、画面に変化は見えませんでした",
-                        systemImage: "info.circle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                }
                 HStack(spacing: 8) {
-                    if session.isCopilotChecking {
-                        ProgressView().controlSize(.small)
-                    } else {
+                    if let statusText {
                         Image(systemName: statusIcon)
                             .foregroundStyle(.secondary)
+                        Text(statusText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text(statusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     if session.copilotState != .complete, session.copilotState != .stepLimit {
                         Button {
@@ -367,19 +329,12 @@ struct VisionBubbleView: View {
         }
     }
 
-    private var statusText: String {
+    private var statusText: String? {
         switch session.copilotState {
-        case .idle:
-            // A guide turn may legitimately return no target (candidate
-            // missing from AX); never point the user at a frame that does
-            // not exist.
-            return session.selectedCandidate != nil
-                ? "枠の場所をクリックしてください。操作後の画面を自動で確認します"
-                : "案内に従って操作してください。操作後の画面を自動で確認します"
-        case .waitingForChange:
-            return "クリック後の画面変化と安定を待っています…"
-        case .evaluating:
-            return "新しい画面から次の案内を確認しています…"
+        case .idle, .waitingForChange, .evaluating:
+            // The frame says where, the thread's last row says the screen is
+            // being read. Nothing to add.
+            return nil
         case .timedOut:
             return "画面を撮影できませんでした。「再確認」を押してください"
         case .complete:
@@ -487,16 +442,29 @@ struct VisionBubbleView: View {
         )
     }
 
-    /// The most recent thing the user said, unless it was the gesture itself.
-    /// Pointing is already shown by the mark on the screen; repeating it as a
-    /// chip would be the bubble telling the user what they just did.
-    private var latestQuestion: String? {
-        guard let turn = session.turns.last(where: { $0.role == .user }) else { return nil }
-        guard turn.text != VisionSession.pointedHereText else { return nil }
-        return turn.text
+    private static let threadEnd = "thread-end"
+
+    /// The conversation as rows: what was said, and the one trailing row for
+    /// what is happening now. The rules are `VisionThreadRow.rows` and are
+    /// pinned there; this only hands over the session's state.
+    private var threadRows: [VisionThreadRow] {
+        VisionThreadRow.rows(
+            turns: session.turns,
+            streamingMessage: session.streamingMessage,
+            isLoading: session.isLoading,
+            isPointing: session.isPointing,
+            isCopilotChecking: session.isCopilotChecking,
+            errorMessage: session.errorMessage,
+            refusal: availability.refusal,
+            copilotSawNoChange: session.copilotSawNoChange
+        )
     }
 
-    private var latestAnswer: String? {
-        session.turns.last(where: { $0.role == .assistant })?.text
+    private var thread: some View {
+        VisionThreadView(
+            rows: threadRows,
+            userAvatar: userAvatar,
+            fontSize: Self.answerFontSize
+        )
     }
 }

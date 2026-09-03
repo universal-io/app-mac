@@ -13,6 +13,14 @@ final class AuthViewModel: ObservableObject {
     @Published var email: String = ""
     @Published var signedInEmail: String?
     @Published var authMethodLabel: String?
+    /// The account's picture, where the identity provider supplied one. Shown
+    /// beside the user's own words in the Vision thread; nil is a placeholder
+    /// there, not an error.
+    @Published var avatarURL: URL?
+    /// That picture, fetched once per URL. Every row of the thread draws this
+    /// same image, so one person never gets two faces.
+    @Published var avatarImage: NSImage?
+    private var avatarLoad: Task<Void, Never>?
     @Published var tenantID: UUID?
     @Published var accountSummary: BombSquadAccountSummary?
     @Published var isBusy = false
@@ -287,6 +295,7 @@ final class AuthViewModel: ObservableObject {
                     self.accountSummary = nil
                     self.signedInEmail = nil
                     self.authMethodLabel = nil
+                    self.adoptAvatar(url: nil)
                     self.hasSession = false
                     if localCleanupFailed {
                         self.statusMessage = nil
@@ -345,6 +354,7 @@ final class AuthViewModel: ObservableObject {
                 accountSummary = nil
                 signedInEmail = nil
                 authMethodLabel = nil
+                adoptAvatar(url: nil)
                 hasSession = false
             }
         } catch {
@@ -363,6 +373,7 @@ final class AuthViewModel: ObservableObject {
             tenantID = nil
             signedInEmail = nil
             authMethodLabel = nil
+            adoptAvatar(url: nil)
             hasSession = false
             return
         }
@@ -374,6 +385,7 @@ final class AuthViewModel: ObservableObject {
         hasSession = true
         signedInEmail = session.user.email ?? authClient.currentUserEmail()
         authMethodLabel = authMethodLabel(for: session)
+        adoptAvatar(url: Self.avatarURL(in: session.user.userMetadata.compactMapValues(\.stringValue)))
         if email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            let signedInEmail {
             email = signedInEmail
@@ -447,6 +459,38 @@ final class AuthViewModel: ObservableObject {
                 self.infoMessage = nil
             }
         }
+    }
+
+    /// Takes the picture's address and fetches it once. The same URL again is
+    /// a no-op, so a session refresh does not reload a face already shown; a
+    /// different one, or none, replaces or clears the image.
+    private func adoptAvatar(url: URL?) {
+        guard url != avatarURL else { return }
+        avatarURL = url
+        avatarLoad?.cancel()
+        avatarLoad = nil
+        avatarImage = nil
+        guard let url else { return }
+        avatarLoad = Task { [weak self] in
+            let image = (try? await URLSession.shared.data(from: url)).flatMap { NSImage(data: $0.0) }
+            guard !Task.isCancelled, let self, self.avatarURL == url else { return }
+            self.avatarImage = image
+            self.avatarLoad = nil
+        }
+    }
+
+    /// Where a provider put the picture. Google writes both `avatar_url` and
+    /// `picture` (the OIDC claim); either is taken, and anything that is not an
+    /// http(s) URL is treated as absent rather than handed to an image loader.
+    static func avatarURL(in metadata: [String: String]) -> URL? {
+        for key in ["avatar_url", "picture"] {
+            guard let raw = metadata[key],
+                  let url = URL(string: raw),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "https" || scheme == "http" else { continue }
+            return url
+        }
+        return nil
     }
 
     private func authMethodLabel(for session: Session) -> String? {

@@ -299,7 +299,27 @@ final class VisionSession: ObservableObject {
               let question = turns.last(where: { $0.role == .user })?.text else {
             return false
         }
-        return question != pointedHereText
+        return !isGestureText(question)
+    }
+
+    /// Where the gesture itself put the subject, when it did.
+    ///
+    /// The frame exists as a compromise: the user indicated a place, and when
+    /// the app cannot tell what is there, the model's own box is the only way
+    /// to show what it took the gesture to mean. A ring around an area, or a
+    /// tap that accessibility measured, needs no such compromise — the place is
+    /// known before anything is asked, and the mark already stands on it. An
+    /// answer frame somewhere else is then not "what the computer understood";
+    /// it is a candidate label the model matched to a word in its own sentence
+    /// (2026-09-03: a ring around two toolbar icons was explained correctly
+    /// while the frame went to the "Debug navigator" button, whose label the
+    /// explanation had used). Guidance is a different job — its frame is the
+    /// control to press next — and is not bound.
+    var gestureBound: VisionGestureBound? {
+        guard !isCopilotActive else { return nil }
+        if let rect = pointedCandidate?.rect { return .measured(rect) }
+        if case .region(let rect)? = pointer?.kind { return .region(rect) }
+        return nil
     }
 
     var latestInstruction: String {
@@ -326,9 +346,17 @@ final class VisionSession: ObservableObject {
     ///
     /// The gesture has to appear in the history: a conversation of nothing but
     /// assistant messages reads as the model talking to itself, and it answers
-    /// accordingly. The bubble does not show this line back to the user — the
-    /// mark on the screen already says where they pointed.
+    /// accordingly. The bubble shows this line as the user's turn, so the
+    /// thread starts with what was asked — a wordless question is still one.
     static let pointedHereText = "ここについて"
+    /// The same, for a region: what the user's side of a circling gesture reads.
+    static let pointedRegionText = "この範囲について"
+
+    /// Whether a user turn is a gesture rather than something typed. A gesture
+    /// asks what a thing is; it is never a goal to be walked towards.
+    static func isGestureText(_ text: String) -> Bool {
+        text == pointedHereText || text == pointedRegionText
+    }
 
     /// The instant the user pointed, before anything has been captured or asked.
     ///
@@ -406,7 +434,7 @@ final class VisionSession: ObservableObject {
         publishAnswerHighlight(nil)
         turns = [VisionDisplayTurn(
             role: .user,
-            text: Self.pointedHereText,
+            text: placement == .region ? Self.pointedRegionText : Self.pointedHereText,
             mode: nil,
             uncertainties: []
         )]
@@ -522,7 +550,7 @@ final class VisionSession: ObservableObject {
     private func enterGuidance(reason: TransitionReason) -> Bool {
         guard !isCopilotActive,
               let goal = turns.last(where: { $0.role == .user })?.text,
-              goal != Self.pointedHereText else { return false }
+              !Self.isGestureText(goal) else { return false }
         copilotGoal = goal
         copilotStepCount = 0
         isCopilotActive = true
@@ -1235,7 +1263,8 @@ final class VisionSession: ObservableObject {
             switch try Self.answerHighlight(
                 for: response.result,
                 candidates: fixedCandidates,
-                toleratingUnplaceableTarget: tolerant
+                toleratingUnplaceableTarget: tolerant,
+                keeping: gestureBound
             ) {
             case .candidate(let index, let rect):
                 selectedCandidate = fixedCandidates[index]
@@ -1248,6 +1277,13 @@ final class VisionSession: ObservableObject {
                 selectedCandidate = nil
                 publishAnswerHighlight(box)
                 highlight = .resolved
+            case .gestureKept:
+                // The mark the gesture put up — the stroke, or the measured
+                // element's frame — is already where the explanation is
+                // looking. Nothing is published: publishing nil would take a
+                // measured frame down, and a rectangle would replace a stroke.
+                selectedCandidate = nil
+                highlight = .gestureKept
             case .none:
                 selectedCandidate = nil
                 publishAnswerHighlight(nil)
@@ -1294,7 +1330,43 @@ final class VisionSession: ObservableObject {
     /// Resolves what the answer is pointing at, independently of where the card
     /// has already committed. The mark always follows this ladder; only the
     /// later overlay callback asks the placement state whether the card follows.
+    ///
+    /// - Parameter gesture: what the gesture itself already established about
+    ///   where the subject is. When it established a place, the answer's own
+    ///   frame is taken only if it agrees with that place; otherwise the mark
+    ///   the gesture put up stays (`gestureKept`). See `gestureBound`.
     static func answerHighlight(
+        for result: VisionResult,
+        candidates: [VisionObservation.Candidate],
+        toleratingUnplaceableTarget tolerant: Bool,
+        keeping gesture: VisionGestureBound? = nil
+    ) throws -> VisionAnswerHighlightResolution {
+        let answered = try answerGeometry(
+            for: result,
+            candidates: candidates,
+            toleratingUnplaceableTarget: tolerant
+        )
+        guard let gesture else { return answered }
+        switch (gesture, answered) {
+        case (_, .none), (_, .gestureKept):
+            return answered
+        case (.region, _):
+            // A ring is drawn around what the user could not name, and the
+            // answer is about the whole of it. A single element picked out of
+            // — or, as happened, far away from — that ring is not where the
+            // explanation is looking.
+            return .gestureKept
+        case (.measured(let element), .candidate(_, let rect)),
+             (.measured(let element), .annotation(let rect)):
+            // The element under the finger was measured. A frame that overlaps
+            // it is the same place or a more specific control inside it; one
+            // that does not is a label the model matched to its own words.
+            return element.intersects(rect) ? answered : .gestureKept
+        }
+    }
+
+    /// The frame the answer itself supplies, before the gesture has its say.
+    private static func answerGeometry(
         for result: VisionResult,
         candidates: [VisionObservation.Candidate],
         toleratingUnplaceableTarget tolerant: Bool
@@ -1347,7 +1419,18 @@ final class VisionSession: ObservableObject {
 enum VisionAnswerHighlightResolution: Equatable {
     case candidate(index: Int, rect: CGRect)
     case annotation(CGRect)
+    /// The answer named a place, and the gesture's own mark outranks it.
+    case gestureKept
     case none
+}
+
+/// What a gesture established about where its subject is, in the capture's
+/// normalized space — the same space candidates and answer frames use.
+enum VisionGestureBound: Equatable {
+    /// A ring drawn around an area. The subject is the whole of it.
+    case region(CGRect)
+    /// A tap that accessibility measured. The subject is this element.
+    case measured(CGRect)
 }
 
 /// Why an in-flight request was cancelled, recorded by whoever cancelled it.
@@ -1381,6 +1464,10 @@ enum VisionHighlightOutcome: String, DiagnosticCode {
     case none
     case resolved
     case unresolvable
+    /// The answer named a frame that disagreed with the gesture, and the
+    /// gesture's mark stayed. Counted, so how often the label match misses can
+    /// be read from the trail.
+    case gestureKept
 
     var diagnosticCode: String { rawValue }
 }

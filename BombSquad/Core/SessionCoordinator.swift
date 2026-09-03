@@ -1218,7 +1218,8 @@ final class SessionCoordinator {
                 answerHeightBudget: VisionBubbleView.answerHeightBudget(
                     visibleHeight: screen?.visibleFrame.height ?? 900
                 ),
-                onClose: { [weak self] in self?.close(reason: .closeRequested) }
+                onClose: { [weak self] in self?.close(reason: .closeRequested) },
+                userAvatar: AuthViewModel.shared.avatarImage
             ),
             anchorFrame: Self.selectionAnchorFrame(session.selection)
         )
@@ -1274,7 +1275,8 @@ final class SessionCoordinator {
                 answerHeightBudget: VisionBubbleView.answerHeightBudget(
                     visibleHeight: screen.visibleFrame.height
                 ),
-                onClose: { [weak self] in self?.close(reason: .closeRequested) }
+                onClose: { [weak self] in self?.close(reason: .closeRequested) },
+                userAvatar: AuthViewModel.shared.avatarImage
             )
         )
     }
