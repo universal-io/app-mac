@@ -260,6 +260,7 @@ Chromeで開いた実プロパティ（アカウント `www.workflowdesign.net` 
    その配下の要素だけを送る**ようにした（`VisionCandidateScope.inTool`）。同日の実測で、Slack 95件・
    VS Code 197件は**全部がweb areaの中**なので何も減らず、Finder・Xcodeはweb areaを持たないので
    従来どおり。ブラウザ自体の操作（戻る・タブ・アドレスバー）は指せなくなる。
+   **同日実機確認済み**: GA4ホーム132→76件、Xcode 58件・web area無し（probe実測と一致）、リロード直後も143件で0件にならず。
 2. **`collapsed`の乱発 — 2026-09-03に修正済み。** `expanded`は真の時だけ、`collapsed`は
    AXDisclosureTriangleだけに限った（`VisionCandidateScope.expansionState`）。1,665件→ほぼ0件。
 3. **重複候補**（レポート画面で約40件）。(role,label,矩形)で一意化すれば消える。
