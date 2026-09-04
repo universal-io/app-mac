@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 enum CopilotState: Equatable {
@@ -194,6 +195,30 @@ final class VisionSession: ObservableObject {
     private var requestTask: Task<Void, Never>?
     private var copilotProgressTask: Task<Void, Never>?
     private var copilotClickMonitor: Any?
+    /// Two more things guidance listens for. Neither is ever read for content
+    /// — a key press is a timestamp here and nothing else — and both come and go
+    /// with the click monitor. The rules they feed are in `GuidanceTrigger`.
+    private var copilotKeyMonitor: Any?
+    private var copilotScrollMonitor: Any?
+    private var copilotIdleTimer: Timer?
+    /// A click landed in a text input: the re-plan waits for the hand to pause
+    /// or leave (`GuidanceTrigger.ClickKind.defer`).
+    private var copilotActDeferred = false
+    /// Whether the running step has taken its capture. An act before it is
+    /// absorbed by that capture; an act after it is one the step cannot see.
+    private var copilotCaptured = false
+    /// Which run of the progress task owns the step state. A superseded run must
+    /// not reset what its successor is using.
+    private var copilotStepGeneration = 0
+    /// The element the current instruction points at, held for this step only,
+    /// so the frame can follow it through a scroll and come down when it is
+    /// gone — without a capture.
+    private var copilotTargetHandle: AXUIElement?
+    /// Live handles for the current capture's candidates, by id. Never sent.
+    private var candidateHandles: [String: AXUIElement] = [:]
+    /// True while the frame is being moved to follow its element. The bubble
+    /// does not chase those moves; the words stay where the user is reading.
+    private var isTrackingFrame = false
     private var copilotStepCount = 0
     private var hasStarted = false
     /// Whether a gateway request has actually left for this session. The
@@ -336,6 +361,7 @@ final class VisionSession: ObservableObject {
             let snapshot = await self.candidateCaptureTask.value
             guard !Task.isCancelled, self.attachment.id == expectedCaptureID else { return }
             self.candidates = snapshot.axCandidates
+            self.candidateHandles = snapshot.handles.byID
             self.candidateDiagnostics = snapshot.diagnostics
             self.candidatesReady = true
         }
@@ -998,16 +1024,110 @@ final class VisionSession: ObservableObject {
                 guard let self,
                       Self.advancesGuidance(clickAt: location, bubble: self.bubbleFrame())
                 else { return }
-                self.scheduleCopilotProgressCheck(after: 700_000_000, waitForChange: true)
+                self.actOnClick()
+            }
+        }
+        copilotKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.noteTyping() }
+        }
+        copilotScrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.noteScroll() }
+        }
+    }
+
+    /// A click on the guided app, once it is known not to be on the bubble.
+    ///
+    /// Focus is read right after the click. Into a text input, the act is not
+    /// done yet — the re-plan waits for the hand to pause — so a form no longer
+    /// costs a step per field. Anywhere else, the user acted.
+    private func actOnClick() {
+        let role = focusedElementRole()
+        switch GuidanceTrigger.clickKind(focusedRole: role) {
+        case .defer:
+            copilotActDeferred = true
+            Diagnostics.record("guide.act.deferred")
+            restartIdleTimer(after: GuidanceTrigger.typingIdle, reason: "typingIdle")
+        case .advance:
+            copilotIdleTimer?.invalidate()
+            copilotIdleTimer = nil
+            copilotActDeferred = false
+            scheduleCopilotProgressCheck(after: 700_000_000, waitForChange: true)
+        }
+    }
+
+    /// A key went down somewhere. Only *that* it did is used: while an act is
+    /// deferred, typing pushes the re-plan back until the hand pauses.
+    private func noteTyping() {
+        guard copilotActDeferred else { return }
+        restartIdleTimer(after: GuidanceTrigger.typingIdle, reason: "typingIdle")
+    }
+
+    /// The page moved under the frame. The frame follows its element for the
+    /// price of one accessibility read; the model is asked again only when the
+    /// instruction had nothing to point at, because scrolling is how a user
+    /// finds the thing a verbal instruction named.
+    private func noteScroll() {
+        guard isCopilotActive, copilotState != .complete, copilotState != .stepLimit else { return }
+        trackTargetFrame()
+        if copilotTargetHandle == nil, answerHighlight == nil, !isCopilotChecking {
+            restartIdleTimer(after: GuidanceTrigger.scrollIdle, reason: "scrollIdle")
+        }
+    }
+
+    private func restartIdleTimer(after interval: TimeInterval, reason: StaticString) {
+        copilotIdleTimer?.invalidate()
+        copilotIdleTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.copilotIdleTimer = nil
+                self.copilotActDeferred = false
+                Diagnostics.record("guide.act.resumed", details: [("into", .literal(reason))])
+                // The screen changed while the hand was busy; waiting for a
+                // further change now would wait for nothing.
+                self.scheduleCopilotProgressCheck(after: 0, waitForChange: false)
             }
         }
     }
 
-    private func removeCopilotClickMonitor() {
-        if let copilotClickMonitor {
-            NSEvent.removeMonitor(copilotClickMonitor)
-            self.copilotClickMonitor = nil
+    /// The role of whatever holds keyboard focus in the app being guided.
+    private func focusedElementRole() -> String? {
+        let pid = preferredTargetPID ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard let pid else { return nil }
+        return VisionObservationCaptureService.focusedElementRole(inApplication: pid)
+    }
+
+    /// Re-reads the instruction's element and moves the frame onto it, or takes
+    /// the frame down when the element is gone or has left the capture. No
+    /// screenshot: this is the frame's currency, which is a different problem
+    /// from the instruction's and a much cheaper one.
+    private func trackTargetFrame() {
+        guard let handle = copilotTargetHandle, let captureRect = attachment.captureRect else { return }
+        isTrackingFrame = true
+        defer { isTrackingFrame = false }
+        guard let frame = VisionObservationCaptureService.frame(of: handle) else {
+            copilotTargetHandle = nil
+            publishAnswerHighlight(nil)
+            Diagnostics.record("guide.frame.hidden", details: [("reason", .literal("gone"))])
+            return
         }
+        let visible = VisionPointerResolver.normalized(frame, within: captureRect)
+        guard visible != answerHighlight else { return }
+        if visible == nil {
+            Diagnostics.record("guide.frame.hidden", details: [("reason", .literal("offscreen"))])
+        }
+        publishAnswerHighlight(visible)
+    }
+
+    private func removeCopilotClickMonitor() {
+        for monitor in [copilotClickMonitor, copilotKeyMonitor, copilotScrollMonitor] {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+        copilotClickMonitor = nil
+        copilotKeyMonitor = nil
+        copilotScrollMonitor = nil
+        copilotIdleTimer?.invalidate()
+        copilotIdleTimer = nil
+        copilotActDeferred = false
     }
 
     private func scheduleCopilotProgressCheck(after delay: UInt64, waitForChange: Bool) {
@@ -1018,13 +1138,28 @@ final class VisionSession: ObservableObject {
         // include what the user just did. But dropping it without a trace made
         // a real click invisible: a step that looks like it ignored the user
         // left nothing behind to say so. Record, then drop.
-        guard !isCopilotChecking, !isLoading else {
-            if isCopilotChecking {
+        switch GuidanceTrigger.disposition(
+            stepRunning: isCopilotChecking,
+            stepCaptured: copilotCaptured,
+            questionOpen: isLoading
+        ) {
+        case .start:
+            break
+        case .fold(let into):
+            // What the user did will be in what is already coming. Record, then
+            // drop — a dropped act with no trace looked like an ignored click.
+            switch into {
+            case .runningStep:
                 Diagnostics.record("guide.act.folded", details: [("into", .literal("runningStep"))])
-            } else {
+            case .openQuestion:
                 Diagnostics.record("guide.act.folded", details: [("into", .literal("openQuestion"))])
             }
             return
+        case .supersede:
+            // The running step is judging a screen the user has already left
+            // (2026-09-03: seven of ten steps, six of them after the capture).
+            // Its instruction would be about a screen that is gone.
+            Diagnostics.record("guide.act.superseded")
         }
         guard client != nil else {
             errorMessage = Self.noClientMessage
@@ -1038,6 +1173,10 @@ final class VisionSession: ObservableObject {
         copilotCancellation?.cause = .supersededByNewerRequest
         copilotProgressTask?.cancel()
         isCopilotChecking = true
+        copilotCaptured = false
+        copilotTargetHandle = nil
+        copilotStepGeneration += 1
+        let generation = copilotStepGeneration
         copilotState = .waitingForChange
         copilotSawNoChange = false
         errorMessage = nil
@@ -1053,8 +1192,11 @@ final class VisionSession: ObservableObject {
         copilotProgressTask = Task { [weak self] in
             guard let self, let goal else { return }
             defer {
-                self.isCopilotChecking = false
-                self.copilotProgressTask = nil
+                // A superseded run must not reset the state its successor owns.
+                if self.copilotStepGeneration == generation {
+                    self.isCopilotChecking = false
+                    self.copilotProgressTask = nil
+                }
             }
             do {
                 if delay > 0 { try await Task.sleep(nanoseconds: delay) }
@@ -1063,6 +1205,9 @@ final class VisionSession: ObservableObject {
                     waitForChange: waitForChange
                 )
                 try Task.checkCancellation()
+                // From here the step is judging a fixed picture; an act after
+                // this point is one it cannot see (GuidanceTrigger.disposition).
+                if self.copilotStepGeneration == generation { self.copilotCaptured = true }
                 guard self.isCopilotActive else {
                     try? FileManager.default.removeItem(at: capture.attachment.url)
                     return
@@ -1184,7 +1329,8 @@ final class VisionSession: ObservableObject {
                 }
             }
             attachment = newAttachment
-                candidates = snapshot.axCandidates
+            candidates = snapshot.axCandidates
+            candidateHandles = snapshot.handles.byID
             candidateDiagnostics = snapshot.diagnostics
             candidatesReady = true
             try apply(response, candidates: snapshot.axCandidates)
@@ -1268,6 +1414,7 @@ final class VisionSession: ObservableObject {
             ) {
             case .candidate(let index, let rect):
                 selectedCandidate = fixedCandidates[index]
+                copilotTargetHandle = candidateHandles[fixedCandidates[index].id]
                 publishAnswerHighlight(rect)
                 highlight = .resolved
                 // The frame is up on the control to press; the app under it has to
@@ -1275,6 +1422,7 @@ final class VisionSession: ObservableObject {
                 if isCopilotActive { activateTargetApp() }
             case .annotation(let box):
                 selectedCandidate = nil
+                copilotTargetHandle = nil
                 publishAnswerHighlight(box)
                 highlight = .resolved
             case .gestureKept:
@@ -1283,9 +1431,11 @@ final class VisionSession: ObservableObject {
                 // looking. Nothing is published: publishing nil would take a
                 // measured frame down, and a rectangle would replace a stroke.
                 selectedCandidate = nil
+                copilotTargetHandle = nil
                 highlight = .gestureKept
             case .none:
                 selectedCandidate = nil
+                copilotTargetHandle = nil
                 publishAnswerHighlight(nil)
                 highlight = .none
             }
@@ -1399,7 +1549,8 @@ final class VisionSession: ObservableObject {
     /// Pointing turns use the explicit phase; ordinary questions retain the
     /// existing "do not move text already being read" rule.
     var shouldMoveBubbleForAnswerHighlight: Bool {
-        turnPlacement.allowsAnswerPlacementCommit ||
+        if isTrackingFrame { return false }
+        return turnPlacement.allowsAnswerPlacementCommit ||
             (turnPlacement.phase == .inactive && !isBeingRead)
     }
 

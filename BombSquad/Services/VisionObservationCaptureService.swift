@@ -47,6 +47,32 @@ enum VisionObservationCaptureService {
         let environment: AppEnvironmentSnapshot?
         let axCandidates: [VisionObservation.Candidate]
         let diagnostics: Diagnostics
+        /// Live elements behind `axCandidates`, by id. Held so guidance can ask
+        /// where its target is *now* — a frame that follows a scroll and comes
+        /// down when the control is gone — for about a tenth of a millisecond,
+        /// instead of another capture. Never serialised, never sent.
+        let handles: CandidateHandles
+
+        init(
+            environment: AppEnvironmentSnapshot?,
+            axCandidates: [VisionObservation.Candidate],
+            diagnostics: Diagnostics,
+            handles: CandidateHandles = .empty
+        ) {
+            self.environment = environment
+            self.axCandidates = axCandidates
+            self.diagnostics = diagnostics
+            self.handles = handles
+        }
+    }
+
+    /// A reference wrapper so the CF handles cross the task boundary without
+    /// being copied. The handles are opaque tokens from the system; reading
+    /// them from another thread is what the accessibility API is for.
+    final class CandidateHandles: @unchecked Sendable {
+        let byID: [String: AXUIElement]
+        init(_ byID: [String: AXUIElement]) { self.byID = byID }
+        static let empty = CandidateHandles([:])
     }
 
     /// Which product the user is looking at. Sent with the Vision request so the
@@ -101,6 +127,7 @@ enum VisionObservationCaptureService {
         /// furniture). Recorded so the filter stays visible in the trail rather
         /// than silently shrinking the evidence.
         let chromeDropped: Int
+        let handles: CandidateHandles
     }
 
     private enum Budget {
@@ -184,6 +211,7 @@ enum VisionObservationCaptureService {
             let started = Date()
             var windowTitle: String?
             var candidates: [VisionObservation.Candidate] = []
+            var handles = CandidateHandles.empty
             var visitedNodes = 0
             var truncatedReason: String?
             var collectionRoot = "none"
@@ -230,6 +258,7 @@ enum VisionObservationCaptureService {
                             visitedNodes = result.visitedNodes
                             truncatedReason = result.truncatedReason
                             chromeDropped = result.chromeDropped
+                            handles = result.handles
                         }
 #if DEBUG
                         NSLog(
@@ -300,7 +329,8 @@ enum VisionObservationCaptureService {
                     captureScope: attachment.captureScope.rawValue,
                     collectionPasses: collectionPasses,
                     webAreaPresent: webAreaPresent
-                )
+                ),
+                handles: handles
             )
         }
     }
@@ -428,6 +458,7 @@ enum VisionObservationCaptureService {
         let deadline = Date().addingTimeInterval(Budget.deadline)
         var visited = 0
         var found: [(element: VisionObservation.Candidate, insideWebArea: Bool)] = []
+        var foundHandles: [String: AXUIElement] = [:]
         var stack: [
             (
                 element: AXUIElement,
@@ -470,18 +501,17 @@ enum VisionObservationCaptureService {
                let elementLabel,
                let frame = node.frame,
                let normalizedRect = normalized(frame, within: captureRect) {
-                found.append((
-                    element: VisionObservation.Candidate(
-                        id: "ax:\(visited - 1)",
-                        source: "ax",
-                        role: normalizedRole(candidateRole),
-                        label: String(elementLabel.prefix(512)),
-                        rect: normalizedRect,
-                        parentLabel: item.parentLabel.map { String($0.prefix(512)) },
-                        states: states(for: item.element, role: role)
-                    ),
-                    insideWebArea: insideWebArea
-                ))
+                let candidate = VisionObservation.Candidate(
+                    id: "ax:\(visited - 1)",
+                    source: "ax",
+                    role: normalizedRole(candidateRole),
+                    label: String(elementLabel.prefix(512)),
+                    rect: normalizedRect,
+                    parentLabel: item.parentLabel.map { String($0.prefix(512)) },
+                    states: states(for: item.element, role: role)
+                )
+                found.append((element: candidate, insideWebArea: insideWebArea))
+                foundHandles[candidate.id] = item.element
             }
 
             let nearestParentLabel = elementLabel ?? item.parentLabel
@@ -498,13 +528,52 @@ enum VisionObservationCaptureService {
         // The browser's own furniture is a different tool from the one on the
         // page; VisionCandidateScope carries the reasoning and the measurements.
         let candidates = VisionCandidateScope.inTool(found, sawWebArea: sawWebArea)
+        let handles = CandidateHandles(Dictionary(uniqueKeysWithValues: candidates.compactMap { candidate in
+            foundHandles[candidate.id].map { (candidate.id, $0) }
+        }))
         return CollectionResult(
             candidates: candidates,
             visitedNodes: visited,
             truncatedReason: truncatedReason,
             sawWebArea: sawWebArea,
-            chromeDropped: found.count - candidates.count
+            chromeDropped: found.count - candidates.count,
+            handles: handles
         )
+    }
+
+    /// Where one element is right now, in AX (CG top-left) coordinates, or nil
+    /// when it no longer answers — which is how a control that has left the
+    /// screen says so. Two attributes in one round trip; measured 0.13 ms on
+    /// Chrome (2026-09-03), cheap enough to ask on every scroll tick.
+    static func frame(of element: AXUIElement) -> CGRect? {
+        var raw: CFArray?
+        guard AXUIElementCopyMultipleAttributeValues(
+            element,
+            [kAXPositionAttribute, kAXSizeAttribute] as CFArray,
+            AXCopyMultipleAttributeOptions(rawValue: 0),
+            &raw
+        ) == .success,
+            let values = raw as? [AnyObject], values.count == 2,
+            CFGetTypeID(values[0]) == AXValueGetTypeID(),
+            CFGetTypeID(values[1]) == AXValueGetTypeID()
+        else { return nil }
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue((values[0] as! AXValue), .cgPoint, &position),
+              AXValueGetValue((values[1] as! AXValue), .cgSize, &size)
+        else { return nil }
+        let frame = CGRect(origin: position, size: size)
+        return frame.isEmpty ? nil : frame
+    }
+
+    /// The role of whatever holds keyboard focus in an application. Guidance
+    /// asks this right after a click to tell typing apart from acting; focus is
+    /// the truth about what a click did, where geometry is only a guess.
+    static func focusedElementRole(inApplication pid: pid_t) -> String? {
+        let application = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(application, 0.2)
+        guard let focused = copyElement(application, kAXFocusedUIElementAttribute) else { return nil }
+        return copyString(focused, kAXRoleAttribute)
     }
 
     /// Everything the walk needs from one node.

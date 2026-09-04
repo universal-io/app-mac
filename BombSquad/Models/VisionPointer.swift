@@ -133,6 +133,24 @@ enum VisionPointerResolver {
         return normalized
     }
 
+    /// The rect form of the point conversion above: a CG global rectangle as a
+    /// fraction of the capture, clipped to it, or nil when none of it falls
+    /// inside. Written beside the point version so both stay one arithmetic — a
+    /// frame that follows its element across a scroll comes through here and
+    /// nowhere else, and a projection of its result by `screenLocalRect` lands
+    /// where `cocoaGlobalRect` puts the same AX frame (pinned by a test).
+    static func normalized(_ rect: CGRect, within captureRect: CGRect) -> CGRect? {
+        guard captureRect.width > 0, captureRect.height > 0 else { return nil }
+        let visible = rect.intersection(captureRect)
+        guard !visible.isNull, visible.width > 0, visible.height > 0 else { return nil }
+        return CGRect(
+            x: (visible.minX - captureRect.minX) / captureRect.width,
+            y: (visible.minY - captureRect.minY) / captureRect.height,
+            width: visible.width / captureRect.width,
+            height: visible.height / captureRect.height
+        )
+    }
+
     /// A normalized capture rectangle placed back onto the real screen, in the
     /// coordinates of a window covering `screenFrame`.
     ///

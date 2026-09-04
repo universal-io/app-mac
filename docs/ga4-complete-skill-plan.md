@@ -441,7 +441,19 @@ Organic Socialの128と一致する。答えは正しい。**
 - **L3 — バブルの置き場。** 案内中は「次の対象を覆わない」を保証できない（次の対象は未知）。候補: 対象が画面右端の
   パネル内なら、パネルの**外**（本文側）へ置く／覆った時だけ動かす。実画面で見て決める。
 
-### 7-10. 案内ループの再設計案（2026-09-03、オーナーの前提を受けて）
+### 7-10. 案内ループの再設計（2026-09-03、オーナーの前提を受けて。**同日実装、216 unit test。実機未確認**）
+
+**実装**: 規則は`BombSquad/Core/GuidanceTrigger.swift`（純粋関数・移植単位）、配線は`VisionSession`（監視3種＝クリック／キー／
+スクロール、フォーカス役割の読み、枠追従、打ち切り）、AX読みは`VisionObservationCaptureService.frame(of:)`と
+`focusedElementRole(inApplication:)`、矩形の正規化は`VisionPointerResolver.normalized(_:within:)`（点版の隣、変換式は増やしていない）。
+候補のAXハンドルは`Snapshot.handles`として手の間だけ保持し、wireには載せない。
+**動作記録**: `guide.act.deferred`（入力欄で待った）／`guide.act.resumed into=typingIdle|scrollIdle`／`guide.act.superseded`（打ち切った）／
+`guide.frame.hidden reason=gone|offscreen`。`guide.act.folded`は撮影前のクリックにだけ残る。
+**実機で見るもの**: ①フォームで欄→欄と移っても手が始まらず、打ち終えて約0.8秒で1手になるか ②スクロール中に枠が要素に付いて動くか、
+要素が消えたら枠も消えるか ③評価中にクリックしても古い指示・古い枠が出ないか（記録に`superseded`が出る） ④`keyDown`監視が
+Chromeで届いているか（`deferred`の後に`resumed into=typingIdle`が出れば届いている）。
+
+（以下は設計時の記述）
 
 **オーナーの前提**: 初期段階はトークン効率よりユーザー体験を優先する。裏で何度も呼び出してよい。新しい要求が
 走ったら古いものは中断して最新の結果を出す。**「フレームをクリックした時だけ動く」は行き止まり**（検索窓から
