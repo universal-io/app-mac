@@ -552,6 +552,7 @@ final class SessionCoordinator {
     /// admitted only `.vision`, so a dictation during guidance was recorded,
     /// sent, and then dropped with the mic left spinning (2026-09-07). One
     /// answer, read three times, cannot disagree with itself.
+    @MainActor
     private enum DictationSink {
         case compose(ComposeSession)
         case vision(VisionSession)
