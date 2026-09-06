@@ -1236,9 +1236,12 @@ final class VisionSession: ObservableObject {
                     try? FileManager.default.removeItem(at: capture.attachment.url)
                     return
                 }
-                // Confirm the exact adopted frame after capture, without
-                // delaying AX collection or the Gateway request.
-                CopilotCaptureCuePresenter.shared.flash(for: capture.attachment)
+                // No cue for the re-read. The sweep that marked the adopted
+                // capture (2026-08-26) sat on the bare screen during guidance,
+                // where a full-screen pass of purple read as a glitch rather
+                // than as a signal (owner, 2026-09-07). The chip's pulse says
+                // the product is thinking; if a cue for "the screen was read"
+                // comes back, it comes back designed, not as this.
                 // Copilot progress turns produced no operational record at all
                 // until now: the 2026-08-03 trail had the AX walk and the
                 // capture as DEBUG-only NSLog, so a shipped build reported

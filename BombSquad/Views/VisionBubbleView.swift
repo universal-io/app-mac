@@ -38,11 +38,13 @@ struct VisionBubbleView: View {
     /// One line of the answer, in the answer's own font.
     ///
     /// Ascender to descender plus leading is what text layout uses for a line
-    /// box, so this is the unit the answer is actually built from — not an
-    /// estimate of it.
+    /// box, plus the spacing the thread puts between lines
+    /// (`VisionThreadView.lineSpacing`), so this is the unit the answer is
+    /// actually built from — not an estimate of it.
     static let answerLineHeight: CGFloat = {
         let font = NSFont.systemFont(ofSize: answerFontSize)
         return font.ascender - font.descender + font.leading
+            + VisionThreadView.lineSpacing(fontSize: answerFontSize)
     }()
 
     /// How tall the answer may grow before it scrolls instead, in whole lines.
