@@ -51,6 +51,28 @@ enum GuidanceTrigger {
     /// at it.
     static let typingIdle: TimeInterval = 0.8
 
+    /// What a deferred act hears while it waits.
+    enum DeferredEvent: Equatable {
+        /// The click that put focus in the input.
+        case enteredInput
+        /// A key went down somewhere. Only *that* it did.
+        case keyDown
+    }
+
+    /// Whether the event starts, or pushes back, the typing-idle clock.
+    ///
+    /// The click that entered the input starts nothing. The first version
+    /// started the clock on that click, so an input that was entered and never
+    /// typed into still cost a step 0.8 s later — and in an editor every click
+    /// is such a click: on VS Code (2026-09-06) each caret placement bought a
+    /// capture with no character typed. So the first key starts the clock and
+    /// every key after it pushes the clock back. A form still costs a step per
+    /// field *filled*, which is what the deferral was for; a field entered and
+    /// left untouched is not an act.
+    static func restartsTypingIdle(_ event: DeferredEvent) -> Bool {
+        event == .keyDown
+    }
+
     /// How long after the last scroll tick the page counts as settled. Only
     /// consulted when the instruction had nothing to point at — scrolling is how
     /// a user finds the thing a verbal instruction named.

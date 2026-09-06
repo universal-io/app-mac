@@ -24,6 +24,19 @@ final class GuidanceTriggerTests: XCTestCase {
         XCTAssertEqual(GuidanceTrigger.clickKind(focusedRole: nil), .advance)
     }
 
+    // MARK: - What a deferred act waits for
+
+    /// The click that entered the input starts no clock. In an editor every
+    /// caret placement is such a click, and each one cost a capture with
+    /// nothing typed (VS Code, 2026-09-06).
+    func testEnteringAnInputStartsNoClock() {
+        XCTAssertFalse(GuidanceTrigger.restartsTypingIdle(.enteredInput))
+    }
+
+    func testAKeyStartsAndPushesBackTheClock() {
+        XCTAssertTrue(GuidanceTrigger.restartsTypingIdle(.keyDown))
+    }
+
     // MARK: - Acting while a step is running
 
     func testNothingRunningStartsAStep() {

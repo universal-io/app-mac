@@ -9,58 +9,44 @@
 
 ---
 
-## ⚠️ 最初に読む: `main` の案内は壊れている（2026-09-06、オーナー実機）
+## ⚠️ 最初に読む: 2026-09-06の破綻は原因が確定し、修正済み。**実機はまだ**
 
-**症状**（Xcodeから起動したDebug、VS Codeの`README.md — app-mac`で右Shift 2回、案内へ）:
+**症状**（Xcodeから起動したDebug、VS Codeの`README.md — app-mac`で右Shift 2回、案内へ）: ①案内に入っても枠が出ない
+（候補0件）②赤い「接続に失敗しました … Canceled」③撮影（走査線）が連続する。
 
-1. **案内に入っても枠が出ない。** 診断レポート: `target_app: Code`、`candidate_count: 0`、`web_area_present: true`、`visited_nodes: 6132`、
-   `collection_passes: 2`、`status: complete`。候補が0なので指す対象が無く、枠が出ない
-2. **赤い文字で「接続に失敗しました … Canceled」**が撮り直しの時に出る
-3. **撮影（走査線）が何回も連続して走る。** 「撮り直しは進捗のある操作の時だけ」という設計意図に反している
+**原因は3つとも確定した**（unified log 18:27〜18:30の`capture.display`／`vision.axCollected`／DEBUG NSLogの各パス、シェルからの
+AX実測、コード）。**どちらのコミットも戻していない。** `1a02a77`（候補フィルタ）は無関係と確定、`c41da09`（ループ）は3箇所を直した。
+**修正はブランチ`fix/guidance-loop-20260906`にあり、チェックアウト中**（Xcodeから起動すればこのブランチが動く）。218 unit test。
+下の6項目を実機で見てから`main`へ入れる — 「一度も画面に出していないものを`main`に入れない」を今回は守る。
 
-**オーナーの問い「軌道の問題か、壊れているのか」への答え: 壊れている。** 原因は2026-09-03〜04に`main`へ入れた2つのコミットで、
-どちらも**該当経路を実機で見ずに入れた**（自分で決めた規則「実装済みでも一度も画面に出していないものを公開しない」を、
-`main`への変更で守らなかった）。
+| 症状 | 原因 | 直したもの |
+|---|---|---|
+| ①候補0件 | **ディスプレイの不一致。** このMacは2画面で、VS Codeは2番目（CG 1728,30 1920×1050）、Chromeは1番目にある。この日の撮影は**全部`display=1`**。AX走査は前面アプリ＝VS Codeの木（6,132ノード、web areaあり）を歩くが、要素の矩形は全部撮影矩形の外なので`normalized`で落ちる。「complete」で0件になる。**probeで同じ規則をdisplay 1の矩形に当てるとVS Codeは0件（offRect=291）、display 2の矩形なら70件。Chromeはnodes=240／42件／chrome=57で本番ログと桁まで一致** | (a) 走査の前にウインドウ矩形と撮影矩形の交差を見て、無ければ歩かず`window_off_capture`を記録（診断レポートの`status`と`vision.axCollected truncated=`。`AXTruncationCode`に追加）(b) summon時のディスプレイ決定`ActiveDisplay.pin`に、AXが答えない時の予備としてウインドウサーバー（`CGWindowList`）経由を足した。ポインタは最後の手段。**`display.pinned via=focusedWindow\|frontWindow\|pointer display=N`を毎回記録** |
+| ②赤い「Canceled」 | 打ち切られた手のGateway往復が`URLError.cancelled`（-999）で終わる。これは`CancellationError`**ではない**ので`evaluateCopilotProgress`の汎用catchに落ち、`copilot.failed`＋赤字＋`.timedOut`を**後続の手の上に**書いた（log: `guide.act.superseded`の70ms後に`copilot.failed error=transport.-999`） | `evaluateCopilotProgress`に世代（`copilotStepGeneration`）を渡し、catchの先頭で`generation`不一致または`Task.isCancelled`なら黙って抜ける（一時ファイルだけ消す） |
+| ③連続撮影 | (a) 候補0件で対象が無い→スクロール停止ごとに撮る（①の派生）(b) エディタのカーソル移動クリックは`AXTextArea`＝入力欄→**クリックの0.8秒後に毎回撮る**（何も打っていなくても）(c) バブル上のスクロールを除外していない | (b) **入力欄クリックは時計を始めない。最初のキーで始まり、以後のキーで押し戻す**（`GuidanceTrigger.restartsTypingIdle`、純粋関数・テスト2本）。打たずに離れた欄は操作に数えない。前の欄の入力で走っている時計は止めないので、素早く2欄埋めれば1手。GA4のフォーム（打って次へ）は従来どおり欄ごとに1手、エディタのカーソル移動は0手 (c) スクロール監視にクリックと同じバブル除外（`advancesGuidance`） |
 
-| コミット | 内容 | 実機で確認したもの | 確認していないもの |
-|---|---|---|---|
-| `1a02a77` | web areaがある窓では、その配下の候補だけ送る（`VisionCandidateScope`）＋`collapsed`を絞る | GA4ホーム132→76件、Xcode 58件（web area無し）、リロード直後143件、案内が4手で完走 | **VS Code（Electron）**。probeでは「全候補がweb areaの中」だったが、本番は0件 |
-| `c41da09` | 案内ループをイベント駆動に（`GuidanceTrigger`）: 入力欄クリックは0.8秒待つ／スクロールで枠追従／評価中のクリックは打ち切って最新から／キー・スクロールのグローバル監視 | 単体テストのみ（216） | **全部。** 実機で症状2・3を出した |
+**なぜdisplay 1に固定されたか（最有力・未確定）**: 18:27:59の初回AX走査が2パスとも**7ノード**だった。VS Codeの木が冷えていて
+`AXFocusedWindow`が0.2秒以内に答えず、`pin`がポインタの画面へ落ちた、と読める。今のVS Codeは温まっていて再現できない。
+次回は`display.pinned`の記録で確定する。
 
-### 分かっている機序（コードで確認）
+**捨てたもの・変えていないもの**: 案内は**summon時の画面に固定**のまま（撮影・枠・バブル）。案内中に別画面のアプリを
+クリックしても追従しない。追従させるなら幕・枠・バブルの窓を作り直す構造変更なので、**設計の論点としてオーナーへ**。
+今は`window_off_capture`で「別画面だった」と記録が残るだけ。
 
-- **症状2「Canceled」**: 打ち切り（supersede）は`copilotProgressTask?.cancel()`で走っている手を止める。Gateway往復中に止めると
-  `URLSession`は`URLError(.cancelled)`を投げる。これは`CancellationError`**ではない**ので、`evaluateCopilotProgress`の
-  汎用`catch`（`VisionSession.swift`の`copilot.failed`を記録する箇所）に落ち、`copilotState = .timedOut`と赤い`errorMessage`を
-  出す。**古い手が新しい手の状態を上書きしてもいる。** 直し方: `evaluateCopilotProgress`にも世代（`copilotStepGeneration`）を渡し、
-  自分が打ち切られた側なら黙って抜ける（progressタスク側の`catch is CancellationError`は既に`ledger.cause`で黙る）
-- **症状3「連続撮影」**: (a) 候補0件だと対象が無い→`noteScroll`の「対象の無い指示ならスクロール停止0.6秒で撮り直す」が
-  **すべてのスクロールで**発火する (b) エディタ内のクリックは`AXTextArea`＝入力欄→0.8秒待って撮り直す。エディタでは
-  カーソル移動のクリックが頻繁なので、クリックごとに1撮影 (c) **スクロール監視がバブル上のスクロールを除外していない**
-  （クリック監視は`advancesGuidance`でバブル矩形を除外しているが、`noteScroll`には同じ除外が無い。HANDOFFの表にある通り
-  「案内中のグローバル監視にはバブルへのクリックも届く」） (d) 打ち切りの直後に即撮り直す
-- **症状1「候補0件」**: **未解明。** 本番と同じ規則のprobe（`/private/tmp/ga4probe-20260903/vscode.swift`）をVS Codeの別窓
-  （gen-video）に当てると、3パスとも **nodes≈4746, webAreas=5, inside=273, outside=0**。規則どおりなら273件残るはずが、
-  本番は0件。差は本番だけにある何かで、候補は ①`normalized(frame, within: captureRect)`（probeは窓矩形で判定、本番は
-  撮影矩形）②パス採用の`>=`と`webAreaPresent`の累積（別パスの値が混ざって見えている）③Electronの木の露出タイミング。
-  **GA4でも0件になっているかを最初に確認する。** GA4で76件前後なら VS Code 固有、GA4も0なら`c41da09`のhandles変更が
-  収集を壊している
+### 実機で確認すること（この順。Xcodeから起動、2画面のまま）
 
-### 次のセッションが最初にすること（順番）
+1. **VS Code（2画面目）で右Shift 2回。** `display.pinned … display=2`が出て、幕がVS Codeの画面に乗るか。もし`via=pointer`なら
+   VS CodeのAXが冷えていた証拠で、`frontWindow`が拾えなかった理由を見る
+2. **案内へ入り、エディタ内を数回クリック。** 走査線が**走らない**こと（`guide.act.deferred`だけが並ぶ）。キーを打って手を止めると
+   0.8秒後に**1回だけ**走ること（`guide.act.resumed into=typingIdle`）
+3. **バブルのスレッドをスクロール。** 走査線が走らないこと
+4. **評価中にクリック。** `guide.act.superseded`が出て、**赤字が出ない**こと。新しい手の指示が出ること
+5. **GA4（1画面目）で回帰。** 候補76件前後、案内が4手で完走（2026-09-03と同じ）
+6. **VS Codeで案内中にChrome（1画面目）をクリック。** 診断レポートの`status: window_off_capture`。上の「設計の論点」の実物
 
-1. **測る。コードを触らない。** Xcodeから起動し、①GA4ホーム ②VS Code ③Finder で右Shift 2回、診断レポートの
-   `candidate_count`と`web_area_present`を3つ並べる。unified logで`vision.axCollected`の`chrome`/`candidates`と
-   `guide.act.*`／`guide.frame.*`を見る（`/usr/bin/log show --last 1h --predicate 'eventMessage CONTAINS "guide."'`）
-2. **戻すか直すかを決める。** 戻すなら `git -C /Users/kaya.matsumoto/projects/universal-io/app-mac revert --no-edit c41da09`
-   （ループの変更だけ戻る。文書も一緒に戻るので、この節は手で残す）。`1a02a77`はGA4・Xcodeで実機確認済みなので、
-   VS Codeの0件が`1a02a77`由来と分かった時だけ戻す
-3. 直す場合の順序: 症状2（世代ガード、10行）→症状3(c)（スクロールにバブル除外）→症状3(a)(b)（**エディタでは
-   「入力欄クリック→0.8秒で撮り直し」が成立しない**。設計を見直す: 1回の deferral につき撮り直しは1回まで／
-   対象の無い指示でのスクロール撮り直しは1手につき1回まで、など）→症状1の解明
-4. **設計の再考点**（オーナーの原則「撮影は少ないほど良い。AXとイベントで分かるなら撮らない」は維持）:
-   GA4のフォーム（短い入力→次へ）と、VS Codeのエディタ（長い入力、頻繁なクリック）で、同じ規則が逆に働く。
-   「入力欄」の役割だけでは区別できない。**案内の対象アプリがエディタの時は案内そのものが成立しにくい**ので、
-   規則を複雑にする前に「どの画面で案内を使うのか」を確かめる価値がある
+```bash
+/usr/bin/log show --last 1h --predicate 'eventMessage CONTAINS "guide." OR eventMessage CONTAINS "display.pinned" OR eventMessage CONTAINS "vision.axCollected" OR eventMessage CONTAINS "copilot."'
+```
 
 ### この2日で正しかったこと（捨てないもの）
 
@@ -68,7 +54,14 @@
 - 1-2の欠陥は「このページ」の指す先が進捗ターンに送られないこと（1-8で切り分け済み）。1-1は知識（概念）
 - 案内ループの4つの欠陥（L1〜L5）の機序と、unified logの`guide.act.folded` 7件/10ターンという証拠
 - 「枠の現在性」と「指示の現在性」は別の問題で、前者はAX位置の再読（0.13ms）で撮影なしに解ける、という切り分け
-- ブラウザ部品57件の除外（GA4で実機確認済み。私的情報の送信を止めた）
+- ブラウザ部品57件の除外（GA4で実機確認済み。私的情報の送信を止めた）。**VS Codeの0件はこの除外のせいではなかった**
+
+### 教訓（記憶にも書いた）
+
+- **候補0件はまず「どの画面を撮ったか」を疑う。** `capture.display display=N`とアプリの窓の位置を並べる。probeは窓の矩形で
+  判定していたので、本番だけの差＝撮影矩形が見えなかった
+- 実機不具合の一次証拠はunified log。今回は`log show`の`Vision AX collection pass=`（DEBUG NSLog）にnodes=7／1393／240／6132が
+  そのまま残っていて、シェルからのAX実測（`CGWindowList`で窓の位置、probeで各ディスプレイ矩形との交差）と突き合わせて確定した
 
 ---
 

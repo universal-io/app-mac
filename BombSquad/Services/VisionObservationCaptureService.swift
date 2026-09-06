@@ -243,7 +243,19 @@ enum VisionObservationCaptureService {
                     var previousVisited = 0
                     var firstPassCandidates = 0
                     var chromeDropped = 0
-                    while collectionPasses < Budget.maxPasses {
+                    // The window may be on a screen other than the one in the
+                    // shot. Then nothing in it can be a candidate — every frame
+                    // falls outside the capture — and walking it would only
+                    // dress that zero up as an honest search. 2026-09-06: VS
+                    // Code on the second display, capture of the first; 6,132
+                    // nodes, web area present, 0 candidates, "complete", two
+                    // passes per step, and nothing in the trail said why.
+                    let windowOffCapture = window.flatMap(frame(of:)).map { windowFrame in
+                        let overlap = windowFrame.intersection(captureRect)
+                        return overlap.isNull || overlap.width <= 0 || overlap.height <= 0
+                    } ?? false
+                    if windowOffCapture { truncatedReason = "window_off_capture" }
+                    while !windowOffCapture, collectionPasses < Budget.maxPasses {
                         collectionPasses += 1
                         let result = collectCandidates(
                             from: window ?? appElement,

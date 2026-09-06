@@ -186,6 +186,7 @@ final class DiagnosticsTests: XCTestCase {
     func testUnknownTruncationReasonsCollapseInsteadOfPassingThrough() {
         XCTAssertEqual(AXTruncationCode("node_limit").diagnosticCode, "node_limit")
         XCTAssertEqual(AXTruncationCode("deadline").diagnosticCode, "deadline")
+        XCTAssertEqual(AXTruncationCode("window_off_capture").diagnosticCode, "window_off_capture")
         XCTAssertEqual(AXTruncationCode(nil).diagnosticCode, "complete")
         XCTAssertEqual(
             AXTruncationCode("mail.google.com - 山田さん").diagnosticCode,

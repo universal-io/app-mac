@@ -1028,10 +1028,20 @@ final class VisionSession: ObservableObject {
             }
         }
         copilotKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.noteTyping() }
+            Task { @MainActor [weak self] in self?.noteDeferredEvent(.keyDown) }
         }
         copilotScrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.noteScroll() }
+            // Same read, same reason as the click above. A scroll over the
+            // bubble moves the thread, not the page; counting it re-read the
+            // screen every time the user scrolled their own answer
+            // (2026-09-06).
+            let location = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in
+                guard let self,
+                      Self.advancesGuidance(clickAt: location, bubble: self.bubbleFrame())
+                else { return }
+                self.noteScroll()
+            }
         }
     }
 
@@ -1046,7 +1056,11 @@ final class VisionSession: ObservableObject {
         case .defer:
             copilotActDeferred = true
             Diagnostics.record("guide.act.deferred")
-            restartIdleTimer(after: GuidanceTrigger.typingIdle, reason: "typingIdle")
+            // The clock starts with the first key, not with this click
+            // (GuidanceTrigger.restartsTypingIdle). A clock already running
+            // from typing in the previous field keeps running, so two fields
+            // filled quickly cost one step.
+            noteDeferredEvent(.enteredInput)
         case .advance:
             copilotIdleTimer?.invalidate()
             copilotIdleTimer = nil
@@ -1055,10 +1069,11 @@ final class VisionSession: ObservableObject {
         }
     }
 
-    /// A key went down somewhere. Only *that* it did is used: while an act is
-    /// deferred, typing pushes the re-plan back until the hand pauses.
-    private func noteTyping() {
-        guard copilotActDeferred else { return }
+    /// Something happened while an act is deferred. Only *that* it did is
+    /// used — a key is a timestamp here — and whether it starts or pushes back
+    /// the clock is `GuidanceTrigger`'s call.
+    private func noteDeferredEvent(_ event: GuidanceTrigger.DeferredEvent) {
+        guard copilotActDeferred, GuidanceTrigger.restartsTypingIdle(event) else { return }
         restartIdleTimer(after: GuidanceTrigger.typingIdle, reason: "typingIdle")
     }
 
@@ -1236,7 +1251,8 @@ final class VisionSession: ObservableObject {
                 await self.evaluateCopilotProgress(
                     attachment: capture.attachment,
                     goal: goal,
-                    previousInstruction: previousInstruction
+                    previousInstruction: previousInstruction,
+                    generation: generation
                 )
             } catch is CancellationError {
                 guard ledger.cause == nil else { return }
@@ -1262,7 +1278,8 @@ final class VisionSession: ObservableObject {
     private func evaluateCopilotProgress(
         attachment newAttachment: ScreenshotAttachment,
         goal: String,
-        previousInstruction: String
+        previousInstruction: String,
+        generation: Int
     ) async {
         guard let client else { return }
         copilotState = .evaluating
@@ -1369,12 +1386,21 @@ final class VisionSession: ObservableObject {
                 break
             }
         } catch {
+            try? FileManager.default.removeItem(at: newAttachment.url)
+            // A run that was superseded, or whose guidance was closed, stops
+            // here in silence: whoever cancelled it owns the state and the
+            // message. Cancelling mid-request surfaces from URLSession as
+            // `URLError.cancelled`, not `CancellationError`, so without this
+            // the step that had already been replaced painted a red
+            // "Canceled" over its successor and set the state the successor
+            // was using (2026-09-06, `copilot.failed error=transport.-999`
+            // 70 ms after `guide.act.superseded`).
+            guard copilotStepGeneration == generation, !Task.isCancelled else { return }
             if attachment.id == newAttachment.id {
                 attachment = previousAttachment
-                        candidates = previousCandidates
+                candidates = previousCandidates
                 candidateDiagnostics = previousDiagnostics
             }
-            try? FileManager.default.removeItem(at: newAttachment.url)
             copilotState = .timedOut
             Diagnostics.record("copilot.failed", details: [
                 ("sinceAsk", .ms(askClock.elapsedMs)),
