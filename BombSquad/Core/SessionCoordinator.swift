@@ -544,42 +544,87 @@ final class SessionCoordinator {
         }
     }
 
+    /// Where dictation goes, decided once from the mode.
+    ///
+    /// Start, stop and the delivery of the text all read this. It used to be a
+    /// list of modes written out in each of those places, and the three copies
+    /// disagreed: recording and transcription admitted guidance, the delivery
+    /// admitted only `.vision`, so a dictation during guidance was recorded,
+    /// sent, and then dropped with the mic left spinning (2026-09-07). One
+    /// answer, read three times, cannot disagree with itself.
+    private enum DictationSink {
+        case compose(ComposeSession)
+        case vision(VisionSession)
+
+        func setRecording(_ on: Bool) {
+            switch self {
+            case .compose(let session): session.isRecording = on
+            case .vision(let session): session.isRecording = on
+            }
+        }
+
+        func setTranscribing(_ on: Bool) {
+            switch self {
+            case .compose(let session): session.isTranscribing = on
+            case .vision(let session): session.isTranscribing = on
+            }
+        }
+
+        func setError(_ message: String?) {
+            switch self {
+            case .compose(let session): session.errorMessage = message
+            case .vision(let session): session.errorMessage = message
+            }
+        }
+
+        func append(_ text: String) {
+            switch self {
+            case .compose(let session): session.appendTranscription(text)
+            case .vision(let session): session.appendTranscription(text)
+            }
+        }
+    }
+
+    private var dictationSink: DictationSink? {
+        switch stateMachine.mode {
+        case .compose:
+            return composeSession.map(DictationSink.compose)
+        case .vision, .copilot:
+            // The bubble is one surface in two modes, and the mic is on it in both.
+            return visionSession.map(DictationSink.vision)
+        default:
+            return nil
+        }
+    }
+
+    /// Whether the sink chosen when recording started is still where dictation
+    /// goes now. Identity, not mode: the bubble passing from explaining to
+    /// guiding is the same bubble, and the words belong to it either way.
+    private func stillReceivesDictation(_ sink: DictationSink) -> Bool {
+        switch (sink, dictationSink) {
+        case (.compose(let then), .compose(let now)?): return then === now
+        case (.vision(let then), .vision(let now)?): return then === now
+        default: return false
+        }
+    }
+
     private func startDictation() {
-        guard !isDictating else { return }
+        guard !isDictating, let sink = dictationSink else { return }
         transcriptionWarmupTask?.cancel()
         transcriptionWarmupTask = Task {
             await GatewayAIWarmup.warm([.transcribe])
         }
-        switch stateMachine.mode {
-        case .compose:
-            guard let composeSession else { return }
-            isDictating = true
-            composeSession.errorMessage = nil
-            composeSession.isRecording = true
-            SoundFeedback.recordingStarted()
-            do {
-                try recorder.start()
-            } catch {
-                isDictating = false
-                composeSession.isRecording = false
-                composeSession.errorMessage = UserFacingError.message(for: error)
-            }
-        case .vision, .copilot:
-            guard let visionSession else { return }
-            isDictating = true
-            visionSession.errorMessage = nil
-            visionSession.isRecording = true
-            visionSession.focusedField = .navigator
-            SoundFeedback.recordingStarted()
-            do {
-                try recorder.start()
-            } catch {
-                isDictating = false
-                visionSession.isRecording = false
-                visionSession.errorMessage = UserFacingError.message(for: error)
-            }
-        default:
-            return
+        isDictating = true
+        sink.setError(nil)
+        sink.setRecording(true)
+        if case .vision(let session) = sink { session.focusedField = .navigator }
+        SoundFeedback.recordingStarted()
+        do {
+            try recorder.start()
+        } catch {
+            isDictating = false
+            sink.setRecording(false)
+            sink.setError(UserFacingError.message(for: error))
         }
     }
 
@@ -592,45 +637,14 @@ final class SessionCoordinator {
             visionSession?.isRecording = false
             return
         }
-
-        enum DictationSink {
-            case compose(ComposeSession)
-            case vision(VisionSession)
-        }
-
-        let sink: DictationSink?
-        switch stateMachine.mode {
-        case .compose:
-            if let composeSession {
-                composeSession.isRecording = false
-                composeSession.isTranscribing = true
-                sink = .compose(composeSession)
-            } else {
-                sink = nil
-            }
-        case .vision, .copilot:
-            if let visionSession {
-                visionSession.isRecording = false
-                visionSession.isTranscribing = true
-                sink = .vision(visionSession)
-            } else {
-                sink = nil
-            }
-        default:
-            sink = nil
-        }
-        guard let sink else { return }
+        guard let sink = dictationSink else { return }
+        sink.setRecording(false)
+        sink.setTranscribing(true)
 
         OperationalNoticeCenter.shared.beginOperation()
         guard let transcriber = GatewayTranscriber.make() else {
-            switch sink {
-            case .compose(let composeSession):
-                composeSession.isTranscribing = false
-                composeSession.errorMessage = "文字起こしサービスを利用できません。ログイン状態を確認してください。"
-            case .vision(let visionSession):
-                visionSession.isTranscribing = false
-                visionSession.errorMessage = "文字起こしサービスを利用できません。ログイン状態を確認してください。"
-            }
+            sink.setTranscribing(false)
+            sink.setError("文字起こしサービスを利用できません。ログイン状態を確認してください。")
             try? FileManager.default.removeItem(at: url)
             return
         }
@@ -649,16 +663,7 @@ final class SessionCoordinator {
                     ("ms", .ms(Int(clip.duration * 1000))),
                     ("silent", .flag(clip.averagePower < -45)),
                 ])
-                switch sink {
-                case .compose(let composeSession):
-                    if self.composeSession === composeSession {
-                        composeSession.isTranscribing = false
-                    }
-                case .vision(let session):
-                    if self.visionSession === session {
-                        session.isTranscribing = false
-                    }
-                }
+                if self.stillReceivesDictation(sink) { sink.setTranscribing(false) }
                 return
             }
 
@@ -667,18 +672,9 @@ final class SessionCoordinator {
             do {
                 let text = try await transcriber.transcribe(fileURL: url)
                 try Task.checkCancellation()
-                switch sink {
-                case .compose(let composeSession):
-                    guard self.composeSession === composeSession,
-                          self.stateMachine.mode == .compose else { return }
-                    composeSession.appendTranscription(text)
-                    composeSession.isTranscribing = false
-                case .vision(let session):
-                    guard self.visionSession === session,
-                          self.stateMachine.mode == .vision else { return }
-                    session.appendTranscription(text)
-                    session.isTranscribing = false
-                }
+                guard self.stillReceivesDictation(sink) else { return }
+                sink.append(text)
+                sink.setTranscribing(false)
             } catch is CancellationError {
                 return
             } catch {
@@ -693,16 +689,9 @@ final class SessionCoordinator {
                 // like a broken feature.
                 let message = UserFacingError.serverExplanation(for: error)
                     ?? "文字起こしに失敗しました。もう一度お試しください。"
-                switch sink {
-                case .compose(let composeSession):
-                    guard self.composeSession === composeSession else { return }
-                    composeSession.isTranscribing = false
-                    composeSession.errorMessage = message
-                case .vision(let session):
-                    guard self.visionSession === session else { return }
-                    session.isTranscribing = false
-                    session.errorMessage = message
-                }
+                guard self.stillReceivesDictation(sink) else { return }
+                sink.setTranscribing(false)
+                sink.setError(message)
             }
         }
     }

@@ -29,6 +29,23 @@ AX実測、コード）。**どちらのコミットも戻していない。** `
 `AXFocusedWindow`が0.2秒以内に答えず、`pin`がポインタの画面へ落ちた、と読める。今のVS Codeは温まっていて再現できない。
 次回は`display.pinned`の記録で確定する。
 
+### 2026-09-07 00:03の再テスト（修正後ビルド、VS Code 2画面目）で分かったこと
+
+**直った側面（記録で確認）**: `display.pinned via=focusedWindow display=2`、撮影は全部`display=2`、候補は91〜109件（0件ではない）。
+赤い「Canceled」は0回。撮影は3回で、それぞれクリック／入力停止／クリックに対応（`guide.act.deferred`→`resumed into=typingIdle`が
+1回、エディタのカーソル移動クリックでは撮っていない）。**オーナーの体感は「前回と何も変わらない・全部NG」**で、記録と食い違う。
+体感が正しい部分を記録から2つ特定し、同じブランチで直した:
+
+| 症状 | 原因（記録＋コード） | 直したもの |
+|---|---|---|
+| **案内に入っても枠が出ない** | `vision.result mode=guide highlight=gestureKept`。**指した後に質問すると**、案内を開く回答（`mode=guide`）が`apply()`で処理される時点ではまだ`isCopilotActive=false`なので、`gestureBound`が指した要素の印を守り、案内の枠（次に押す対象）を捨てる。2026-09-03の「印の根拠」改訂以来の欠陥で、GA4の4手完走は指さずに質問していたので出なかった。その後の手は`highlight=resolved`（枠は出ているはず。**出ていなければ2画面目への描画が疑い**） | `answerHighlight(for:…keeping:)`で`result.mode == .guide`なら印の規則を適用しない（テスト`testAGuideAnswerIsNotBoundByTheGesture`） |
+| **案内中にマイク（音声入力）が動かない** | 録音→送信は走る（`transcribe.request mode=copilot` 00:04:43）が、結果を入力欄へ入れる`guard`が`mode == .vision`だけを通すので、**案内中は文字起こしを捨て、`isTranscribing`も戻さない**（スピナーのまま）。案内がモードになった時からの欠陥。**マイクの実装は1本**（`AudioRecorder`＋`GatewayTranscriber`＋`SessionCoordinator`の開始/停止）で、重複していたのは「どのモードで受けるか」の一覧が開始・停止・結果配達の3箇所に写されていたこと。3つ目だけ`.copilot`が抜けていた | 一覧を`dictationSink`（モード→受け手）1箇所に集約し、開始・停止・配達がすべてそれを読む。配達は`stillReceivesDictation`で「録音時の受け手がまだ受け手か」を同一性で判定（解説⇄案内は同じバブルなので通る） |
+| **起動直後に囲うと、オレンジの「失敗しました」が先に出て、その後回答に置き換わる** | 最初の解説リクエストが飛んでいる間に囲むと`beginPointing()`がそれを打ち切る。打ち切られた通信は`URLError.cancelled`（-999）で、`CancellationError`ではないので汎用catchに落ち、`vision.failed`＋オレンジのエラー行を出す（log 00:11:54 `vision.failed turn=first error=transport.-999`→00:11:55 `vision.region`）。症状②と同じ型 | 汎用catchの先頭で`ledger.cause != nil`（この要求を打ち切った側がいる）なら黙って抜ける |
+
+**まだ説明できていない体感**: 「走査線が何回も何回も走る」。記録上は3回（1回の撮影で光るのは1回、`CopilotCaptureCuePresenter.flash`）。
+①エディタで入力→0.8秒停止で撮るのは設計どおりだが、**VS Codeでは「進捗」ではない**（設計の再考点。GA4のフォームとは逆に働く）
+②枠が出ていないので「何のために撮ったのか」が見えず、回数以上に多く感じる可能性。**次の実機で、枠が出た状態で回数を数える**。
+
 **捨てたもの・変えていないもの**: 案内は**summon時の画面に固定**のまま（撮影・枠・バブル）。案内中に別画面のアプリを
 クリックしても追従しない。追従させるなら幕・枠・バブルの窓を作り直す構造変更なので、**設計の論点としてオーナーへ**。
 今は`window_off_capture`で「別画面だった」と記録が残るだけ。
@@ -37,12 +54,16 @@ AX実測、コード）。**どちらのコミットも戻していない。** `
 
 1. **VS Code（2画面目）で右Shift 2回。** `display.pinned … display=2`が出て、幕がVS Codeの画面に乗るか。もし`via=pointer`なら
    VS CodeのAXが冷えていた証拠で、`frontWindow`が拾えなかった理由を見る
-2. **案内へ入り、エディタ内を数回クリック。** 走査線が**走らない**こと（`guide.act.deferred`だけが並ぶ）。キーを打って手を止めると
+2. **まず指してから質問して案内へ入る。** 入った瞬間に**枠が出る**こと（`vision.result mode=guide highlight=resolved`）。
+   これが2026-09-07 00:03で出なかった現象
+3. **案内中にマイク（右Shift長押し／バブルのマイク）で話す。** 文字が入力欄に入り、スピナーが止まること
+3b. **右Shift 2回の直後（解説がまだ出ていないうち）に囲う。** オレンジの「失敗しました」が**出ない**こと。囲みの回答だけが出ること
+4. **案内へ入り、エディタ内を数回クリック。** 走査線が**走らない**こと（`guide.act.deferred`だけが並ぶ）。キーを打って手を止めると
    0.8秒後に**1回だけ**走ること（`guide.act.resumed into=typingIdle`）
-3. **バブルのスレッドをスクロール。** 走査線が走らないこと
-4. **評価中にクリック。** `guide.act.superseded`が出て、**赤字が出ない**こと。新しい手の指示が出ること
-5. **GA4（1画面目）で回帰。** 候補76件前後、案内が4手で完走（2026-09-03と同じ）
-6. **VS Codeで案内中にChrome（1画面目）をクリック。** 診断レポートの`status: window_off_capture`。上の「設計の論点」の実物
+5. **バブルのスレッドをスクロール。** 走査線が走らないこと
+6. **評価中にクリック。** `guide.act.superseded`が出て、**赤字が出ない**こと。新しい手の指示が出ること
+7. **GA4（1画面目）で回帰。** 候補76件前後、案内が4手で完走（2026-09-03と同じ）
+8. **VS Codeで案内中にChrome（1画面目）をクリック。** 診断レポートの`status: window_off_capture`。上の「設計の論点」の実物
 
 ```bash
 /usr/bin/log show --last 1h --predicate 'eventMessage CONTAINS "guide." OR eventMessage CONTAINS "display.pinned" OR eventMessage CONTAINS "vision.axCollected" OR eventMessage CONTAINS "copilot."'

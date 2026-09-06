@@ -854,6 +854,15 @@ final class VisionSession: ObservableObject {
                 ])
                 self.errorMessage = "画面の読み取りが中断されました。もう一度お試しください。"
             } catch {
+                // The same rule as above, for the other shape a cancellation
+                // takes: cancelled mid-request, URLSession throws
+                // `URLError.cancelled` rather than `CancellationError`. Point
+                // or draw while the opening explanation is still in flight and
+                // that is what arrives here — and it was shown as a failure in
+                // orange for a second before the answer replaced it
+                // (2026-09-07 00:11:54, `vision.failed turn=first
+                // error=transport.-999`, then `vision.region`).
+                guard ledger.cause == nil else { return }
                 self.settleUnplacedPointingTurn()
                 Diagnostics.record("vision.failed", details: [
                     ("turn", .code(turnKind)),
@@ -1522,7 +1531,14 @@ final class VisionSession: ObservableObject {
             candidates: candidates,
             toleratingUnplaceableTarget: tolerant
         )
-        guard let gesture else { return answered }
+        // A guide answer's frame is the control to press next, not a claim
+        // about what the gesture meant, so the gesture has no say over it.
+        // `gestureBound` already returns nil once guidance is active, but the
+        // answer that *opens* guidance is applied before the mode changes:
+        // point at something, ask a question, and the first instruction came
+        // back `highlight=gestureKept` — no frame on entering guidance
+        // (VS Code, 2026-09-07 00:03:41).
+        guard let gesture, result.mode != .guide else { return answered }
         switch (gesture, answered) {
         case (_, .none), (_, .gestureKept):
             return answered
