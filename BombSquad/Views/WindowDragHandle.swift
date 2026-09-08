@@ -13,6 +13,13 @@ struct WindowDragHandle: NSViewRepresentable {
     func updateNSView(_ nsView: DragHandleView, context: Context) {}
 
     final class DragHandleView: NSView {
+        /// The first click on a window whose app is not active is otherwise
+        /// spent bringing the window forward and never reaches the view. During
+        /// guidance the guided app is the active one, so every first grab of the
+        /// bubble slid off and only the second one dragged (owner, 2026-09-08).
+        /// The covering canvas has had this since R14; the grip did not.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
         override func mouseDown(with event: NSEvent) {
             window?.performDrag(with: event)
         }

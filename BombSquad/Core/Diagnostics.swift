@@ -283,6 +283,7 @@ struct AXTruncationCode: DiagnosticCode {
     private static let known: Set<String> = [
         "node_limit", "candidate_limit", "deadline",
         "unknown_capture_rect", "permission_denied", "no_target_app",
+        "window_off_capture",
     ]
 
     let diagnosticCode: String

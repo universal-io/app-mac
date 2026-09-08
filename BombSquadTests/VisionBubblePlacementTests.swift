@@ -96,6 +96,40 @@ final class VisionBubblePlacementTests: XCTestCase {
         }
     }
 
+    /// A tall card next to a control at the bottom of the screen stays beside
+    /// it and slides up, rather than being sent above it — from where growth
+    /// reaches the control (GA4's date-range button, 2026-09-08).
+    func testATallBubbleBesideALowFrameSlidesUpInsteadOfLeavingItsSide() {
+        let frame = CGRect(x: 60, y: 20, width: 120, height: 50)
+        let tall = CGSize(width: 360, height: 600)
+        let rect = CGRect(
+            origin: VisionBubblePlacement.origin(besideFrame: frame, size: tall, in: bounds),
+            size: tall
+        )
+        XCTAssertEqual(rect.minX, frame.maxX + 20, accuracy: 0.001, "left its side")
+        XCTAssertFalse(rect.intersects(frame))
+        XCTAssertTrue(bounds.contains(rect))
+    }
+
+    /// Placed above its subject, a card grows upward; beside it, downward. The
+    /// edge that keeps the card off the control is the one that stays.
+    func testACardAboveItsSubjectGrowsUpwardAndBesideItGrowsDownward() {
+        let subject = CGRect(x: 400, y: 100, width: 120, height: 50)
+        let above = CGRect(x: 400, y: 300, width: 360, height: 200)
+        let grownAbove = VisionBubblePlacement.resized(
+            above, to: CGSize(width: 360, height: 400), in: bounds, avoiding: subject
+        )
+        XCTAssertEqual(grownAbove.minY, 300, accuracy: 0.001, "the bottom edge moved toward the subject")
+        XCTAssertFalse(grownAbove.intersects(subject))
+
+        let beside = CGRect(x: 540, y: 0 + 12, width: 360, height: 200)
+        let grownBeside = VisionBubblePlacement.resized(
+            beside, to: CGSize(width: 360, height: 400), in: bounds, avoiding: subject
+        )
+        XCTAssertEqual(grownBeside.maxY, beside.maxY + 200, accuracy: 0.001, "a card beside grows from its top like a paragraph")
+        XCTAssertFalse(grownBeside.intersects(subject))
+    }
+
     func testWithNothingPointedAtItWaitsInTheBottomRight() {
         let origin = VisionBubblePlacement.idleOrigin(size: size, in: bounds)
         XCTAssertEqual(origin.x, 1600 - 360 - 24, accuracy: 0.001)

@@ -20,12 +20,42 @@ import ApplicationServices
 enum ActiveDisplay {
     private static var pinnedScreen: NSScreen?
 
+    /// How the working screen was found. Recorded at every pin so a session
+    /// that captured the wrong screen can be traced to its cause, instead of
+    /// being inferred from a zero further down (`window_off_capture`).
+    enum PinSource: String, DiagnosticCode {
+        case focusedWindow
+        case frontWindow
+        case pointer
+        case none
+
+        var diagnosticCode: String { rawValue }
+    }
+
     /// Resolve and remember the working screen. Call at summon, before our own
     /// panel activates — once it does, the frontmost app is us.
     @discardableResult
     static func pin(to app: NSRunningApplication?) -> NSScreen? {
-        let resolved = focusedWindowScreen(of: app) ?? pointerScreen()
+        let resolved: NSScreen?
+        let via: PinSource
+        if let screen = focusedWindowScreen(of: app) {
+            resolved = screen
+            via = .focusedWindow
+        } else if let screen = frontWindowScreen(of: app) {
+            resolved = screen
+            via = .frontWindow
+        } else if let screen = pointerScreen() {
+            resolved = screen
+            via = .pointer
+        } else {
+            resolved = nil
+            via = .none
+        }
         pinnedScreen = resolved
+        Diagnostics.record("display.pinned", details: [
+            ("via", .code(via)),
+            ("display", .count(Int(displayID(of: resolved) ?? 0))),
+        ])
         return resolved
     }
 
@@ -65,6 +95,35 @@ enum ActiveDisplay {
 
         let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
         return screen(containingAXPoint: center)
+    }
+
+    /// The app's frontmost on-screen window, asked of the window server rather
+    /// than of the app. An Electron app that has not built its accessibility
+    /// tree yet answers nothing about its focused window for a while (VS Code,
+    /// 2026-09-06: seven nodes, twice), and falling straight through to the
+    /// pointer put the whole session — capture, wash, every frame — on the
+    /// display the pointer happened to be parked on. The window server knows
+    /// where the window is regardless.
+    private static func frontWindowScreen(of app: NSRunningApplication?) -> NSScreen? {
+        guard let pid = app?.processIdentifier,
+              pid != ProcessInfo.processInfo.processIdentifier,
+              let windows = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+              ) as? [[String: Any]]
+        else { return nil }
+        // Front-to-back, so the first layer-0 window of this app is its front one.
+        for window in windows {
+            guard (window[kCGWindowOwnerPID as String] as? pid_t) == pid,
+                  (window[kCGWindowLayer as String] as? Int) == 0,
+                  let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = bounds["X"], let y = bounds["Y"],
+                  let width = bounds["Width"], let height = bounds["Height"],
+                  width > 0, height > 0
+            else { continue }
+            // Window-server bounds share the accessibility API's top-left space.
+            return screen(containingAXPoint: CGPoint(x: x + width / 2, y: y + height / 2))
+        }
+        return nil
     }
 
     /// Accessibility reports positions in a top-left origin space anchored to

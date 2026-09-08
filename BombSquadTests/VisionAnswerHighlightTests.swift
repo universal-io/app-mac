@@ -137,6 +137,35 @@ final class VisionAnswerHighlightTests: XCTestCase {
         )
     }
 
+    /// A guide answer's frame is the next control to press, not a claim about
+    /// the gesture. The answer that opens guidance is applied while the
+    /// pointing gesture is still bound, and on 2026-09-07 it came back
+    /// `gestureKept`: point, ask, and guidance opened with no frame.
+    func testAGuideAnswerIsNotBoundByTheGesture() throws {
+        let element = CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.1)
+        let elsewhere = CGRect(x: 0.05, y: 0.05, width: 0.05, height: 0.05)
+        let candidates = [candidate(id: "elsewhere", rect: elsewhere)]
+
+        XCTAssertEqual(
+            try VisionSession.answerHighlight(
+                for: visionResult(targetCandidateID: "elsewhere", annotation: nil, mode: .guide),
+                candidates: candidates,
+                toleratingUnplaceableTarget: false,
+                keeping: .measured(element)
+            ),
+            .candidate(index: 0, rect: elsewhere)
+        )
+        XCTAssertEqual(
+            try VisionSession.answerHighlight(
+                for: visionResult(targetCandidateID: "elsewhere", annotation: nil, mode: .guide),
+                candidates: candidates,
+                toleratingUnplaceableTarget: false,
+                keeping: .region(CGRect(x: 0.3, y: 0.3, width: 0.4, height: 0.4))
+            ),
+            .candidate(index: 0, rect: elsewhere)
+        )
+    }
+
     /// No frame from the answer is still no frame; the gesture has nothing to
     /// outrank and nothing is counted as kept.
     func testNoAnswerFrameIsNoneEvenUnderAGesture() throws {
@@ -209,10 +238,11 @@ final class VisionAnswerHighlightTests: XCTestCase {
 
     private func visionResult(
         targetCandidateID: String?,
-        annotation: CGRect?
+        annotation: CGRect?,
+        mode: VisionResult.Mode = .answer
     ) -> VisionResult {
         VisionResult(
-            mode: .answer,
+            mode: mode,
             message: "説明",
             observations: [],
             uncertainties: [],

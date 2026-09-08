@@ -469,8 +469,14 @@ final class VisionPointingOverlay {
             .visibleFrame ?? screenFrame
         isPlacingBubble = true
         defer { isPlacingBubble = false }
+        // The subject the card was placed beside, in the window's global
+        // coordinates, so a card above it grows away from it. A card the user
+        // dragged is theirs and keeps its top wherever they put it.
+        let subject = bubbleAnchor.userTopLeft == nil
+            ? bubbleAnchor.frame?.offsetBy(dx: screenFrame.minX, dy: screenFrame.minY)
+            : nil
         bubblePanel.setFrame(
-            VisionBubblePlacement.resized(bubblePanel.frame, to: size, in: bounds),
+            VisionBubblePlacement.resized(bubblePanel.frame, to: size, in: bounds, avoiding: subject),
             display: true
         )
         bubblePanel.invalidateShadow()

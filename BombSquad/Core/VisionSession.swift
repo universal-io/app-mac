@@ -854,6 +854,15 @@ final class VisionSession: ObservableObject {
                 ])
                 self.errorMessage = "画面の読み取りが中断されました。もう一度お試しください。"
             } catch {
+                // The same rule as above, for the other shape a cancellation
+                // takes: cancelled mid-request, URLSession throws
+                // `URLError.cancelled` rather than `CancellationError`. Point
+                // or draw while the opening explanation is still in flight and
+                // that is what arrives here — and it was shown as a failure in
+                // orange for a second before the answer replaced it
+                // (2026-09-07 00:11:54, `vision.failed turn=first
+                // error=transport.-999`, then `vision.region`).
+                guard ledger.cause == nil else { return }
                 self.settleUnplacedPointingTurn()
                 Diagnostics.record("vision.failed", details: [
                     ("turn", .code(turnKind)),
@@ -1028,10 +1037,20 @@ final class VisionSession: ObservableObject {
             }
         }
         copilotKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.noteTyping() }
+            Task { @MainActor [weak self] in self?.noteDeferredEvent(.keyDown) }
         }
         copilotScrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.noteScroll() }
+            // Same read, same reason as the click above. A scroll over the
+            // bubble moves the thread, not the page; counting it re-read the
+            // screen every time the user scrolled their own answer
+            // (2026-09-06).
+            let location = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in
+                guard let self,
+                      Self.advancesGuidance(clickAt: location, bubble: self.bubbleFrame())
+                else { return }
+                self.noteScroll()
+            }
         }
     }
 
@@ -1046,7 +1065,11 @@ final class VisionSession: ObservableObject {
         case .defer:
             copilotActDeferred = true
             Diagnostics.record("guide.act.deferred")
-            restartIdleTimer(after: GuidanceTrigger.typingIdle, reason: "typingIdle")
+            // The clock starts with the first key, not with this click
+            // (GuidanceTrigger.restartsTypingIdle). A clock already running
+            // from typing in the previous field keeps running, so two fields
+            // filled quickly cost one step.
+            noteDeferredEvent(.enteredInput)
         case .advance:
             copilotIdleTimer?.invalidate()
             copilotIdleTimer = nil
@@ -1055,10 +1078,11 @@ final class VisionSession: ObservableObject {
         }
     }
 
-    /// A key went down somewhere. Only *that* it did is used: while an act is
-    /// deferred, typing pushes the re-plan back until the hand pauses.
-    private func noteTyping() {
-        guard copilotActDeferred else { return }
+    /// Something happened while an act is deferred. Only *that* it did is
+    /// used — a key is a timestamp here — and whether it starts or pushes back
+    /// the clock is `GuidanceTrigger`'s call.
+    private func noteDeferredEvent(_ event: GuidanceTrigger.DeferredEvent) {
+        guard copilotActDeferred, GuidanceTrigger.restartsTypingIdle(event) else { return }
         restartIdleTimer(after: GuidanceTrigger.typingIdle, reason: "typingIdle")
     }
 
@@ -1212,9 +1236,12 @@ final class VisionSession: ObservableObject {
                     try? FileManager.default.removeItem(at: capture.attachment.url)
                     return
                 }
-                // Confirm the exact adopted frame after capture, without
-                // delaying AX collection or the Gateway request.
-                CopilotCaptureCuePresenter.shared.flash(for: capture.attachment)
+                // No cue for the re-read. The sweep that marked the adopted
+                // capture (2026-08-26) sat on the bare screen during guidance,
+                // where a full-screen pass of purple read as a glitch rather
+                // than as a signal (owner, 2026-09-07). The chip's pulse says
+                // the product is thinking; if a cue for "the screen was read"
+                // comes back, it comes back designed, not as this.
                 // Copilot progress turns produced no operational record at all
                 // until now: the 2026-08-03 trail had the AX walk and the
                 // capture as DEBUG-only NSLog, so a shipped build reported
@@ -1236,7 +1263,8 @@ final class VisionSession: ObservableObject {
                 await self.evaluateCopilotProgress(
                     attachment: capture.attachment,
                     goal: goal,
-                    previousInstruction: previousInstruction
+                    previousInstruction: previousInstruction,
+                    generation: generation
                 )
             } catch is CancellationError {
                 guard ledger.cause == nil else { return }
@@ -1262,7 +1290,8 @@ final class VisionSession: ObservableObject {
     private func evaluateCopilotProgress(
         attachment newAttachment: ScreenshotAttachment,
         goal: String,
-        previousInstruction: String
+        previousInstruction: String,
+        generation: Int
     ) async {
         guard let client else { return }
         copilotState = .evaluating
@@ -1369,12 +1398,21 @@ final class VisionSession: ObservableObject {
                 break
             }
         } catch {
+            try? FileManager.default.removeItem(at: newAttachment.url)
+            // A run that was superseded, or whose guidance was closed, stops
+            // here in silence: whoever cancelled it owns the state and the
+            // message. Cancelling mid-request surfaces from URLSession as
+            // `URLError.cancelled`, not `CancellationError`, so without this
+            // the step that had already been replaced painted a red
+            // "Canceled" over its successor and set the state the successor
+            // was using (2026-09-06, `copilot.failed error=transport.-999`
+            // 70 ms after `guide.act.superseded`).
+            guard copilotStepGeneration == generation, !Task.isCancelled else { return }
             if attachment.id == newAttachment.id {
                 attachment = previousAttachment
-                        candidates = previousCandidates
+                candidates = previousCandidates
                 candidateDiagnostics = previousDiagnostics
             }
-            try? FileManager.default.removeItem(at: newAttachment.url)
             copilotState = .timedOut
             Diagnostics.record("copilot.failed", details: [
                 ("sinceAsk", .ms(askClock.elapsedMs)),
@@ -1496,7 +1534,14 @@ final class VisionSession: ObservableObject {
             candidates: candidates,
             toleratingUnplaceableTarget: tolerant
         )
-        guard let gesture else { return answered }
+        // A guide answer's frame is the control to press next, not a claim
+        // about what the gesture meant, so the gesture has no say over it.
+        // `gestureBound` already returns nil once guidance is active, but the
+        // answer that *opens* guidance is applied before the mode changes:
+        // point at something, ask a question, and the first instruction came
+        // back `highlight=gestureKept` — no frame on entering guidance
+        // (VS Code, 2026-09-07 00:03:41).
+        guard let gesture, result.mode != .guide else { return answered }
         switch (gesture, answered) {
         case (_, .none), (_, .gestureKept):
             return answered

@@ -13,7 +13,16 @@ struct ActiveSkillLabel: View {
         Label(skillName, systemImage: "puzzlepiece.extension")
             .font(.caption)
             .foregroundStyle(.secondary)
-            .hoverHint(help, alignment: .bottomLeading, offset: CGSize(width: 0, height: 28))
+            // Click-through: the name sits in the top-left corner, exactly
+            // where a hand reaches to grab a card, and it is not a control.
+            // A hint that claimed the press made that corner the one spot on
+            // the bar that could not drag the bubble (owner, 2026-09-08).
+            .hoverHint(
+                help,
+                alignment: .bottomLeading,
+                offset: CGSize(width: 0, height: 28),
+                clickThrough: true
+            )
             .accessibilityLabel("適用中のスキル: \(skillName)")
     }
 }
@@ -281,12 +290,19 @@ extension View {
     ///
     /// Delayed like a tooltip, because a label that appears the instant the
     /// pointer crosses a control reads as the interface twitching.
+    ///
+    /// `clickThrough` is for hints on things that are not controls. SwiftUI's
+    /// `onHover` claims the press for the view it watches, which turns a
+    /// labelled label into a dead spot for anything behind it — the window
+    /// drag handle, here. A tracking area answers enter and leave without
+    /// wanting the click.
     func hoverHint(
         _ text: String,
         alignment: Alignment = .top,
-        offset: CGSize = CGSize(width: 0, height: -28)
+        offset: CGSize = CGSize(width: 0, height: -28),
+        clickThrough: Bool = false
     ) -> some View {
-        modifier(HoverHint(text: text, alignment: alignment, offset: offset))
+        modifier(HoverHint(text: text, alignment: alignment, offset: offset, clickThrough: clickThrough))
     }
 }
 
@@ -294,24 +310,32 @@ private struct HoverHint: ViewModifier {
     let text: String
     let alignment: Alignment
     let offset: CGSize
+    let clickThrough: Bool
 
     @State private var isShown = false
     @State private var reveal: Task<Void, Never>?
 
+    private func hover(_ inside: Bool) {
+        reveal?.cancel()
+        guard inside else {
+            isShown = false
+            return
+        }
+        reveal = Task {
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            isShown = true
+        }
+    }
+
     func body(content: Content) -> some View {
-        content
-            .onHover { inside in
-                reveal?.cancel()
-                guard inside else {
-                    isShown = false
-                    return
-                }
-                reveal = Task {
-                    try? await Task.sleep(for: .milliseconds(450))
-                    guard !Task.isCancelled else { return }
-                    isShown = true
-                }
+        Group {
+            if clickThrough {
+                content.background(ClickThroughHover(onChange: hover))
+            } else {
+                content.onHover(perform: hover)
             }
+        }
             .overlay(alignment: alignment) {
                 if isShown {
                     Text(text)
@@ -333,5 +357,46 @@ private struct HoverHint: ViewModifier {
                         .allowsHitTesting(false)
                 }
             }
+    }
+}
+
+/// Hover tracking that leaves the mouse button alone.
+///
+/// `hitTest` returns nil, so a press over this view goes to whatever is
+/// beneath — the drag handle behind the bubble's bar — while the tracking area
+/// still reports enter and leave. `.activeAlways` because the bubble's panel is
+/// key without its app being active during guidance, and a hint that only
+/// worked in one of the two modes would read as broken in the other.
+private struct ClickThroughHover: NSViewRepresentable {
+    let onChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> TrackingView {
+        let view = TrackingView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ nsView: TrackingView, context: Context) {
+        nsView.onChange = onChange
+    }
+
+    final class TrackingView: NSView {
+        var onChange: ((Bool) -> Void)?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeAlways],
+                owner: self,
+                userInfo: nil
+            ))
+        }
+
+        override func mouseEntered(with event: NSEvent) { onChange?(true) }
+        override func mouseExited(with event: NSEvent) { onChange?(false) }
     }
 }

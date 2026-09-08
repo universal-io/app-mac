@@ -133,6 +133,21 @@ struct VisionThreadView: View {
 
     private static let bubbleVerticalPadding: CGFloat = 6
 
+    /// Extra space between the lines of a message, on top of the font's own
+    /// line box.
+    ///
+    /// The system font's line box is 1.18 times its size (measured: 15.3 pt at
+    /// 13 pt), which is set for labels and read as cramped in a paragraph — the
+    /// owner put it at "1.1 or 1.2" by eye and asked for 1.4 to 1.5
+    /// (2026-09-07). Four points at 13 pt makes 1.49. One rule for every row,
+    /// and `VisionBubbleView.answerLineHeight` adds the same amount so the
+    /// pane still lands on whole lines.
+    static func lineSpacing(fontSize: CGFloat) -> CGFloat {
+        (fontSize * 0.3).rounded()
+    }
+
+    private var lineSpacing: CGFloat { Self.lineSpacing(fontSize: fontSize) }
+
     /// Every face is the same circle, and the circle is exactly as tall as a
     /// one-line message: line height plus the message's own vertical padding.
     /// Top-aligned, a single line and its avatar then share their edges, and a
@@ -161,6 +176,7 @@ struct VisionThreadView: View {
                 Spacer(minLength: avatarSize + 8)
                 Text(text)
                     .font(.system(size: fontSize))
+                    .lineSpacing(lineSpacing)
                     .foregroundStyle(.white)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -178,6 +194,7 @@ struct VisionThreadView: View {
             productRow(text: text, accessibility: "Universal I/O: \(text)") {
                 Text(text)
                     .font(.system(size: fontSize))
+                    .lineSpacing(lineSpacing)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -185,6 +202,7 @@ struct VisionThreadView: View {
             productRow(text: text, accessibility: "Universal I/O: \(text)") {
                 Text(text)
                     .font(.system(size: fontSize))
+                    .lineSpacing(lineSpacing)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -194,6 +212,7 @@ struct VisionThreadView: View {
                 // what the work is.
                 Label(text, systemImage: "eye")
                     .font(.system(size: fontSize))
+                    .lineSpacing(lineSpacing)
                     .foregroundStyle(.secondary)
             }
         case .note(let text):
@@ -205,6 +224,7 @@ struct VisionThreadView: View {
         case .error(let text):
             Text(text)
                 .font(.system(size: fontSize))
+                .lineSpacing(lineSpacing)
                 .foregroundStyle(.orange)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -212,6 +232,7 @@ struct VisionThreadView: View {
         case .hint(let text):
             Text(text)
                 .font(.system(size: fontSize))
+                .lineSpacing(lineSpacing)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

@@ -70,8 +70,24 @@ enum VisionBubblePlacement {
     /// screen. The current frame is read from the window rather than stored,
     /// which is also what makes a position the user dragged the card to survive
     /// every resize after it.
-    static func resized(_ frame: CGRect, to size: CGSize, in bounds: CGRect) -> CGRect {
-        var origin = CGPoint(x: frame.minX, y: frame.maxY - size.height)
+    ///
+    /// One exception to "the top stays": a card sitting **above** its subject
+    /// grows upward. Its bottom edge is what keeps it off the control, and
+    /// growing down from the top carried the words over the very thing they
+    /// were about — a 600 pt card placed above GA4's date-range button grew
+    /// back down onto the button, and onto the menu the button opens
+    /// (2026-09-08). Which edge stays is not a re-solve; the card is still
+    /// where it was put.
+    static func resized(
+        _ frame: CGRect,
+        to size: CGSize,
+        in bounds: CGRect,
+        avoiding subject: CGRect? = nil
+    ) -> CGRect {
+        let sitsAboveSubject = subject.map { frame.minY >= $0.maxY } ?? false
+        var origin = sitsAboveSubject
+            ? CGPoint(x: frame.minX, y: frame.minY)
+            : CGPoint(x: frame.minX, y: frame.maxY - size.height)
         let lowest = bounds.minY + margin
         let highest = max(lowest, bounds.maxY - margin - size.height)
         origin.y = min(max(origin.y, lowest), highest)
@@ -95,26 +111,42 @@ enum VisionBubblePlacement {
         )
     }
 
+    /// Right of the frame, then left of it, then below, then above.
+    ///
+    /// Beside means beside. For the two side positions only the horizontal
+    /// room is checked, and the card slides up or down as far as it must to
+    /// stay on screen: a card to the side cannot cover the frame however far it
+    /// slides, so the slide is free. Requiring the top-aligned position to fit
+    /// whole threw both sides away for any tall card next to a low control — a
+    /// date-range button at the bottom of GA4 sent a 600 pt card *above* itself
+    /// (2026-09-08), the one place from which growth reaches the button and the
+    /// menu it opens. Above and below can cover the frame, so those two still
+    /// have to fit whole, and the order between them puts the card below first.
     static func origin(
         besideFrame frame: CGRect,
         size: CGSize,
         in bounds: CGRect
     ) -> CGPoint {
-        let candidates = [
-            CGPoint(x: frame.maxX + gap, y: frame.maxY - size.height),
-            CGPoint(x: frame.minX - gap - size.width, y: frame.maxY - size.height),
+        let topAligned = frame.maxY - size.height
+        for x in [frame.maxX + gap, frame.minX - gap - size.width] {
+            let rect = CGRect(x: x, y: topAligned, width: size.width, height: size.height)
+            guard rect.minX >= bounds.minX + margin, rect.maxX <= bounds.maxX - margin else { continue }
+            return clamp(rect, into: bounds).origin
+        }
+        for origin in [
             CGPoint(x: frame.minX, y: frame.minY - gap - size.height),
             CGPoint(x: frame.minX, y: frame.maxY + gap),
-        ]
-        for origin in candidates {
+        ] {
             let rect = CGRect(origin: origin, size: size)
-            guard fits(rect, in: bounds) else { continue }
-            guard !rect.intersects(frame) else { continue }
+            guard fits(rect, in: bounds), !rect.intersects(frame) else { continue }
             return origin
         }
         // Same trade as the point placement: a bubble overlapping the frame is
         // still readable, one pushed off the display is not.
-        return clamp(CGRect(origin: candidates[0], size: size), into: bounds).origin
+        return clamp(
+            CGRect(x: frame.maxX + gap, y: topAligned, width: size.width, height: size.height),
+            into: bounds
+        ).origin
     }
 
     /// The one place the three rules below are chosen between.
