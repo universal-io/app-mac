@@ -769,13 +769,24 @@ Keychain の許可状態に影響するため、明示的な実機確認時だ�
 
 ## リリース運用
 
-**`0.2.4`の候補を build `11` として作ります（2026-09-12）。まだ公開ダウンロードではありません。**
+**`0.2.4` build `11` を候補として作成しました（2026-09-12）。まだ公開ダウンロードではありません。**
+
+```text
+dist/Universal-IO-0.2.4-build11.dmg
+SHA-256: dde317f8681ab0fd5b8094279130cb8d4702942fe49059d79df5e817832f865d
+バイナリソース: 6ea0cc2
+```
+
+Developer ID署名（`Developer ID Application: Kaya Matsumoto (TG68TFXG88)`、Hardened Runtime）、
+notarization（app・DMGとも`Accepted`）、staple、Gatekeeper評価（`source=Notarized Developer ID`）、
+Universal binary（x86_64 + arm64）、本番Gateway（`https://api.universal-io.com`）向きであることを
+確認済みです。221 unit testが通っています。
 
 公開中の `v0.2.3` build `10` には、2026-09-06にオーナーの実機で見つかった案内の欠陥7件の修正が
 入っていません（枠が出ない・赤い「Canceled」・撮影が連続）。修正は`fix/guidance-loop-20260906`として
 2026-09-08に`main`へ入り、GA4とVS Codeの実機で通っていますが、**確認したのはDebugビルドです**。
 R17（バブルのメッセンジャー型スレッド）、ブラウザの窓でページの中の要素だけを送る候補スコープ、
-バブルの掴み手と伸びる向きの修正も同じ版に入ります。221 unit testが通っています。
+バブルの掴み手と伸びる向きの修正も同じ版に入ります。
 build `11` の確認は、この署名ビルドでも同じに動くことのスモークです。
 
 **D7（24時間以上連続稼働したプロセスでのgolden path）は今回実施しません**（オーナー判断 2026-09-12）。
