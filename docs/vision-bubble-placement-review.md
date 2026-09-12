@@ -17,7 +17,7 @@ regionで回答枠を発行せず、measuredで回答対象をAX枠へ固定し�
 2. 「本文・画像・グラフなら`candidates=0`が正常」は過剰一般化だった。candidateは画面全体の操作要素数。
    `collectorEmpty / pointMiss / measured`を分けて記録し、0件は収集側の問題候補として扱う。
 
-Gatewayと公開中の`0.2.2`は変更しない。`AXUIElementCopyElementAtPosition`も、入力位置に応じて値が
+Gatewayと、当時公開中だった`0.2.2`は変更しない（このレビュー時点の制約）。`AXUIElementCopyElementAtPosition`も、入力位置に応じて値が
 変わるか、画面大要素を返さないかを短命probeで測るまでは本実装へ入れない。
 
 **依頼内容**: この1機能の配置ロジックを、設計からレビューしてほしい。対症療法を4回重ねた結果、

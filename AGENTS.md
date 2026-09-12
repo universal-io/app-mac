@@ -115,10 +115,9 @@ Rules:
 - If work intentionally moves away again in the future, update this file first.
 
 Current branch:
-- `main`（`v0.2.2` build `8`を公開済み、`main`は`0.2.3`を開いている）。
-  `fix/vision-bubble-placement-state`は2026-09-02に実機確認まで済ませてmainへfast-forward統合した。
-  次のリリース候補は`0.2.3` build `10`（build `9`は候補ソースから実装が大きく進んだため公開せず破棄。
-  経緯はREADMEのリリース運用）。
+- `main`（`v0.2.4` build `11`を2026-09-13に公開済み。**公開版と`main`は一致している**）。
+  `fix/guidance-loop-20260906`は2026-09-08に実機確認まで済ませてmainへ統合し、その版が公開された。
+  次の公開は`0.2.5`から。候補は再ビルドせず、build番号は署名ビルドごとに上げる（経緯はREADMEのリリース運用）。
 
 Current operational note:
 - 2026-07-18: Vision/Copilotを単一の本番経路へ統合。旧Navigator、実験名、
