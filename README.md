@@ -728,27 +728,69 @@ Chrome等がクリック対象のAccessibility矩形を返さない場合も案�
 
 ## 開発
 
+macOSのビルド時に参照する。CLI検証は以下の専用DerivedDataへ隔離する。
+
 必要環境:
 
 - macOS 14+
 - Xcode 16+
 - XcodeGen
-- Node.js / npm
 
 ```bash
 xcodegen generate
 xcodebuild -project BombSquad.xcodeproj -scheme BombSquad -configuration Debug \
   -derivedDataPath /tmp/universal-io-derived \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-
-cd web
-npm install
-npm run lint
-npm run build
 ```
 
 通常のCLI検証では署名を無効にします。署名付き実行はマイク・画面収録・Accessibility・
 Keychain の許可状態に影響するため、明示的な実機確認時だけ行います。
+
+### Jev候補実験（短命ブランチ限定）
+
+`experiment/jev-copilot-candidates` のDebug版のみ。案内モードの「AX候補を確認」で
+通常の自動案内を止める。入口ではAXだけを取得し、label / role / parent / statesと取得診断を表示する。
+「AX結果を一時JSONへ」で明示的にJev入力schemaの一時ファイルを保存し、別のserver repo CLIから
+dry-runする。Gatewayへの自動送信、画像撮影・画像送信・自動クリック・常時監視は行わない。
+「AX結果をコピー」で表示中の取得スナップショット全件をplain textとしてクリップボードへコピーできる。
+取得中の操作やアプリ切替では未保存の候補を破棄するが、明示保存済みJSONはその時点のスナップショットとして残る。
+実験終了時に保存済みJSONを削除する。「通常の案内に戻る」で実験を終了する。
+
+AX-only確認とJSON保存にはAPI配備・APIキーは不要。保存JSONは `snapshot_id`, `goal`,
+`previous_instruction`, `turns`, `candidates`（id / label / role / parent_label / states）のみを含む。
+254候補を超える場合は保存せず、候補を絞って再取得する。保存ファイルは一時ディレクトリに0600で作成される。
+
+ブラウザ接続を試す場合は、プロジェクトの`.codex/config.toml`に登録したChrome DevTools MCP 1.9.0を使う。
+Codexを再読み込みしてMCPを起動した後、Chromeで`chrome://inspect/#remote-debugging`をユーザーが手動で有効化し、
+接続許可（Allow）を行う。操作対象は明示したGoogle Analyticsタブだけに限定する。実験終了時はremote debuggingを
+手動で無効化し、プロジェクトのMCP登録を撤去する。
+実機はXcodeの署名付きDebug版で起動する（署名ビルド番号は毎回更新）。CLIの署名なし版は起動しない。
+
+判定時には次を確認する:
+- 同じ目的・画面で候補が役立つか。正解がない画面で判断保留できるか。
+- AX取得時間と候補内容を確認し、保存JSONをserver repo CLIでdry-runする。
+- 判定中のクリック・キー・スクロール・アプリ切替で古い結果が破棄されること。
+- AX取得が一部の時はその表示が出ること。254候補超は切り捨てず送信を止める。
+
+結果は取得時点のスナップショットで、画面だけの自動更新は未監視。候補の確率は目的達成率ではない。
+Skill注入・手順生成・ハイライト・自動操作は今回の対象外。性能・有用性は未実測。
+終了時に両リポジトリの実験コード・テスト・この節・API契約の実験節・サーバー設定を撤去する。
+
+### キーチェーンの診断
+
+起動時にアクセス許可が繰り返される場合に使う。2026-08-23の調査では、旧来型Keychainの
+ACLと、開発版・本番版による同一項目の共有が原因だった。署名やSDKの現状は再発時に確認する。
+
+- `codesign -dvvv <app>` で署名を確認する。Xcode開発版は `Apple Development`、
+  Teamは `TG68TFXG88`（設定は `project.yml`）。署名なしCLIビルドは起動しない。
+- Keychain Accessでサービス名とアクセス制御を確認する。サービス名はbundle id由来で、
+  本番は `com.universal-io.mac.supabase`、開発は `com.universal-io.mac.dev.supabase`。
+  旧 `com.universal-io.mac` / `com.heywatchme.bombsquad` の `*-api-key` はBYOK時代の残骸。
+- 当時のSupabase SDKは旧来型Keychainを使い、読み取り・書き込みで別々にACL許可を求めた。
+  「許可しない」は未ログイン扱いになる。許可要求だけで署名設定の不備と断定しない。
+- 同一署名でも再発する場合はデータ保護Keychainへの移行を検討する。
+  `kSecUseDataProtectionKeychain`、`keychain-access-groups`、プロビジョニングプロファイルが
+  関わり、リリース手順にも影響するため別判断とする。
 
 ### Gatewayのデプロイ
 

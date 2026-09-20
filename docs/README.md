@@ -1,8 +1,8 @@
 # ドキュメント索引
 
-最終更新: 2026-09-03 ／ ステータス: 現行
+最終更新: 2026-09-20 ／ ステータス: 現行
 
-このファイルがドキュメントの唯一の入口です。実装の正は現行コード、製品計画の正は
+文書の追加・整理や正本の所在確認に使う索引です。作業に必要な行の参照先だけ読みます。実装の正は現行コード、製品計画の正は
 `universal-io-master-plan.md` です。
 
 **APIとサーバー側の正本はこのリポジトリにありません。** 2026-08-16にGatewayを
@@ -12,7 +12,7 @@
 
 | ドキュメント | 役割 |
 |---|---|
-| [../HANDOFF.md](../HANDOFF.md) | **次のセッションが最初に読む。いま何をすべきか。** 1本だけを保ち、役目を終えた記述は消す |
+| [../HANDOFF.md](../HANDOFF.md) | 前回の続き・未完了事項を扱う時に該当項目を読む。 1本だけを保ち、役目を終えた記述は消す |
 | [../README.md](../README.md) | 現行機能、実行経路、開発手順 |
 | [universal-io-master-plan.md](universal-io-master-plan.md) | 製品ビジョンとリリース・マイルストーン |
 | [manual-golden-paths.md](manual-golden-paths.md) | リリース前の手動検証 |
@@ -37,11 +37,11 @@
 | `docs/vision-selection-evidence-fix.md` | R10.5 selection判定の記録 |
 | `docs/dev-prod-app-identity.md` | 開発版と本番版のアプリ正体分離 |
 
-**`universal-io/app-web`**（Webクライアント企画）
+**`universal-io/app-web`**（Webクライアント）
 
 | ドキュメント | 役割 |
 |---|---|
-| `docs/requirements.md` | リポジトリ構成の決定とGateway切り出しの経緯 |
+| `docs/archive/requirements.md` | リポジトリ構成の決定とGateway切り出しの経緯 |
 
 ## 参照資料
 
@@ -51,12 +51,5 @@
 
 ## 運用ルール
 
-1. 同じ役割の正本を複数作らない。
-2. 新しい `.md` はこの索引への登録と同じコミットで作る。
-3. 実験は短命ブランチだけで行い、終了時に実装・fixture・flag・専用設定・説明文を削除する。
-4. 失敗した方式を作業ツリーにアーカイブしない。必要ならGit履歴から参照する。
-5. 方針変更はREADME、該当正本、コードを同じコミットで更新する。
-6. `test`、`mock`、`dummy`、`fixture`、`experiment`、`challenge`、`shadow`という本番代替経路を
-   常設しない。必要な検証は隔離した短命ブランチで実施する。
-7. **Gateway・API・課金・Supabaseに関する変更は `api-gateway` リポジトリで行う。**
-   このリポジトリはmacOSクライアントだけを持つ。
+リポジトリ境界・文書更新・実験の制約は [AGENTS.md](../AGENTS.md#維持する制約) に従う。
+同じ役割の正本を複数作らない。失敗した方式は作業ツリーへアーカイブせずGit履歴を参照する。
