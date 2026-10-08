@@ -76,6 +76,9 @@ final class CompanionAudio: @unchecked Sendable {
     /// The tap's format as a non-interleaved mono buffer, for the converter.
     private var monoFormat: AVAudioFormat?
     private var configurationObserver: NSObjectProtocol?
+    #if DEBUG
+    private var dump: CompanionAudioDump?
+    #endif
     private var startedAt = Date.distantPast
     /// A graph that has just started can report its own settling as a
     /// configuration change; rebuilding on that would never end.
@@ -179,6 +182,9 @@ final class CompanionAudio: @unchecked Sendable {
                 destination[index] = Float(sample) / 32_768
             }
         }
+        #if DEBUG
+        dump?.gave(buffer)
+        #endif
         lock.lock()
         let generation = self.generation
         scheduled += 1
@@ -269,6 +275,14 @@ final class CompanionAudio: @unchecked Sendable {
             // The processor's two client formats must agree (-10875, build 15).
             engine.connect(engine.mainMixerNode, to: engine.outputNode, format: tapFormat)
         }
+        #if DEBUG
+        if let dump = CompanionAudioDump(given: playbackFormat, mixed: engine.mainMixerNode.outputFormat(forBus: 0)) {
+            engine.mainMixerNode.installTap(onBus: 0, bufferSize: 4_096, format: nil) { buffer, _ in
+                dump.mixed(buffer)
+            }
+            self.dump = dump
+        }
+        #endif
         self.engine = engine
         self.player = player
         engine.prepare()
@@ -312,6 +326,10 @@ final class CompanionAudio: @unchecked Sendable {
             return
         }
         engine.inputNode.removeTap(onBus: 0)
+        #if DEBUG
+        if dump != nil { engine.mainMixerNode.removeTap(onBus: 0) }
+        dump = nil
+        #endif
         player?.stop()
         engine.stop()
         if engine.inputNode.isVoiceProcessingEnabled {
@@ -587,3 +605,61 @@ final class CompanionAudio: @unchecked Sendable {
         ])
     }
 }
+
+#if DEBUG
+/// DEBUG only: two recordings of the companion's voice per audio graph in
+/// /tmp/universal-io-companion-audio (never the user's). `given` is every
+/// piece handed to the player, back to back; `mixed` is what the engine sent
+/// on to the output, in real time. The owner hears replies start mid-sentence
+/// while Gemini's audio starts whole (CLI, 5 of 5 greetings): a start present
+/// in `mixed` but not heard was lost after the engine (voice processing or the
+/// speakers), one missing from `mixed` was lost in the app.
+private final class CompanionAudioDump {
+    private let givenFile: AVAudioFile
+    private let mixedFile: AVAudioFile
+
+    init?(given: AVAudioFormat, mixed: AVAudioFormat) {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return nil }
+        let directory = URL(fileURLWithPath: "/tmp/universal-io-companion-audio", isDirectory: true)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss-SSS"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let stamp = formatter.string(from: Date())
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            givenFile = try Self.file(directory.appendingPathComponent("\(stamp)-given.wav"), given)
+            mixedFile = try Self.file(directory.appendingPathComponent("\(stamp)-mixed.wav"), mixed)
+            NSLog("Companion audio dump: %@/%@-*.wav", directory.path, stamp)
+        } catch {
+            NSLog("Companion audio dump failed: %@", String(describing: error))
+            return nil
+        }
+    }
+
+    /// Main thread.
+    func gave(_ buffer: AVAudioPCMBuffer) {
+        try? givenFile.write(from: buffer)
+    }
+
+    /// The mixer's tap thread.
+    func mixed(_ buffer: AVAudioPCMBuffer) {
+        try? mixedFile.write(from: buffer)
+    }
+
+    private static func file(_ url: URL, _ format: AVAudioFormat) throws -> AVAudioFile {
+        try AVAudioFile(
+            forWriting: url,
+            settings: [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: format.sampleRate,
+                AVNumberOfChannelsKey: format.channelCount,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+            ],
+            commonFormat: .pcmFormatFloat32,
+            interleaved: false
+        )
+    }
+}
+#endif
