@@ -20,23 +20,42 @@ enum CompanionAudioError: UserPresentableError {
 final class CompanionAudio: @unchecked Sendable {
     /// How the graph is wired. Tried in order until one starts.
     ///
-    /// Measured on the owner's Mac (2026-10-08, build 15): with voice
-    /// processing on and the engine's default wiring, initialization failed
-    /// with -10875 "client-side input and output formats do not match" — the
-    /// voice processor needs the format going to the speakers to match the
-    /// one coming from the microphone, and the default follows the output
-    /// hardware instead. Which of these wins is recorded, so the next device
-    /// that differs shows up in the log rather than as silence.
+    /// Build 17 on the owner's Mac (2026-10-08): the engine started with
+    /// voice processing on, yet the model interrupted itself ~400 ms into
+    /// every sentence — its own voice from the speakers, heard as the user.
+    /// Two things in that build were wrong, both documented by others who
+    /// hit the same wall:
+    ///
+    /// - Voice processing was enabled before the playback graph existed.
+    ///   The processor takes what it is playing as the reference it
+    ///   subtracts; enabled first, it starts with no output bus and cancels
+    ///   nothing (field reports on VoiceProcessingIO, 2026).
+    /// - The tap took channel 0 of whatever the input node reported. With
+    ///   voice processing on, macOS reports the aggregate it built — 9
+    ///   channels on that Mac (built-in mic plus BlackHole, Teams, iPhone) —
+    ///   and channel 0 is not promised to be the processed voice. A tap
+    ///   installed with a mono format gets the one processed channel
+    ///   (Apple forum 771530).
+    ///
+    /// Build 15 had shown the other constraint: the processor's client
+    /// formats on both sides must agree, or initialization fails with
+    /// -10875. So the mixer is connected to the output in the tap's format.
     enum Plan: String, CaseIterable, DiagnosticCode {
-        /// Mixer to output in exactly the microphone's format.
-        case matchedToInput
-        /// Mixer to output at the microphone's rate, with the output's channels.
-        case matchedRate
+        /// Playback wired first, mono tap, output in the tap's format.
+        case playbackFirstMono
+        /// Playback wired first, tap and output in the input node's format.
+        case playbackFirstMatched
+        /// Voice processing first, mono tap. Build 17's order, better tap.
+        case processingFirstMono
+        /// Build 17's exact wiring: known to start, known not to cancel.
+        case processingFirstMatched
         /// No echo cancellation: works anywhere, needs headphones.
         case withoutVoiceProcessing
 
         var diagnosticCode: String { rawValue }
         var cancelsEcho: Bool { self != .withoutVoiceProcessing }
+        var playbackFirst: Bool { self == .playbackFirstMono || self == .playbackFirstMatched }
+        var monoTap: Bool { self == .playbackFirstMono || self == .processingFirstMono }
     }
 
     /// 16 kHz mono PCM16 LE. Called on the audio thread.
@@ -167,6 +186,7 @@ final class CompanionAudio: @unchecked Sendable {
 
     private func build(_ engine: AVAudioEngine, _ player: AVAudioPlayerNode, _ plan: Plan) throws {
         let input = engine.inputNode
+        if plan.playbackFirst { wirePlayback(engine, player) }
         if plan.cancelsEcho {
             // On either node it turns on for both: the output is the reference
             // the canceller subtracts from the input.
@@ -183,26 +203,35 @@ final class CompanionAudio: @unchecked Sendable {
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw CompanionAudioError.noInput
         }
-        try installCapture(on: input, format: inputFormat)
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
-        switch plan {
-        case .matchedToInput:
-            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: inputFormat)
-        case .matchedRate:
-            let channels = max(1, engine.outputNode.outputFormat(forBus: 0).channelCount)
-            if let format = AVAudioFormat(standardFormatWithSampleRate: inputFormat.sampleRate, channels: channels) {
-                engine.connect(engine.mainMixerNode, to: engine.outputNode, format: format)
-            }
-        case .withoutVoiceProcessing:
-            break
+        let tapFormat: AVAudioFormat
+        if plan.monoTap {
+            guard let mono = AVAudioFormat(
+                standardFormatWithSampleRate: inputFormat.sampleRate, channels: 1
+            ) else { throw CompanionAudioError.converterUnavailable }
+            tapFormat = mono
+        } else {
+            tapFormat = inputFormat
+        }
+        try installCapture(on: input, format: tapFormat)
+        if !plan.playbackFirst { wirePlayback(engine, player) }
+        if plan.cancelsEcho {
+            // The processor's two client formats have to agree (-10875
+            // otherwise): what leaves the input bus and what reaches the
+            // output bus.
+            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: tapFormat)
         }
         engine.prepare()
         try engine.start()
         player.play()
         Diagnostics.record("companion.audioStarted", details: [
             ("plan", .code(plan)),
+            ("tapChannels", .count(Int(tapFormat.channelCount))),
         ] + Self.formatDetails(engine))
+    }
+
+    private func wirePlayback(_ engine: AVAudioEngine, _ player: AVAudioPlayerNode) {
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
     }
 
     /// Rates and channel counts on both sides — the numbers the voice
@@ -247,12 +276,12 @@ final class CompanionAudio: @unchecked Sendable {
 
     // MARK: - Capture
 
-    private func installCapture(on input: AVAudioInputNode, format inputFormat: AVAudioFormat) throws {
-        // With voice processing on, macOS can hand the tap more than one
-        // channel; only the first is the processed voice.
+    private func installCapture(on input: AVAudioInputNode, format tapFormat: AVAudioFormat) throws {
+        // Whatever the tap delivers, only its first channel is used: the one
+        // processed channel for a mono tap, and channel 0 otherwise.
         guard let mono = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
-            sampleRate: inputFormat.sampleRate,
+            sampleRate: tapFormat.sampleRate,
             channels: 1,
             interleaved: false
         ), let converter = AVAudioConverter(from: mono, to: captureFormat) else {
@@ -260,7 +289,7 @@ final class CompanionAudio: @unchecked Sendable {
         }
         monoFormat = mono
         self.converter = converter
-        input.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) { [weak self] buffer, _ in
             self?.capture(buffer)
         }
     }
