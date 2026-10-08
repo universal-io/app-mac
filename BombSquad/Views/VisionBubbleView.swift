@@ -143,10 +143,10 @@ struct VisionBubbleView: View {
                 // scrolling when it does not, with its end kept in view,
                 // because the end is where the words are arriving.
                 ViewThatFits(in: .vertical) {
-                    displayedContent
+                    thread
                     ScrollViewReader { proxy in
                         ScrollView {
-                            displayedContent
+                            thread
                             Color.clear.frame(height: 1).id(Self.threadEnd)
                         }
                         .onAppear { proxy.scrollTo(Self.threadEnd, anchor: .bottom) }
@@ -187,33 +187,6 @@ struct VisionBubbleView: View {
         // (`BubbleChrome`): why it is opaque, and why the shadow belongs to the
         // window, is written there.
         .bubbleChrome()
-    }
-
-    @ViewBuilder
-    private var displayedContent: some View {
-#if DEBUG
-        if session.isJevExperimentActive {
-            JevCandidateExperimentView(experiment: session.jevExperiment,
-                                       goal: session.copilotGoal ?? "",
-                                       refreshAX: session.refreshJevAXProbe,
-                                       exportAX: session.exportJevAXProbe,
-                                       copyAX: session.copyJevAXProbe,
-                                       deleteAXExport: session.deleteJevAXExport,
-                                       stop: session.stopJevExperiment)
-        } else {
-            thread
-        }
-#else
-        thread
-#endif
-    }
-
-    private var showsStandardGuidance: Bool {
-#if DEBUG
-        session.isCopilotActive && !session.isJevExperimentActive
-#else
-        session.isCopilotActive
-#endif
     }
 
     /// Skill and close, on their own bar. A close button floating in the body
@@ -319,7 +292,7 @@ struct VisionBubbleView: View {
     /// keyboard ones, and clicks on another display.
     @ViewBuilder
     private var guidanceStatus: some View {
-        if showsStandardGuidance {
+        if session.isCopilotActive {
             // The note about an unchanged screen is a row of the thread now
             // (`VisionThreadRow.note`), beside the step it qualifies.
             // Outcomes only. "Click where the frame is; the screen is checked
@@ -338,11 +311,6 @@ struct VisionBubbleView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
-#if DEBUG
-                    Button("AX候補を確認") { session.startJevExperiment() }
-                        .controlSize(.small)
-                        .disabled(session.isLoading)
-#endif
                     if session.copilotState != .complete, session.copilotState != .stepLimit {
                         Button {
                             session.requestCopilotProgressCheck()

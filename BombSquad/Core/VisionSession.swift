@@ -166,52 +166,6 @@ final class VisionSession: ObservableObject {
     /// microphone in the field asking it to do what the held key asks it to do.
     var onToggleDictation: (() -> Void)?
 
-#if DEBUG
-    @Published private(set) var isJevExperimentActive = false
-    let jevExperiment = JevCandidateExperiment()
-
-    func startJevExperiment() {
-        guard isCopilotActive, !isLoading else { return }
-        copilotCancellation?.cause = .supersededByNewerRequest
-        copilotProgressTask?.cancel()
-        copilotProgressTask = nil
-        copilotStepGeneration += 1
-        isCopilotChecking = false
-        copilotTargetHandle = nil
-        removeCopilotClickMonitor()
-        publishAnswerHighlight(nil)
-        isJevExperimentActive = true
-        jevExperiment.startWatching(bubbleFrame: bubbleFrame)
-        refreshJevAXProbe()
-    }
-
-    func refreshJevExperiment() {
-        guard isJevExperimentActive, isCopilotActive, let goal = copilotGoal else { return }
-        jevExperiment.refresh(attachment: attachment, preferredPID: preferredTargetPID, goal: goal,
-                              previousInstruction: latestInstruction, turns: wireTurns)
-    }
-
-    func refreshJevAXProbe() {
-        guard isJevExperimentActive, isCopilotActive else { return }
-        jevExperiment.refreshAXOnly(attachment: attachment, preferredPID: preferredTargetPID,
-                                   goal: copilotGoal ?? "", previousInstruction: latestInstruction,
-                                   turns: wireTurns)
-    }
-
-    func exportJevAXProbe() { jevExperiment.exportAXProbe() }
-    func copyJevAXProbe() { jevExperiment.copyAXProbe() }
-    func deleteJevAXExport() { jevExperiment.deleteAXExport() }
-
-    func stopJevExperiment() {
-        jevExperiment.stop()
-        isJevExperimentActive = false
-        if isCopilotActive, copilotState != .complete, copilotState != .stepLimit {
-            copilotState = .idle
-            installCopilotClickMonitor()
-        }
-    }
-#endif
-
     private static let maxGuideSteps = 15
     private static let noClientMessage =
         "画面読み取りサービスを利用できません。ログインと接続設定を確認してください。"
@@ -540,15 +494,6 @@ final class VisionSession: ObservableObject {
         // about two different captures would race for the same bubble.
         guard !question.isEmpty, !isLoading, !isCopilotChecking else { return }
 
-#if DEBUG
-        if isJevExperimentActive {
-            copilotGoal = question
-            input = ""
-            turns.append(VisionDisplayTurn(role: .user, text: question, mode: nil, uncertainties: []))
-            refreshJevAXProbe()
-            return
-        }
-#endif
         // The origin moves to Enter: this turn's wait is the user's, and it has
         // nothing to do with how long ago the panel was summoned.
         askClock = SummonClock()
@@ -661,10 +606,6 @@ final class VisionSession: ObservableObject {
     func leaveGuidance() {
         guard isCopilotActive else { return }
         isCopilotActive = false
-#if DEBUG
-        jevExperiment.stop()
-        isJevExperimentActive = false
-#endif
         copilotCancellation?.cause = .guidanceLeft
         copilotProgressTask?.cancel()
         copilotProgressTask = nil
@@ -678,10 +619,6 @@ final class VisionSession: ObservableObject {
     }
 
     func tearDown() {
-#if DEBUG
-        jevExperiment.stop()
-        isJevExperimentActive = false
-#endif
         if isCopilotActive {
             Diagnostics.record("guide.left", details: [("via", .literal("closed"))])
         }
@@ -1086,9 +1023,6 @@ final class VisionSession: ObservableObject {
     }
 
     private func installCopilotClickMonitor() {
-#if DEBUG
-        guard !isJevExperimentActive else { return }
-#endif
         guard copilotClickMonitor == nil else { return }
         copilotClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) {
             [weak self] _ in
@@ -1221,9 +1155,6 @@ final class VisionSession: ObservableObject {
     }
 
     private func scheduleCopilotProgressCheck(after delay: UInt64, waitForChange: Bool) {
-#if DEBUG
-        guard !isJevExperimentActive else { return }
-#endif
         guard isCopilotActive,
               copilotState != .complete, copilotState != .stepLimit else { return }
         // Acting while a step is still running is not an error and must not
