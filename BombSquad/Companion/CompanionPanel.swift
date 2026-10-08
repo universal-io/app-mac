@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// R18: the companion's small window (決定2). Bottom-left of the working
+/// R18: the companion's small window (決定2). Bottom-right of the working
 /// screen, above ordinary windows, and never taking focus from the app the
 /// user is working in — the conversation happens beside the work, not in
 /// front of it.
@@ -21,7 +21,7 @@ final class CompanionPanelController {
         let bounds = ActiveDisplay.screen()?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
         panel.setFrame(
             NSRect(
-                x: bounds.minX + Self.margin,
+                x: bounds.maxX - Self.margin - Self.width,
                 y: bounds.minY + Self.margin,
                 width: Self.width,
                 height: size.height
