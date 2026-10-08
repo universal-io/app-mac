@@ -36,6 +36,6 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>音声入力（ASR）で下書きを作成するためにマイクを使用します。</string>
+	<string>音声入力と、声の相棒との会話にマイクを使用します。</string>
 </dict>
 </plist>

@@ -9,6 +9,8 @@ enum GatewayAIWarmup {
         case vision
         case suggest
         case transcribe
+        /// R18: the voice companion's token route.
+        case liveToken = "live-token"
 
         var path: String { "ai/\(rawValue)" }
     }

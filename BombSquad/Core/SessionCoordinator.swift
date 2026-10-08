@@ -55,6 +55,10 @@ final class SessionCoordinator {
     /// Vision's surface: the real screen with a wash over it, rather than a
     /// panel holding a picture of it (R14).
     private let pointingOverlay = VisionPointingOverlay()
+    /// R18 (experiment branch): the voice companion. Outside `AppMode`, so
+    /// nothing a mode transition does can end the conversation.
+    private var companion: CompanionSession?
+    private let companionPanel = CompanionPanelController()
     private var pointingTask: Task<Void, Never>?
     private var composeSession: ComposeSession?
     private var visionSession: VisionSession?
@@ -218,7 +222,11 @@ final class SessionCoordinator {
     private func handleDoubleTap(in mode: AppMode) {
         switch mode {
         case .idle:
-            summonSelectionAware()
+            // R18 (experiment branch): two taps start and end the voice
+            // companion instead of Vision (master plan R18 決定1). The
+            // companion keeps AppMode at idle, so the second double-tap
+            // lands here too.
+            toggleCompanion()
         case .vision, .copilot:
             // A selection session has no overlay: the user pointed by
             // selecting, so there was nothing left to point at. Asking for the
@@ -244,6 +252,32 @@ final class SessionCoordinator {
             _ = returnTo
             close(reason: .doubleTapDuringCapture)
         }
+    }
+
+    /// R18: starts the voice companion, or ends the one that is running. A
+    /// failed session keeps its window, with the reason, until it is closed.
+    private func toggleCompanion() {
+        if let companion {
+            companion.stop()
+            self.companion = nil
+            companionPanel.close()
+            return
+        }
+        // The app in front is the one the user is working in: this app is an
+        // accessory and never becomes frontmost from a gesture.
+        guard let session = CompanionSession(
+            targetApp: NSWorkspace.shared.frontmostApplication
+        ) else {
+            // Signed out: the token comes from the Gateway, which needs a user.
+            Diagnostics.record("companion.unavailable")
+            NSSound.beep()
+            return
+        }
+        companion = session
+        companionPanel.show(session) { [weak self] in
+            self?.toggleCompanion()
+        }
+        session.start()
     }
 
     /// Right-Shift double-tap from idle. One value-only AX snapshot decides the

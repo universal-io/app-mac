@@ -11,7 +11,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "0.2.4"
-    CURRENT_PROJECT_VERSION: "14"
+    CURRENT_PROJECT_VERSION: "15"
     SWIFT_VERSION: "5.0"
 targets:
   BombSquad:
@@ -26,7 +26,7 @@ targets:
         # Authoritative production gateway (Vercel project "gateway").
         BOMB_SQUAD_API_BASE_URL: "https://api.universal-io.com"
         LSApplicationCategoryType: "public.app-category.productivity"
-        NSMicrophoneUsageDescription: "音声入力（ASR）で下書きを作成するためにマイクを使用します。"
+        NSMicrophoneUsageDescription: "音声入力と、声の相棒との会話にマイクを使用します。"
         CFBundleURLTypes:
           - CFBundleURLName: com.universal-io.mac.auth
             CFBundleURLSchemes:
