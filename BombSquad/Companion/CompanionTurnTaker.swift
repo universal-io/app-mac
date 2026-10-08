@@ -42,8 +42,14 @@ struct CompanionTurnTaker {
         var overEchoMarginDb: Float = 10
         /// …and never below this. Echo cancelled down to −100 dBFS (build 20)
         /// put the line at floor + 15 = −61, and clicks over the voice became
-        /// turns that the model answered with 「はい」.
-        var overMinimumDb: Float = -42
+        /// turns that the model answered with 「はい」. The echo is not steady
+        /// either: its mean stayed near −53 while stretches reached −43 for
+        /// 0.2 s, were transcribed as words (「ドラム」), and the companion
+        /// answered itself. On the owner's Mac those echo turns averaged −52
+        /// to −60 (peaks −43 to −50); the user talking over it averaged −33
+        /// (peak −26), and −29 to −33 with nothing playing. A person stopping
+        /// the voice speaks up; nothing of the companion's reaches this.
+        var overMinimumDb: Float = -36
         /// Echo heard before a voice over it can count at all.
         var echoLearning: TimeInterval = 0.5
         var echoTimeConstant: TimeInterval = 2

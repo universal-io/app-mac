@@ -175,6 +175,27 @@ final class CompanionTurnTakerTests: XCTestCase {
         XCTAssertNil(idleClick.started)
     }
 
+    func testAnEchoSurgeAboveItsMeanIsNotAPerson() {
+        // Build 20, the greeting: the echo's mean −53, a stretch at −43 was
+        // transcribed as 「ドラム」 and the companion answered itself. Another
+        // room, another volume: a few dB more must not count either.
+        var taker = CompanionTurnTaker()
+        let room = feed(&taker, levelDb: -77, seconds: 1, from: 0)
+        let echo = feed(&taker, levelDb: -53, seconds: 2, from: room.end, voice: .playing)
+        let surge = feed(&taker, levelDb: -39, seconds: 0.6, from: echo.end, voice: .playing)
+        XCTAssertNil(surge.started)
+    }
+
+    func testAPersonStoppingTheVoiceAtAnEverydayLevelStartsATurn() {
+        // Build 20: the user talking over the voice averaged −33 dBFS.
+        var taker = CompanionTurnTaker()
+        let room = feed(&taker, levelDb: -73, seconds: 1, from: 0)
+        let echo = feed(&taker, levelDb: -84, seconds: 2, from: room.end, voice: .playing)
+        let over = feed(&taker, levelDb: -33, seconds: 0.4, from: echo.end, voice: .playing)
+        guard case .started(let overVoice, _)? = over.started else { return XCTFail("no start") }
+        XCTAssertTrue(overVoice)
+    }
+
     func testNothingCountsOverTheVoiceBeforeItsEchoIsKnown() {
         // The greeting's first words: however loud, they are not a person yet.
         var taker = CompanionTurnTaker()
