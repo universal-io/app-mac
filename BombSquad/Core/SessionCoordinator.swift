@@ -261,22 +261,33 @@ final class SessionCoordinator {
             companion.stop()
             self.companion = nil
             companionPanel.close()
+            // The companion pinned the working screen; a later Vision or
+            // Compose resolves its own. One open now has pinned its own, which
+            // stays.
+            if stateMachine.mode == .idle { ActiveDisplay.unpin() }
             return
         }
         // The app in front is the one the user is working in: this app is an
-        // accessory and never becomes frontmost from a gesture.
+        // accessory and never becomes frontmost from a gesture. Its screen is
+        // resolved first, so the window, the screen feed and the eye all use
+        // the one the user is working on (two displays on the owner's Mac).
+        let target = NSWorkspace.shared.frontmostApplication
+        let screen = ActiveDisplay.pin(to: target)
         guard let session = CompanionSession(
-            targetApp: NSWorkspace.shared.frontmostApplication
+            targetApp: target,
+            displayID: ActiveDisplay.displayID(of: screen)
         ) else {
             // Signed out: the token comes from the Gateway, which needs a user.
+            ActiveDisplay.unpin()
             Diagnostics.record("companion.unavailable")
             NSSound.beep()
             return
         }
         companion = session
-        companionPanel.show(session) { [weak self] in
+        companionPanel.show(session, on: screen) { [weak self] in
             self?.toggleCompanion()
         }
+        session.panelFrame = { [weak companionPanel] in companionPanel?.frame }
         session.start()
     }
 

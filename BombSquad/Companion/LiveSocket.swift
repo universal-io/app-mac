@@ -141,11 +141,19 @@ private final class OnceFlag: @unchecked Sendable {
 final class LiveUplink: @unchecked Sendable {
     private let lock = NSLock()
     private var socket: LiveSocket?
+    /// An activityStart went out on the current socket and its end has not.
+    private var activityOpen = false
 
     func replace(_ socket: LiveSocket?) {
         lock.lock()
         self.socket = socket
+        // A turn still open goes on on the new connection, which never saw
+        // its start: it gets one, so the rest of what the user says is a turn
+        // there and is answered. While there is no connection the turn stays
+        // open for the next one; if it ends meanwhile, its end closes it.
+        let carryOver = activityOpen && socket != nil
         lock.unlock()
+        if carryOver { socket?.send(LiveWire.activityStart) }
     }
 
     func send(_ message: [String: Any]) {
@@ -153,5 +161,27 @@ final class LiveUplink: @unchecked Sendable {
         let socket = self.socket
         lock.unlock()
         socket?.send(message)
+    }
+
+    /// The start or end of the user's turn. An end goes only where its start
+    /// went: a turn begun before the connection opened, or on the connection
+    /// a reconnect replaced, must not be closed on one that never saw it.
+    /// True when it went out.
+    @discardableResult
+    func sendActivity(start: Bool) -> Bool {
+        lock.lock()
+        let socket = self.socket
+        let shouldSend: Bool
+        if start {
+            shouldSend = socket != nil
+            activityOpen = shouldSend
+        } else {
+            shouldSend = activityOpen
+            activityOpen = false
+        }
+        lock.unlock()
+        guard shouldSend, let socket else { return false }
+        socket.send(start ? LiveWire.activityStart : LiveWire.activityEnd)
+        return true
     }
 }

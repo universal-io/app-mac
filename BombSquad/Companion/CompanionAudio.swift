@@ -9,103 +9,60 @@ enum CompanionAudioError: UserPresentableError {
     }
 }
 
-/// The companion's ears and mouth: an `AVAudioEngine` with Apple's voice
-/// processing on, so the companion's own voice coming out of the speakers is
-/// cancelled out of the microphone. The POC needed Chrome's AEC "all" for the
-/// same thing; without it the model hears itself and stops mid-sentence.
-/// Headphones are not assumed (requirements R5).
+/// R18: the companion's ears and mouth.
+///
+/// The microphone runs through Apple's voice processing (echo cancellation
+/// and noise suppression), and `CompanionTurnTaker` decides on this Mac when
+/// the user starts and stops talking. What goes up is therefore a stream of
+/// turns — activityStart, the user's audio, activityEnd — with silence in
+/// between, never the room. That is what keeps the companion's own voice from
+/// the speakers out of the conversation (owner's Mac, 2026-10-08: fine with
+/// headphones, interrupting and answering itself on the speakers).
 ///
 /// Up: 16 kHz mono PCM16, on the audio thread. Down: 24 kHz mono PCM16 from
-/// the model, thrown away at once on an interruption (R6).
+/// the model or a bridge clip, thrown away at once on an interruption (R6).
 final class CompanionAudio: @unchecked Sendable {
-    /// How the graph is wired. Tried in order until one starts.
-    ///
-    /// Build 17 on the owner's Mac (2026-10-08): the engine started with
-    /// voice processing on, yet the model interrupted itself ~400 ms into
-    /// every sentence — its own voice from the speakers, heard as the user.
-    /// Two things in that build were wrong, both documented by others who
-    /// hit the same wall:
-    ///
-    /// - Voice processing was enabled before the playback graph existed.
-    ///   The processor takes what it is playing as the reference it
-    ///   subtracts; enabled first, it starts with no output bus and cancels
-    ///   nothing (field reports on VoiceProcessingIO, 2026).
-    /// - The tap took channel 0 of whatever the input node reported. With
-    ///   voice processing on, macOS reports the aggregate it built — 9
-    ///   channels on that Mac (built-in mic plus BlackHole, Teams, iPhone) —
-    ///   and channel 0 is not promised to be the processed voice. A tap
-    ///   installed with a mono format gets the one processed channel
-    ///   (Apple forum 771530).
-    ///
-    /// Build 15 had shown the other constraint: the processor's client
-    /// formats on both sides must agree, or initialization fails with
-    /// -10875. So the mixer is connected to the output in the tap's format.
-    enum Plan: String, CaseIterable, DiagnosticCode {
-        /// Playback wired first, mono tap, output in the tap's format.
-        case playbackFirstMono
-        /// Playback wired first, tap and output in the input node's format.
-        case playbackFirstMatched
-        /// Voice processing first, mono tap. Build 17's order, better tap.
-        case processingFirstMono
-        /// Build 17's exact wiring: known to start, known not to cancel.
-        case processingFirstMatched
-        /// No echo cancellation: works anywhere, needs headphones.
-        case withoutVoiceProcessing
+    enum Plan: String, DiagnosticCode {
+        /// Voice processing on: echo cancellation, noise suppression.
+        case voiceProcessing
+        /// Nothing between the microphone and the turn taker. The companion's
+        /// voice still cannot open a turn; talking over it needs a louder voice.
+        case plain
 
         var diagnosticCode: String { rawValue }
-        var cancelsEcho: Bool { self != .withoutVoiceProcessing }
-        var playbackFirst: Bool { self == .playbackFirstMono || self == .playbackFirstMatched }
-        var monoTap: Bool { self == .playbackFirstMono || self == .processingFirstMono }
     }
 
-    /// 16 kHz mono PCM16 LE. Called on the audio thread.
-    var onCapture: ((Data) -> Void)?
+    /// What goes up to the server, in order. Called on the audio thread.
+    enum Uplink {
+        case start
+        /// 16 kHz mono PCM16 LE: the user's audio inside a turn, silence outside.
+        case audio(Data)
+        case end
+    }
+
+    /// The user's turns as the turn taker saw them. Called on the main thread.
+    enum UserTurn {
+        /// `overVoice`: the companion was talking; its voice is now paused
+        /// until the session settles whether this was a person.
+        case started(overVoice: Bool)
+        case stopped(CompanionTurnTaker.Stop)
+    }
+
+    var onUplink: ((Uplink) -> Void)?
+    var onUserTurn: ((UserTurn) -> Void)?
     /// Whether the companion's voice is coming out. Called on the main thread.
     var onSpeakingChanged: ((Bool) -> Void)?
+    /// How much of the current voice has been heard, for the transcript:
+    /// (generation, frames played). Called on the main thread.
+    var onPlayed: ((Int, Int) -> Void)?
     /// RMS of the microphone (0...1). Called on the audio thread.
     var onInputLevel: ((Float) -> Void)?
+    /// The graph was rebuilt after a device change: the plan it runs on now,
+    /// or nil when it could not start again. Called on the main thread.
+    var onRestarted: ((Plan?) -> Void)?
 
     /// The plan that started, or nil while stopped.
     private(set) var plan: Plan?
-
-    /// Microphone loudness while the companion is speaking against while it
-    /// is not, in dBFS. The one number that separates "the echo is leaking
-    /// into what we send" from "something else trips the server's turn
-    /// detection": cancelled echo leaves the two close, leaked echo lifts
-    /// the first well above the second.
-    struct LevelReport {
-        let speakingDb: Int
-        let idleDb: Int
-        let speakingSamples: Int
-        let idleSamples: Int
-    }
-
-    private var speakingLevelSum: Float = 0
-    private var speakingLevelCount = 0
-    private var idleLevelSum: Float = 0
-    private var idleLevelCount = 0
-
-    /// Averages since the last call, then starts over.
-    func takeLevelReport() -> LevelReport {
-        lock.lock()
-        let report = LevelReport(
-            speakingDb: Self.decibels(speakingLevelSum, speakingLevelCount),
-            idleDb: Self.decibels(idleLevelSum, idleLevelCount),
-            speakingSamples: speakingLevelCount,
-            idleSamples: idleLevelCount
-        )
-        speakingLevelSum = 0
-        speakingLevelCount = 0
-        idleLevelSum = 0
-        idleLevelCount = 0
-        lock.unlock()
-        return report
-    }
-
-    private static func decibels(_ sum: Float, _ count: Int) -> Int {
-        guard count > 0, sum > 0 else { return -100 }
-        return max(-100, Int((20 * log10(sum / Float(count))).rounded()))
-    }
 
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
@@ -115,13 +72,8 @@ final class CompanionAudio: @unchecked Sendable {
     private let captureFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true
     )!
-
-    private let lock = NSLock()
-    private var muted = false
-    private var scheduled = 0
-    /// Bumped by `flush()` so completions of thrown-away audio are ignored.
-    private var generation = 0
     private var converter: AVAudioConverter?
+    /// The tap's format as a non-interleaved mono buffer, for the converter.
     private var monoFormat: AVAudioFormat?
     private var configurationObserver: NSObjectProtocol?
     private var startedAt = Date.distantPast
@@ -129,33 +81,41 @@ final class CompanionAudio: @unchecked Sendable {
     /// configuration change; rebuilding on that would never end.
     private static let settleWindow: TimeInterval = 2
 
+    // Shared between the audio thread, the player's callbacks and the main
+    // thread; touched only under `lock`.
+    private let lock = NSLock()
+    private var taker = CompanionTurnTaker()
+    private var muted = false
+    private var scheduled = 0
+    /// Bumped by `flush()`: completions of thrown-away audio are ignored and
+    /// the transcript drops what was never heard.
+    private var generation = 0
+    private var scheduledFrames = 0
+    private var playedFrames = 0
+    private var voicePaused = false
+    private var voiceEndedAt: TimeInterval = -1_000
+    private var preRoll: [(time: TimeInterval, pcm: Data)] = []
+    private var turnStartedAt: TimeInterval = 0
+    private var levels = LevelBook()
+
     func start() throws {
-        var lastError: Error = CompanionAudioError.noInput
-        for plan in Plan.allCases {
-            // A fresh engine per attempt: a graph that failed to initialize
-            // keeps its half-made connections.
-            let engine = AVAudioEngine()
-            let player = AVAudioPlayerNode()
+        do {
+            try build(.voiceProcessing)
+        } catch {
+            Diagnostics.record("companion.audioPlanFailed", details: [
+                ("plan", .code(Plan.voiceProcessing)),
+                ("status", .count((error as NSError).code)),
+            ])
+            tearDownEngine()
             do {
-                try build(engine, player, plan)
-                self.engine = engine
-                self.player = player
-                self.plan = plan
-                startedAt = Date()
-                observeConfigurationChanges(of: engine)
-                return
+                try build(.plain)
             } catch {
-                lastError = error
-                Diagnostics.record("companion.audioPlanFailed", details: [
-                    ("plan", .code(plan)),
-                    ("status", .count((error as NSError).code)),
-                ] + Self.formatDetails(engine))
-                engine.inputNode.removeTap(onBus: 0)
-                engine.stop()
-                try? engine.inputNode.setVoiceProcessingEnabled(false)
+                // A player left on an engine that never started raises an
+                // exception Swift cannot catch at the next play().
+                tearDownEngine()
+                throw error
             }
         }
-        throw lastError
     }
 
     /// Safe to call when `start()` never ran or failed.
@@ -164,26 +124,45 @@ final class CompanionAudio: @unchecked Sendable {
             NotificationCenter.default.removeObserver(configurationObserver)
         }
         configurationObserver = nil
-        guard let engine else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        player?.stop()
-        engine.stop()
-        if plan?.cancelsEcho == true {
-            try? engine.inputNode.setVoiceProcessingEnabled(false)
-        }
-        self.engine = nil
-        player = nil
-        plan = nil
-        setScheduled(0, bumpGeneration: true)
+        recordLevelBook()
+        // The queue is forgotten before the player stops: stopping calls the
+        // completion of every buffer still queued, and those must not count
+        // as heard.
+        forgetQueue()
+        tearDownEngine()
     }
 
-    func setMuted(_ isMuted: Bool) {
+    /// Under its own lock: nothing queued, nothing paused, a new generation.
+    private func forgetQueue() {
         lock.lock()
-        muted = isMuted
+        scheduled = 0
+        generation += 1
+        scheduledFrames = 0
+        playedFrames = 0
+        voicePaused = false
         lock.unlock()
     }
 
-    /// Queues one piece of the model's voice (24 kHz mono PCM16 LE).
+    /// Muted, the microphone sends silence and a turn in progress ends.
+    func setMuted(_ isMuted: Bool) {
+        lock.lock()
+        muted = isMuted
+        // What was heard while muted must not go out as the start of a turn.
+        preRoll.removeAll()
+        lock.unlock()
+    }
+
+    /// Where the voice queued so far ends, and how much of it has played:
+    /// a transcript piece tagged with `frames` is shown once `played` reaches it.
+    func frameMark() -> (generation: Int, frames: Int, played: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (generation, scheduledFrames, playedFrames)
+    }
+
+    /// Queues one piece of voice (24 kHz mono PCM16 LE): the model's, or a
+    /// bridge clip. Both go through the voice processor, which is what lets
+    /// it take them out of the microphone.
     func play(pcm16 data: Data) {
         let frames = data.count / 2
         guard let player, frames > 0,
@@ -203,34 +182,67 @@ final class CompanionAudio: @unchecked Sendable {
         lock.lock()
         let generation = self.generation
         scheduled += 1
-        let began = scheduled == 1
+        scheduledFrames += frames
+        let paused = voicePaused
+        // Posted under the lock, so "speaking" and "silent" reach the main
+        // thread in the order the queue went through them.
+        if scheduled == 1 { notifySpeaking(true) }
         lock.unlock()
-        if began { notifySpeaking(true) }
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
-            self?.finishedPlaying(generation: generation)
+            self?.finishedPlaying(frames: frames, generation: generation)
         }
-        if !player.isPlaying { player.play() }
+        // A voice paused for the user stays paused; what arrives meanwhile
+        // waits behind it. A stopped engine raises on play().
+        if !paused, !player.isPlaying, engine?.isRunning == true { player.play() }
     }
 
-    /// Drops everything queued. The interruption path: the user started
-    /// talking, so the rest of the sentence is no longer wanted.
+    /// Drops everything queued or paused: the user took the floor, or the
+    /// turn was abandoned.
     func flush() {
-        setScheduled(0, bumpGeneration: true)
-        player?.stop()
-        player?.play()
+        let now = Self.now()
+        lock.lock()
+        let wasAudible = scheduled > 0 && !voicePaused
+        scheduled = 0
+        generation += 1
+        scheduledFrames = 0
+        playedFrames = 0
+        voicePaused = false
+        // A voice cut off mid-word still rings in the room; a paused one
+        // stopped ringing while it waited.
+        if wasAudible { voiceEndedAt = now }
         notifySpeaking(false)
+        lock.unlock()
+        player?.stop()
+        if engine?.isRunning == true { player?.play() }
+    }
+
+    /// The voice paused for a "person" who turned out to be a cough or a
+    /// door: it carries on where it stopped.
+    func resumeVoice() {
+        lock.lock()
+        let wasPaused = voicePaused
+        voicePaused = false
+        lock.unlock()
+        guard wasPaused, engine?.isRunning == true else { return }
+        player?.play()
     }
 
     // MARK: - Graph
 
-    private func build(_ engine: AVAudioEngine, _ player: AVAudioPlayerNode, _ plan: Plan) throws {
+    private func build(_ plan: Plan) throws {
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
         let input = engine.inputNode
-        if plan.playbackFirst { wirePlayback(engine, player) }
-        if plan.cancelsEcho {
-            // On either node it turns on for both: the output is the reference
-            // the canceller subtracts from the input.
+        if plan == .voiceProcessing {
             try input.setVoiceProcessingEnabled(true)
-            // Other apps' sound (a video the user is watching) stays at its
+            // Gain control lifts whatever is left of the echo along with the
+            // room; the turn taker's lines are relative to the room's floor,
+            // so a steady gain serves it better (two Mac voice-agent projects
+            // turn it off for the same reason).
+            input.isVoiceProcessingAGCEnabled = false
+            // Other apps' sound (a video the user is watching) keeps its
             // level; the default ducks it hard for the whole session.
             input.voiceProcessingOtherAudioDuckingConfiguration =
                 AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
@@ -238,39 +250,76 @@ final class CompanionAudio: @unchecked Sendable {
                     duckingLevel: .min
                 )
         }
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+        let hardware = input.outputFormat(forBus: 0)
+        guard hardware.sampleRate > 0, hardware.channelCount > 0 else {
             throw CompanionAudioError.noInput
         }
-        let tapFormat: AVAudioFormat
-        if plan.monoTap {
-            guard let mono = AVAudioFormat(
-                standardFormatWithSampleRate: inputFormat.sampleRate, channels: 1
-            ) else { throw CompanionAudioError.converterUnavailable }
-            tapFormat = mono
-        } else {
-            tapFormat = inputFormat
+        // Mono at the hardware rate: with voice processing on, the input
+        // reports several channels (the processor's own layout, with its
+        // reference), and a mono tap is the one processed channel.
+        guard let tapFormat = AVAudioFormat(standardFormatWithSampleRate: hardware.sampleRate, channels: 1),
+              let converter = AVAudioConverter(from: tapFormat, to: captureFormat)
+        else { throw CompanionAudioError.converterUnavailable }
+        self.converter = converter
+        monoFormat = tapFormat
+        input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) { [weak self] buffer, _ in
+            self?.capture(buffer)
         }
-        try installCapture(on: input, format: tapFormat)
-        if !plan.playbackFirst { wirePlayback(engine, player) }
-        if plan.cancelsEcho {
-            // The processor's two client formats have to agree (-10875
-            // otherwise): what leaves the input bus and what reaches the
-            // output bus.
+        if plan == .voiceProcessing {
+            // The processor's two client formats must agree (-10875, build 15).
             engine.connect(engine.mainMixerNode, to: engine.outputNode, format: tapFormat)
         }
+        self.engine = engine
+        self.player = player
         engine.prepare()
         try engine.start()
         player.play()
+        self.plan = plan
+        startedAt = Date()
+        observeConfigurationChanges(of: engine)
         Diagnostics.record("companion.audioStarted", details: [
             ("plan", .code(plan)),
-            ("tapChannels", .count(Int(tapFormat.channelCount))),
+            ("bypassed", .flag(plan == .voiceProcessing && input.isVoiceProcessingBypassed)),
+            ("agc", .flag(plan == .voiceProcessing && input.isVoiceProcessingAGCEnabled)),
+            ("micMode", .code(MicrophoneMode.current)),
+            ("hwChannels", .count(Int(input.inputFormat(forBus: 0).channelCount))),
         ] + Self.formatDetails(engine))
     }
 
-    private func wirePlayback(_ engine: AVAudioEngine, _ player: AVAudioPlayerNode) {
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+    /// The user's choice in Control Center (Standard, Voice Isolation, Wide
+    /// Spectrum) overrides what the app asks of the voice processor.
+    private enum MicrophoneMode: String, DiagnosticCode {
+        case standard
+        case voiceIsolation
+        case wideSpectrum
+        case unknown
+
+        static var current: MicrophoneMode {
+            switch AVCaptureDevice.activeMicrophoneMode {
+            case .standard: return .standard
+            case .voiceIsolation: return .voiceIsolation
+            case .wideSpectrum: return .wideSpectrum
+            @unknown default: return .unknown
+            }
+        }
+
+        var diagnosticCode: String { rawValue }
+    }
+
+    private func tearDownEngine() {
+        guard let engine else {
+            plan = nil
+            return
+        }
+        engine.inputNode.removeTap(onBus: 0)
+        player?.stop()
+        engine.stop()
+        if engine.inputNode.isVoiceProcessingEnabled {
+            try? engine.inputNode.setVoiceProcessingEnabled(false)
+        }
+        self.engine = nil
+        player = nil
+        plan = nil
     }
 
     /// Rates and channel counts on both sides — the numbers the voice
@@ -298,77 +347,135 @@ final class CompanionAudio: @unchecked Sendable {
 
     /// A device came or went (headphones, a display with speakers). The
     /// engine stops itself and the formats may have changed, so the graph is
-    /// built again from the first plan.
+    /// built again. A change while the graph settles is ignored only if the
+    /// engine kept running.
     private func restartAfterConfigurationChange() {
         let settling = Date().timeIntervalSince(startedAt) < Self.settleWindow
-        Diagnostics.record("companion.audioReconfigured", details: [("ignored", .flag(settling))])
-        guard !settling else { return }
-        stop()
+        let running = engine?.isRunning ?? false
+        Diagnostics.record("companion.audioReconfigured", details: [
+            ("ignored", .flag(settling && running)),
+        ])
+        guard !(settling && running) else { return }
+        if let configurationObserver {
+            NotificationCenter.default.removeObserver(configurationObserver)
+        }
+        configurationObserver = nil
+        forgetQueue()
+        tearDownEngine()
+        lock.lock()
+        notifySpeaking(false)
+        lock.unlock()
         do {
             try start()
+            onRestarted?(plan)
         } catch {
             Diagnostics.record("companion.audioRestartFailed", details: [
                 ("error", .code(DiagnosticErrorClass(error))),
             ])
+            onRestarted?(nil)
         }
     }
 
     // MARK: - Capture
 
-    private func installCapture(on input: AVAudioInputNode, format tapFormat: AVAudioFormat) throws {
-        // Whatever the tap delivers, only its first channel is used: the one
-        // processed channel for a mono tap, and channel 0 otherwise.
-        guard let mono = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: tapFormat.sampleRate,
-            channels: 1,
-            interleaved: false
-        ), let converter = AVAudioConverter(from: mono, to: captureFormat) else {
-            throw CompanionAudioError.converterUnavailable
+    private func capture(_ buffer: AVAudioPCMBuffer) {
+        guard let converter, let monoFormat,
+              !buffer.format.isInterleaved,
+              let source = buffer.floatChannelData?[0],
+              buffer.frameLength > 0
+        else { return }
+        let frames = Int(buffer.frameLength)
+        let levelDb = CompanionTurnTaker.level(of: source, count: frames)
+        onInputLevel?(pow(10, levelDb / 20))
+        // Converted every time, sent or not: the resampler keeps its state
+        // across buffers, so the start of a turn joins cleanly.
+        guard let pcm = convert(source, frames: frames, format: monoFormat, with: converter) else {
+            return
         }
-        monoFormat = mono
-        self.converter = converter
-        input.installTap(onBus: 0, bufferSize: 1_024, format: tapFormat) { [weak self] buffer, _ in
-            self?.capture(buffer)
+        let duration = Double(frames) / buffer.format.sampleRate
+        let now = Self.now()
+
+        lock.lock()
+        let voice: CompanionTurnTaker.Voice = voicePaused
+            ? .paused
+            : (scheduled > 0 ? .playing : .ended(at: voiceEndedAt))
+        var event: CompanionTurnTaker.Event = .none
+        if muted {
+            if taker.forceStop() { event = .stopped(.muted) }
+        } else {
+            event = taker.process(levelDb: levelDb, duration: duration, now: now, voice: voice)
+        }
+        let speaking = taker.userSpeaking
+        var preRolled: [Data] = []
+        if case .started(let overVoice, let since) = event {
+            preRolled = preRoll.filter { $0.time >= since - 1e-6 }.map(\.pcm)
+            preRoll.removeAll()
+            if overVoice { voicePaused = true }
+            turnStartedAt = now
+        } else if !muted {
+            preRoll.append((now, pcm))
+            while let first = preRoll.first, now - first.time > taker.settings.preRollMax + 0.1 {
+                preRoll.removeFirst()
+            }
+        }
+        levels.note(levelDb, voice: voice == .playing, user: speaking || event != .none)
+        let utterance = taker.utterance
+        let floor = taker.floorDb
+        let echo = taker.echoDb
+        let turnMs = Int((now - turnStartedAt) * 1_000)
+        lock.unlock()
+
+        switch event {
+        case .started(let overVoice, _):
+            onUplink?(.start)
+            for chunk in preRolled { onUplink?(.audio(chunk)) }
+            onUplink?(.audio(pcm))
+            DispatchQueue.main.async { [weak self] in
+                if overVoice { self?.player?.pause() }
+                self?.onUserTurn?(.started(overVoice: overVoice))
+            }
+            Diagnostics.record("companion.userStarted", details: [
+                ("overVoice", .flag(overVoice)),
+                ("lineDb", .count(Int(utterance.lineDb.rounded()))),
+                ("floorDb", .count(Int((floor ?? -120).rounded()))),
+                ("echoDb", .count(Int((echo ?? -120).rounded()))),
+                ("preRollMs", .ms(preRolled.count * Int(duration * 1_000))),
+            ])
+        case .stopped(let stop):
+            if stop != .muted { onUplink?(.audio(pcm)) }
+            onUplink?(.end)
+            DispatchQueue.main.async { [weak self] in
+                self?.onUserTurn?(.stopped(stop))
+            }
+            Diagnostics.record("companion.userStopped", details: [
+                ("stop", .code(stop)),
+                ("ms", .ms(turnMs)),
+                ("meanDb", .count(Int(utterance.meanDb.rounded()))),
+                ("peakDb", .count(Int(utterance.peakDb.rounded()))),
+                ("overVoice", .flag(utterance.overVoice)),
+            ])
+        case .none:
+            onUplink?(.audio(speaking ? pcm : Data(count: pcm.count)))
         }
     }
 
-    private func capture(_ buffer: AVAudioPCMBuffer) {
-        guard let monoFormat, let converter,
-              !buffer.format.isInterleaved,
-              let source = buffer.floatChannelData?[0],
-              buffer.frameLength > 0,
-              let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+    private func convert(
+        _ source: UnsafePointer<Float>,
+        frames: Int,
+        format: AVAudioFormat,
+        with converter: AVAudioConverter
+    ) -> Data? {
+        guard let mono = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
               let monoSamples = mono.floatChannelData?[0]
-        else { return }
-        let frames = Int(buffer.frameLength)
-        mono.frameLength = buffer.frameLength
+        else { return nil }
+        mono.frameLength = AVAudioFrameCount(frames)
         monoSamples.update(from: source, count: frames)
-
-        var energy: Float = 0
-        for index in 0..<frames { energy += source[index] * source[index] }
-        let rms = (energy / Float(frames)).squareRoot()
-        onInputLevel?(rms)
-
-        lock.lock()
-        let isMuted = muted
-        if scheduled > 0 {
-            speakingLevelSum += rms
-            speakingLevelCount += 1
-        } else {
-            idleLevelSum += rms
-            idleLevelCount += 1
-        }
-        lock.unlock()
-        guard !isMuted else { return }
-
-        let ratio = captureFormat.sampleRate / monoFormat.sampleRate
+        let ratio = captureFormat.sampleRate / format.sampleRate
         let capacity = AVAudioFrameCount((Double(frames) * ratio).rounded(.up)) + 16
-        guard let output = AVAudioPCMBuffer(pcmFormat: captureFormat, frameCapacity: capacity) else { return }
+        guard let output = AVAudioPCMBuffer(pcmFormat: captureFormat, frameCapacity: capacity) else { return nil }
         var supplied = false
         var error: NSError?
-        // `.noDataNow`, not end of stream: the resampler keeps its state
-        // across buffers, so the joins between chunks stay clean.
+        // `.noDataNow`, not end of stream: the resampler keeps its state.
         converter.convert(to: output, error: &error) { _, status in
             if supplied {
                 status.pointee = .noDataNow
@@ -379,34 +486,104 @@ final class CompanionAudio: @unchecked Sendable {
             return mono
         }
         guard error == nil, output.frameLength > 0,
-              let samples = output.int16ChannelData?[0] else { return }
-        onCapture?(Data(bytes: samples, count: Int(output.frameLength) * 2))
+              let samples = output.int16ChannelData?[0] else { return nil }
+        return Data(bytes: samples, count: Int(output.frameLength) * 2)
     }
 
     // MARK: - Playback bookkeeping
 
-    private func finishedPlaying(generation: Int) {
+    private func finishedPlaying(frames: Int, generation: Int) {
+        let now = Self.now()
         lock.lock()
         guard generation == self.generation else {
             lock.unlock()
             return
         }
         scheduled = max(0, scheduled - 1)
-        let ended = scheduled == 0
+        playedFrames += frames
+        let played = playedFrames
+        if scheduled == 0 {
+            voiceEndedAt = now
+            notifySpeaking(false)
+        }
         lock.unlock()
-        if ended { notifySpeaking(false) }
-    }
-
-    private func setScheduled(_ count: Int, bumpGeneration: Bool) {
-        lock.lock()
-        scheduled = count
-        if bumpGeneration { generation += 1 }
-        lock.unlock()
+        DispatchQueue.main.async { [weak self] in
+            self?.onPlayed?(generation, played)
+        }
     }
 
     private func notifySpeaking(_ speaking: Bool) {
         DispatchQueue.main.async { [weak self] in
             self?.onSpeakingChanged?(speaking)
         }
+    }
+
+    private static func now() -> TimeInterval {
+        ProcessInfo.processInfo.systemUptime
+    }
+
+    // MARK: - What the microphone heard (diagnostics)
+
+    /// Levels over the whole session in three bins: the room (nobody
+    /// talking), the companion's voice playing (its echo), and the user's
+    /// turns. The lines the turn taker draws only work if the three stay
+    /// apart; this is how a session on the speakers says whether they did.
+    private struct LevelBook {
+        private var room = [Int](repeating: 0, count: 121)
+        private var echo = [Int](repeating: 0, count: 121)
+        private var user = [Int](repeating: 0, count: 121)
+
+        mutating func note(_ levelDb: Float, voice: Bool, user isUser: Bool) {
+            let bin = min(120, max(0, Int((-levelDb).rounded())))
+            if isUser {
+                user[bin] += 1
+            } else if voice {
+                echo[bin] += 1
+            } else {
+                room[bin] += 1
+            }
+        }
+
+        /// The level `fraction` of the blocks stay at or below, in dBFS.
+        func percentile(_ fraction: Double, of bins: KeyPath<LevelBook, [Int]>) -> Int {
+            let counts = self[keyPath: bins]
+            let total = counts.reduce(0, +)
+            guard total > 0 else { return -120 }
+            // Bins run loud (0 dB) to quiet (-120 dB); the loudest `1 - fraction`.
+            var seen = 0
+            let wanted = Int(Double(total) * (1 - fraction))
+            for (index, count) in counts.enumerated() {
+                seen += count
+                if seen > wanted { return -index }
+            }
+            return -120
+        }
+
+        func count(_ bins: KeyPath<LevelBook, [Int]>) -> Int {
+            self[keyPath: bins].reduce(0, +)
+        }
+
+        var roomBins: [Int] { room }
+        var echoBins: [Int] { echo }
+        var userBins: [Int] { user }
+    }
+
+    private func recordLevelBook() {
+        lock.lock()
+        let book = levels
+        levels = LevelBook()
+        lock.unlock()
+        Diagnostics.record("companion.levels", details: [
+            ("roomP50", .count(book.percentile(0.5, of: \.roomBins))),
+            ("roomP90", .count(book.percentile(0.9, of: \.roomBins))),
+            ("echoP50", .count(book.percentile(0.5, of: \.echoBins))),
+            ("echoP90", .count(book.percentile(0.9, of: \.echoBins))),
+            ("echoP99", .count(book.percentile(0.99, of: \.echoBins))),
+            ("userP50", .count(book.percentile(0.5, of: \.userBins))),
+            ("userP90", .count(book.percentile(0.9, of: \.userBins))),
+            ("roomBlocks", .count(book.count(\.roomBins))),
+            ("echoBlocks", .count(book.count(\.echoBins))),
+            ("userBlocks", .count(book.count(\.userBins))),
+        ])
     }
 }

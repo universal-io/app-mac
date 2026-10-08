@@ -30,9 +30,13 @@ enum LiveWire {
         ]]]
     }
 
-    /// Sent on mute, so the server's turn detection is not left waiting for
-    /// the end of a sentence that will never arrive.
-    static let audioStreamEnd: [String: Any] = ["realtimeInput": ["audioStreamEnd": true]]
+    /// The user started talking. Sessions are opened with the server's own
+    /// turn detection off (`CompanionTurnTaker`): only audio between this and
+    /// `activityEnd` is the user's turn, and this interrupts any answer.
+    static let activityStart: [String: Any] = ["realtimeInput": ["activityStart": [String: Any]()]]
+
+    /// The user stopped talking: the model answers now.
+    static let activityEnd: [String: Any] = ["realtimeInput": ["activityEnd": [String: Any]()]]
 
     static func video(jpeg: Data) -> [String: Any] {
         ["realtimeInput": ["video": [
@@ -43,7 +47,8 @@ enum LiveWire {
 
     /// Something the model should know but not answer. A screen change sent
     /// as a turn made the POC repeat its last instruction like a broken
-    /// record, so context always goes this way.
+    /// record, so context always goes this way. Sent mid-answer or mid-turn it
+    /// interrupts nothing (probed against gemini-3.8-live, 2026-10-08).
     static func note(_ text: String) -> [String: Any] {
         content(text, turnComplete: false)
     }
@@ -53,13 +58,25 @@ enum LiveWire {
         content(text, turnComplete: true)
     }
 
-    /// INTERRUPT so the answer is spoken at once, even over the bridge phrase.
-    static func toolResponse(id: String, name: String, output: String) -> [String: Any] {
+    /// When the model takes a tool's result in: INTERRUPT speaks it at once,
+    /// even over the bridge phrase; SILENT only adds it to the context (a
+    /// look a newer one overtook, whose answer would contradict it).
+    enum Scheduling: String {
+        case interrupt = "INTERRUPT"
+        case silent = "SILENT"
+    }
+
+    static func toolResponse(
+        id: String,
+        name: String,
+        output: String,
+        scheduling: Scheduling = .interrupt
+    ) -> [String: Any] {
         ["toolResponse": ["functionResponses": [[
             "id": id,
             "name": name,
             "response": ["output": output],
-            "scheduling": "INTERRUPT",
+            "scheduling": scheduling.rawValue,
         ]]]]
     }
 
@@ -80,6 +97,10 @@ struct LiveToolCall: Equatable {
     let id: String
     let name: String
     let question: String?
+    /// look_closely's other arguments (Gateway live-session.ts).
+    var goal: String?
+    var nextStep = false
+    var pointsAtCursor = false
 }
 
 /// Token counts only. Whether the bill is "every turn re-reads the whole
@@ -149,8 +170,16 @@ enum LiveEvent: Equatable {
         if let calls = (root["toolCall"] as? [String: Any])?["functionCalls"] as? [[String: Any]] {
             for call in calls {
                 guard let id = call["id"] as? String, let name = call["name"] as? String else { continue }
-                let question = (call["args"] as? [String: Any])?["question"] as? String
-                events.append(.toolCall(LiveToolCall(id: id, name: name, question: question)))
+                let args = call["args"] as? [String: Any] ?? [:]
+                let goal = (args["goal"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                events.append(.toolCall(LiveToolCall(
+                    id: id,
+                    name: name,
+                    question: args["question"] as? String,
+                    goal: (goal?.isEmpty ?? true) ? nil : goal,
+                    nextStep: args["next_step"] as? Bool ?? false,
+                    pointsAtCursor: args["points_at_cursor"] as? Bool ?? false
+                )))
             }
         }
         if let ids = (root["toolCallCancellation"] as? [String: Any])?["ids"] as? [String] {
@@ -221,9 +250,11 @@ struct CompanionTranscript: Equatable {
             lines[lines.count - 1].text += piece
             return
         }
-        endTurn()
+        // A piece of nothing but spaces must not close the other speaker's
+        // line: its continuation would land on a line of its own.
         let text = piece.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }
+        endTurn()
         lines.append(Line(id: nextID, speaker: speaker, text: text, isFinal: false))
         nextID += 1
         if lines.count > Self.kept { lines.removeFirst(lines.count - Self.kept) }
@@ -231,6 +262,19 @@ struct CompanionTranscript: Equatable {
 
     mutating func endTurn() {
         for index in lines.indices { lines[index].isFinal = true }
+    }
+
+    /// The companion was cut off: its open line shows that it stopped.
+    mutating func cut() {
+        guard let last = lines.last, last.speaker == .companion, !last.isFinal else { return }
+        lines[lines.count - 1].text += "…"
+        lines[lines.count - 1].isFinal = true
+    }
+
+    /// Whether a transcript piece holds words at all: the server sends
+    /// punctuation and spaces alone, and the no-words rule needs words.
+    static func hasWords(_ text: String) -> Bool {
+        text.unicodeScalars.contains { CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0) }
     }
 
     var recent: [Line] { Array(lines.suffix(2)) }

@@ -21,7 +21,9 @@ struct CompanionTokenClient {
     /// `handle` resumes the conversation it came from: the handle is part of
     /// the locked setup, so every reconnect needs a token of its own.
     func grant(handle: String?, voice: String) async throws -> Grant {
-        var input: [String: Any] = ["voice": voice]
+        // "client": the server's own turn detection off; this app sends
+        // activityStart/activityEnd (`CompanionTurnTaker`).
+        var input: [String: Any] = ["voice": voice, "turns": "client"]
         if let handle { input["handle"] = handle }
         let body = GatewayClient.envelope(operation: "live_token", input: input)
         let data = try await client.postJSON(

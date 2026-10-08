@@ -12,13 +12,16 @@ final class CompanionPanelController {
 
     private var panel: CompanionPanel?
 
-    func show(_ session: CompanionSession, onClose: @escaping () -> Void) {
+    /// The window's frame on screen, while it is shown.
+    var frame: NSRect? { panel?.frame }
+
+    func show(_ session: CompanionSession, on screen: NSScreen?, onClose: @escaping () -> Void) {
         close()
         let panel = CompanionPanel()
         let host = NSHostingView(rootView: CompanionView(session: session, onClose: onClose))
         let size = host.fittingSize
         panel.contentView = host
-        let bounds = ActiveDisplay.screen()?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let bounds = (screen ?? NSScreen.main)?.visibleFrame ?? .zero
         panel.setFrame(
             NSRect(
                 x: bounds.maxX - Self.margin - Self.width,
@@ -81,6 +84,13 @@ struct CompanionView: View {
                     Text(session.statusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    // The knowledge the eye applied is always visible
+                    // (master plan R18 決定2; no silent injection). The line
+                    // is always there so the window keeps its size.
+                    Text(session.skillName.map { "Skill: \($0)" } ?? " ")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
@@ -150,12 +160,13 @@ private struct CompanionAvatar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(paused: phase != .speaking || reduceMotion)) { context in
+        TimelineView(.animation(paused: (phase != .speaking && phase != .looking) || reduceMotion)) { context in
             let breath = (sin(context.date.timeIntervalSinceReferenceDate * 6) + 1) / 2
             let reach: CGFloat = {
                 switch phase {
                 case .speaking: return reduceMotion ? 3 : 2 + 4 * breath
-                case .listening: return CGFloat(inputLevel) * 6
+                case .listening, .hearing: return CGFloat(inputLevel) * 6
+                case .looking: return reduceMotion ? 2 : 1 + 2 * breath
                 default: return 0
                 }
             }()

@@ -186,6 +186,75 @@ final class CompanionLiveWireTests: XCTestCase {
         )
     }
 
+    // MARK: - Turns decided on the Mac
+
+    func testTurnsAreOpenedAndClosedWithActivityMessages() throws {
+        let start = try XCTUnwrap(LiveWire.encode(LiveWire.activityStart))
+        let end = try XCTUnwrap(LiveWire.encode(LiveWire.activityEnd))
+        XCTAssertEqual(start, #"{"realtimeInput":{"activityStart":{}}}"#)
+        XCTAssertEqual(end, #"{"realtimeInput":{"activityEnd":{}}}"#)
+    }
+
+    func testLookCloselyCarriesItsWholeRequest() {
+        let events = LiveEvent.parse(["toolCall": ["functionCalls": [[
+            "id": "call-2",
+            "name": "look_closely",
+            "args": [
+                "question": "次は？",
+                "goal": " モバイルの参照元を見たい ",
+                "next_step": true,
+                "points_at_cursor": false,
+            ],
+        ]]]])
+        XCTAssertEqual(events, [.toolCall(LiveToolCall(
+            id: "call-2", name: "look_closely", question: "次は？",
+            goal: "モバイルの参照元を見たい", nextStep: true, pointsAtCursor: false
+        ))])
+    }
+
+    func testAnEmptyGoalIsNoGoal() {
+        let events = LiveEvent.parse(["toolCall": ["functionCalls": [[
+            "id": "call-3", "name": "look_closely", "args": ["question": "これ何？", "goal": "", "points_at_cursor": true],
+        ]]]])
+        XCTAssertEqual(events, [.toolCall(LiveToolCall(
+            id: "call-3", name: "look_closely", question: "これ何？", goal: nil, nextStep: false, pointsAtCursor: true
+        ))])
+    }
+
+    func testPunctuationAloneIsNotWords() {
+        XCTAssertFalse(CompanionTranscript.hasWords(" 。、?"))
+        XCTAssertTrue(CompanionTranscript.hasWords("せんよ。"))
+        XCTAssertTrue(CompanionTranscript.hasWords("GA4"))
+    }
+
+    func testASpacesOnlyPieceDoesNotSplitTheOtherSpeakersLine() {
+        var transcript = CompanionTranscript()
+        transcript.append("左の", from: .companion)
+        transcript.append("  ", from: .user)
+        transcript.append("メニューです", from: .companion)
+        XCTAssertEqual(transcript.lines.map(\.text), ["左のメニューです"])
+    }
+
+    func testACutLineShowsWhereTheVoiceStopped() {
+        var transcript = CompanionTranscript()
+        transcript.append("左のメニューの", from: .companion)
+        transcript.cut()
+        transcript.append("はい", from: .companion)
+        XCTAssertEqual(transcript.lines.map(\.text), ["左のメニューの…", "はい"])
+    }
+
+    func testTheBridgeClipsAreReadFromTheirWAVs() throws {
+        var wav = Data("RIFF".utf8) + Data([0, 0, 0, 0]) + Data("WAVE".utf8)
+        wav += Data("fmt ".utf8) + Data([16, 0, 0, 0])
+        wav += Data([1, 0, 1, 0]) + Data([0xC0, 0x5D, 0, 0]) + Data([0x80, 0xBB, 0, 0]) + Data([2, 0, 16, 0])
+        wav += Data("data".utf8) + Data([4, 0, 0, 0]) + Data([1, 0, 2, 0])
+        XCTAssertEqual(CompanionBridge.pcm16(fromWAV: wav), Data([1, 0, 2, 0]))
+        // 44.1 kHz is not what the player expects.
+        var other = wav
+        other.replaceSubrange(24..<28, with: Data([0x44, 0xAC, 0, 0]))
+        XCTAssertNil(CompanionBridge.pcm16(fromWAV: other))
+    }
+
     private static func solidImage(gray: UInt8) -> CGImage? {
         let side = 32
         var pixels = [UInt8](repeating: gray, count: side * side * 4)

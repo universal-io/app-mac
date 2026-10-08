@@ -59,6 +59,13 @@ enum ActiveDisplay {
         return resolved
     }
 
+    /// The screen the app is working on right now, without pinning it: the
+    /// companion lives across apps and displays, so every look asks again.
+    /// Nil when neither Accessibility nor the window server can tell.
+    static func workingScreen(of app: NSRunningApplication?) -> NSScreen? {
+        focusedWindowScreen(of: app) ?? frontWindowScreen(of: app)
+    }
+
     /// Forget the pinned screen; the next summon resolves again.
     static func unpin() {
         pinnedScreen = nil
