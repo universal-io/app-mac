@@ -59,6 +59,8 @@ final class CompanionSession: ObservableObject {
     private var awaitingReplySince: Date?
     private var greetingPending = false
     private var lastLevelPublish = Date.distantPast
+    /// When the companion's voice last started coming out of the speakers.
+    private var playbackBeganAt: Date?
 
     init?(targetApp: NSRunningApplication?) {
         guard let tokenClient = CompanionTokenClient.make() else { return nil }
@@ -276,8 +278,18 @@ final class CompanionSession: ObservableObject {
         case .setupComplete:
             break
         case .interrupted:
+            // Before the flush, so the report still has the speaking samples.
+            let levels = audio.takeLevelReport()
+            let sincePlayback = playbackBeganAt.map { Self.ms(since: $0) } ?? -1
             audio.flush()
-            Diagnostics.record("companion.interrupted")
+            Diagnostics.record("companion.interrupted", details: [
+                ("sincePlayback", .ms(sincePlayback)),
+                ("playing", .flag(speaking)),
+                ("micSpeakingDb", .count(levels.speakingDb)),
+                ("micIdleDb", .count(levels.idleDb)),
+                ("speakingSamples", .count(levels.speakingSamples)),
+                ("idleSamples", .count(levels.idleSamples)),
+            ])
         case .audio(let pcm):
             if let since = awaitingReplySince {
                 Diagnostics.record("companion.replied", details: [
@@ -357,6 +369,7 @@ final class CompanionSession: ObservableObject {
     // MARK: - State
 
     private func speakingChanged(_ isSpeaking: Bool) {
+        if isSpeaking, !speaking { playbackBeganAt = Date() }
         speaking = isSpeaking
         guard phase == .listening || phase == .speaking else { return }
         phase = isSpeaking ? .speaking : .listening

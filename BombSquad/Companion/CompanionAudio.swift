@@ -68,6 +68,45 @@ final class CompanionAudio: @unchecked Sendable {
     /// The plan that started, or nil while stopped.
     private(set) var plan: Plan?
 
+    /// Microphone loudness while the companion is speaking against while it
+    /// is not, in dBFS. The one number that separates "the echo is leaking
+    /// into what we send" from "something else trips the server's turn
+    /// detection": cancelled echo leaves the two close, leaked echo lifts
+    /// the first well above the second.
+    struct LevelReport {
+        let speakingDb: Int
+        let idleDb: Int
+        let speakingSamples: Int
+        let idleSamples: Int
+    }
+
+    private var speakingLevelSum: Float = 0
+    private var speakingLevelCount = 0
+    private var idleLevelSum: Float = 0
+    private var idleLevelCount = 0
+
+    /// Averages since the last call, then starts over.
+    func takeLevelReport() -> LevelReport {
+        lock.lock()
+        let report = LevelReport(
+            speakingDb: Self.decibels(speakingLevelSum, speakingLevelCount),
+            idleDb: Self.decibels(idleLevelSum, idleLevelCount),
+            speakingSamples: speakingLevelCount,
+            idleSamples: idleLevelCount
+        )
+        speakingLevelSum = 0
+        speakingLevelCount = 0
+        idleLevelSum = 0
+        idleLevelCount = 0
+        lock.unlock()
+        return report
+    }
+
+    private static func decibels(_ sum: Float, _ count: Int) -> Int {
+        guard count > 0, sum > 0 else { return -100 }
+        return max(-100, Int((20 * log10(sum / Float(count))).rounded()))
+    }
+
     private var engine: AVAudioEngine?
     private var player: AVAudioPlayerNode?
     private let playbackFormat = AVAudioFormat(
@@ -308,10 +347,18 @@ final class CompanionAudio: @unchecked Sendable {
 
         var energy: Float = 0
         for index in 0..<frames { energy += source[index] * source[index] }
-        onInputLevel?((energy / Float(frames)).squareRoot())
+        let rms = (energy / Float(frames)).squareRoot()
+        onInputLevel?(rms)
 
         lock.lock()
         let isMuted = muted
+        if scheduled > 0 {
+            speakingLevelSum += rms
+            speakingLevelCount += 1
+        } else {
+            idleLevelSum += rms
+            idleLevelCount += 1
+        }
         lock.unlock()
         guard !isMuted else { return }
 
