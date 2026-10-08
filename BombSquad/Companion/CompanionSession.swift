@@ -25,6 +25,9 @@ final class CompanionSession: ObservableObject {
     @Published private(set) var isMuted = false
     /// The microphone, 0...1, for the window's meter.
     @Published private(set) var inputLevel: Float = 0
+    /// False when the audio could only start without echo cancellation; the
+    /// companion would then hear itself from the speakers.
+    @Published private(set) var cancelsEcho = true
 
     /// The voice of the POC sessions the owner rated well (2026-10-08 logs).
     static let voice = "Zephyr"
@@ -66,7 +69,9 @@ final class CompanionSession: ObservableObject {
     var statusText: String {
         switch phase {
         case .connecting: return "つないでいます…"
-        case .listening: return isMuted ? "ミュート中" : "聞いています"
+        case .listening:
+            if isMuted { return "ミュート中" }
+            return cancelsEcho ? "聞いています" : "聞いています・ヘッドホン推奨"
         case .speaking: return "話しています"
         case .reconnecting: return "つなぎ直しています…"
         case .failed: return "止まりました"
@@ -170,6 +175,7 @@ final class CompanionSession: ObservableObject {
     private func startAudio() -> Bool {
         do {
             try audio.start()
+            cancelsEcho = audio.plan?.cancelsEcho ?? false
             return true
         } catch {
             Diagnostics.record("companion.audioFailed", details: [

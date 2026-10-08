@@ -9,7 +9,7 @@ enum CompanionAudioError: UserPresentableError {
     }
 }
 
-/// The companion's ears and mouth: one `AVAudioEngine` with Apple's voice
+/// The companion's ears and mouth: an `AVAudioEngine` with Apple's voice
 /// processing on, so the companion's own voice coming out of the speakers is
 /// cancelled out of the microphone. The POC needed Chrome's AEC "all" for the
 /// same thing; without it the model hears itself and stops mid-sentence.
@@ -18,6 +18,27 @@ enum CompanionAudioError: UserPresentableError {
 /// Up: 16 kHz mono PCM16, on the audio thread. Down: 24 kHz mono PCM16 from
 /// the model, thrown away at once on an interruption (R6).
 final class CompanionAudio: @unchecked Sendable {
+    /// How the graph is wired. Tried in order until one starts.
+    ///
+    /// Measured on the owner's Mac (2026-10-08, build 15): with voice
+    /// processing on and the engine's default wiring, initialization failed
+    /// with -10875 "client-side input and output formats do not match" — the
+    /// voice processor needs the format going to the speakers to match the
+    /// one coming from the microphone, and the default follows the output
+    /// hardware instead. Which of these wins is recorded, so the next device
+    /// that differs shows up in the log rather than as silence.
+    enum Plan: String, CaseIterable, DiagnosticCode {
+        /// Mixer to output in exactly the microphone's format.
+        case matchedToInput
+        /// Mixer to output at the microphone's rate, with the output's channels.
+        case matchedRate
+        /// No echo cancellation: works anywhere, needs headphones.
+        case withoutVoiceProcessing
+
+        var diagnosticCode: String { rawValue }
+        var cancelsEcho: Bool { self != .withoutVoiceProcessing }
+    }
+
     /// 16 kHz mono PCM16 LE. Called on the audio thread.
     var onCapture: ((Data) -> Void)?
     /// Whether the companion's voice is coming out. Called on the main thread.
@@ -25,8 +46,11 @@ final class CompanionAudio: @unchecked Sendable {
     /// RMS of the microphone (0...1). Called on the audio thread.
     var onInputLevel: ((Float) -> Void)?
 
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    /// The plan that started, or nil while stopped.
+    private(set) var plan: Plan?
+
+    private var engine: AVAudioEngine?
+    private var player: AVAudioPlayerNode?
     private let playbackFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false
     )!
@@ -42,48 +66,56 @@ final class CompanionAudio: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private var monoFormat: AVAudioFormat?
     private var configurationObserver: NSObjectProtocol?
-    private var isRunning = false
+    private var startedAt = Date.distantPast
+    /// A graph that has just started can report its own settling as a
+    /// configuration change; rebuilding on that would never end.
+    private static let settleWindow: TimeInterval = 2
 
     func start() throws {
-        let input = engine.inputNode
-        // On either node it turns on for both: the output is the reference the
-        // canceller subtracts from the input.
-        try input.setVoiceProcessingEnabled(true)
-        // Other apps' sound (a video the user is watching) stays at its level;
-        // the default ducks it hard for the whole session.
-        input.voiceProcessingOtherAudioDuckingConfiguration =
-            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-                enableAdvancedDucking: false,
-                duckingLevel: .min
-            )
-        try installCapture()
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
-        engine.prepare()
-        try engine.start()
-        player.play()
-        isRunning = true
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: engine,
-            queue: .main
-        ) { [weak self] _ in
-            self?.restartAfterConfigurationChange()
+        var lastError: Error = CompanionAudioError.noInput
+        for plan in Plan.allCases {
+            // A fresh engine per attempt: a graph that failed to initialize
+            // keeps its half-made connections.
+            let engine = AVAudioEngine()
+            let player = AVAudioPlayerNode()
+            do {
+                try build(engine, player, plan)
+                self.engine = engine
+                self.player = player
+                self.plan = plan
+                startedAt = Date()
+                observeConfigurationChanges(of: engine)
+                return
+            } catch {
+                lastError = error
+                Diagnostics.record("companion.audioPlanFailed", details: [
+                    ("plan", .code(plan)),
+                    ("status", .count((error as NSError).code)),
+                ] + Self.formatDetails(engine))
+                engine.inputNode.removeTap(onBus: 0)
+                engine.stop()
+                try? engine.inputNode.setVoiceProcessingEnabled(false)
+            }
         }
+        throw lastError
     }
 
-    /// Safe to call when `start()` never ran or failed halfway.
+    /// Safe to call when `start()` never ran or failed.
     func stop() {
-        guard isRunning else { return }
-        isRunning = false
         if let configurationObserver {
             NotificationCenter.default.removeObserver(configurationObserver)
         }
         configurationObserver = nil
+        guard let engine else { return }
         engine.inputNode.removeTap(onBus: 0)
-        player.stop()
+        player?.stop()
         engine.stop()
-        try? engine.inputNode.setVoiceProcessingEnabled(false)
+        if plan?.cancelsEcho == true {
+            try? engine.inputNode.setVoiceProcessingEnabled(false)
+        }
+        self.engine = nil
+        player = nil
+        plan = nil
         setScheduled(0, bumpGeneration: true)
     }
 
@@ -96,7 +128,7 @@ final class CompanionAudio: @unchecked Sendable {
     /// Queues one piece of the model's voice (24 kHz mono PCM16 LE).
     func play(pcm16 data: Data) {
         let frames = data.count / 2
-        guard frames > 0,
+        guard let player, frames > 0,
               let buffer = AVAudioPCMBuffer(
                   pcmFormat: playbackFormat,
                   frameCapacity: AVAudioFrameCount(frames)
@@ -126,19 +158,96 @@ final class CompanionAudio: @unchecked Sendable {
     /// talking, so the rest of the sentence is no longer wanted.
     func flush() {
         setScheduled(0, bumpGeneration: true)
-        player.stop()
-        player.play()
+        player?.stop()
+        player?.play()
         notifySpeaking(false)
     }
 
-    // MARK: - Capture
+    // MARK: - Graph
 
-    private func installCapture() throws {
+    private func build(_ engine: AVAudioEngine, _ player: AVAudioPlayerNode, _ plan: Plan) throws {
         let input = engine.inputNode
+        if plan.cancelsEcho {
+            // On either node it turns on for both: the output is the reference
+            // the canceller subtracts from the input.
+            try input.setVoiceProcessingEnabled(true)
+            // Other apps' sound (a video the user is watching) stays at its
+            // level; the default ducks it hard for the whole session.
+            input.voiceProcessingOtherAudioDuckingConfiguration =
+                AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
+                    enableAdvancedDucking: false,
+                    duckingLevel: .min
+                )
+        }
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw CompanionAudioError.noInput
         }
+        try installCapture(on: input, format: inputFormat)
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: playbackFormat)
+        switch plan {
+        case .matchedToInput:
+            engine.connect(engine.mainMixerNode, to: engine.outputNode, format: inputFormat)
+        case .matchedRate:
+            let channels = max(1, engine.outputNode.outputFormat(forBus: 0).channelCount)
+            if let format = AVAudioFormat(standardFormatWithSampleRate: inputFormat.sampleRate, channels: channels) {
+                engine.connect(engine.mainMixerNode, to: engine.outputNode, format: format)
+            }
+        case .withoutVoiceProcessing:
+            break
+        }
+        engine.prepare()
+        try engine.start()
+        player.play()
+        Diagnostics.record("companion.audioStarted", details: [
+            ("plan", .code(plan)),
+        ] + Self.formatDetails(engine))
+    }
+
+    /// Rates and channel counts on both sides — the numbers the voice
+    /// processor compares.
+    private static func formatDetails(_ engine: AVAudioEngine) -> [(StaticString, DiagnosticValue)] {
+        let input = engine.inputNode.outputFormat(forBus: 0)
+        let output = engine.outputNode.outputFormat(forBus: 0)
+        return [
+            ("inRate", .count(Int(input.sampleRate))),
+            ("inChannels", .count(Int(input.channelCount))),
+            ("outRate", .count(Int(output.sampleRate))),
+            ("outChannels", .count(Int(output.channelCount))),
+        ]
+    }
+
+    private func observeConfigurationChanges(of engine: AVAudioEngine) {
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            self?.restartAfterConfigurationChange()
+        }
+    }
+
+    /// A device came or went (headphones, a display with speakers). The
+    /// engine stops itself and the formats may have changed, so the graph is
+    /// built again from the first plan.
+    private func restartAfterConfigurationChange() {
+        let settling = Date().timeIntervalSince(startedAt) < Self.settleWindow
+        Diagnostics.record("companion.audioReconfigured", details: [("ignored", .flag(settling))])
+        guard !settling else { return }
+        stop()
+        do {
+            try start()
+        } catch {
+            Diagnostics.record("companion.audioRestartFailed", details: [
+                ("error", .code(DiagnosticErrorClass(error))),
+            ])
+        }
+    }
+
+    // MARK: - Capture
+
+    private func installCapture(on input: AVAudioInputNode, format inputFormat: AVAudioFormat) throws {
         // With voice processing on, macOS can hand the tap more than one
         // channel; only the first is the processed voice.
         guard let mono = AVAudioFormat(
@@ -222,23 +331,6 @@ final class CompanionAudio: @unchecked Sendable {
     private func notifySpeaking(_ speaking: Bool) {
         DispatchQueue.main.async { [weak self] in
             self?.onSpeakingChanged?(speaking)
-        }
-    }
-
-    /// A device came or went (headphones, a display with speakers). The
-    /// engine stops itself; the input format may have changed with it.
-    private func restartAfterConfigurationChange() {
-        Diagnostics.record("companion.audioReconfigured")
-        engine.inputNode.removeTap(onBus: 0)
-        do {
-            try installCapture()
-            engine.prepare()
-            try engine.start()
-            player.play()
-        } catch {
-            Diagnostics.record("companion.audioRestartFailed", details: [
-                ("error", .code(DiagnosticErrorClass(error))),
-            ])
         }
     }
 }
