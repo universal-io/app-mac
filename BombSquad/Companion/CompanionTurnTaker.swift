@@ -52,6 +52,14 @@ struct CompanionTurnTaker {
         var overMinimumDb: Float = -36
         /// Echo heard before a voice over it can count at all.
         var echoLearning: TimeInterval = 0.5
+        /// The companion's voice played before anything over it may start a
+        /// turn. An echo canceller learns from what it has played, not from
+        /// the clock: WebRTC AEC3 treats its first 2.5 s of loud playback as
+        /// an initial state, and LiveKit Agents blocks interruptions for the
+        /// agent's first 3 s of speech for this reason. Build 20 answered its
+        /// own echo 1.9 s into the greeting. Levels still count for learning
+        /// the echo meanwhile, so a person heard here is not taken for it.
+        var aecWarmup: TimeInterval = 3
         var echoTimeConstant: TimeInterval = 2
         /// Above the line for this long within `window` starts a turn. A
         /// syllable of echo or a key press is shorter; a person holds it.
@@ -118,6 +126,8 @@ struct CompanionTurnTaker {
     private(set) var utterance = Utterance()
     private var echoPower: Float?
     private var echoHeard: TimeInterval = 0
+    /// How long the companion's voice has played, all told.
+    private var played: TimeInterval = 0
     private var recent: [(time: TimeInterval, duration: TimeInterval, counts: Bool)] = []
     /// Levels of the last `floorWindow` with no voice of the companion's in
     /// the room, whoever was talking: the quietest of them is the room.
@@ -155,12 +165,14 @@ struct CompanionTurnTaker {
         case .paused: voiceInRoom = false
         case .ended(let end): voiceInRoom = now - end < settings.tail
         }
+        if voice == .playing { played += duration }
         if !voiceInRoom { learnFloor(levelDb: levelDb, duration: duration, now: now) }
         if userSpeaking { return continueTurn(levelDb: levelDb, duration: duration, now: now) }
 
         let line = line(voiceInRoom: voiceInRoom)
         let counts = line.map { levelDb >= $0 } ?? false
-        recent.append((now, duration, counts))
+        let warming = voiceInRoom && played < settings.aecWarmup
+        recent.append((now, duration, counts && !warming))
         while let first = recent.first, now - first.time > settings.window {
             recent.removeFirst()
         }

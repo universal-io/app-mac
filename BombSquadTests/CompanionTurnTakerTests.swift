@@ -143,7 +143,7 @@ final class CompanionTurnTakerTests: XCTestCase {
 
     func testEchoPeaksAsLongAsASyllableDoNotCount() {
         var taker = CompanionTurnTaker()
-        var now = feed(&taker, levelDb: -40, seconds: 2, from: 0, voice: .playing).end
+        var now = feed(&taker, levelDb: -40, seconds: 3.5, from: 0, voice: .playing).end
         for _ in 0..<5 {
             let peak = feed(&taker, levelDb: -28, seconds: 0.12, from: now, voice: .playing)
             XCTAssertNil(peak.started)
@@ -153,7 +153,7 @@ final class CompanionTurnTakerTests: XCTestCase {
 
     func testAPersonTalkingOverTheVoiceStartsATurn() {
         var taker = CompanionTurnTaker()
-        let echo = feed(&taker, levelDb: -40, seconds: 2, from: 0, voice: .playing)
+        let echo = feed(&taker, levelDb: -40, seconds: 3.5, from: 0, voice: .playing)
         let over = feed(&taker, levelDb: -24, seconds: 0.4, from: echo.end, voice: .playing)
         guard case .started(let overVoice, _)? = over.started else { return XCTFail("no start") }
         XCTAssertTrue(overVoice)
@@ -165,7 +165,7 @@ final class CompanionTurnTakerTests: XCTestCase {
         // averaging −60 with peaks of −50. None of it is a person.
         var taker = CompanionTurnTaker()
         let room = feed(&taker, levelDb: -76, seconds: 1, from: 0)
-        var now = feed(&taker, levelDb: -86, seconds: 2, from: room.end, voice: .playing).end
+        var now = feed(&taker, levelDb: -86, seconds: 3.5, from: room.end, voice: .playing).end
         for _ in 0..<4 {
             let click = feed(&taker, levelDb: -50, seconds: 0.3, from: now, voice: .playing)
             XCTAssertNil(click.started)
@@ -181,7 +181,7 @@ final class CompanionTurnTakerTests: XCTestCase {
         // room, another volume: a few dB more must not count either.
         var taker = CompanionTurnTaker()
         let room = feed(&taker, levelDb: -77, seconds: 1, from: 0)
-        let echo = feed(&taker, levelDb: -53, seconds: 2, from: room.end, voice: .playing)
+        let echo = feed(&taker, levelDb: -53, seconds: 3.5, from: room.end, voice: .playing)
         let surge = feed(&taker, levelDb: -39, seconds: 0.6, from: echo.end, voice: .playing)
         XCTAssertNil(surge.started)
     }
@@ -190,7 +190,7 @@ final class CompanionTurnTakerTests: XCTestCase {
         // Build 20: the user talking over the voice averaged −33 dBFS.
         var taker = CompanionTurnTaker()
         let room = feed(&taker, levelDb: -73, seconds: 1, from: 0)
-        let echo = feed(&taker, levelDb: -84, seconds: 2, from: room.end, voice: .playing)
+        let echo = feed(&taker, levelDb: -84, seconds: 3.5, from: room.end, voice: .playing)
         let over = feed(&taker, levelDb: -33, seconds: 0.4, from: echo.end, voice: .playing)
         guard case .started(let overVoice, _)? = over.started else { return XCTFail("no start") }
         XCTAssertTrue(overVoice)
@@ -202,6 +202,22 @@ final class CompanionTurnTakerTests: XCTestCase {
         let early = feed(&taker, levelDb: -20, seconds: 0.45, from: 0, voice: .playing)
         XCTAssertNil(early.started)
         XCTAssertNil(taker.line(voiceInRoom: true))
+    }
+
+    func testTheVoiceCannotBeInterruptedUntilTheEchoCancellerHasWarmedUp() {
+        // Build 20 answered its own echo 1.9 s into the greeting. What counts
+        // is how long the voice has played, not how long the session has run.
+        var taker = CompanionTurnTaker()
+        let room = feed(&taker, levelDb: -73, seconds: 5, from: 0)
+        let greeting = feed(&taker, levelDb: -53, seconds: 2.5, from: room.end, voice: .playing)
+        let early = feed(&taker, levelDb: -24, seconds: 0.4, from: greeting.end, voice: .playing)
+        XCTAssertNil(early.started)
+        // The person heard meanwhile was not learned as the echo.
+        XCTAssertEqual(taker.echoDb ?? 0, -53, accuracy: 0.5)
+        let rest = feed(&taker, levelDb: -53, seconds: 1, from: early.end, voice: .playing)
+        let over = feed(&taker, levelDb: -24, seconds: 0.4, from: rest.end, voice: .playing)
+        guard case .started(let overVoice, _)? = over.started else { return XCTFail("no start") }
+        XCTAssertTrue(overVoice)
     }
 
     func testAPausedVoiceLeavesTheRoomAtOnce() {
