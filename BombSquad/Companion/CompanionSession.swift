@@ -139,6 +139,10 @@ final class CompanionSession: ObservableObject {
     private var guideReading = false
     /// The last step the companion gave (a Look.message of kind next step).
     private var lastInstruction: String?
+    /// What the user is trying to get done, held here, not by the model: a
+    /// look without a goal ("次は？", "それ違いますよ") keeps it. Build 20 let
+    /// such questions become the goal and the guidance forgot its purpose.
+    private var currentGoal: String?
     private var lines: [CompanionEye.Line] = []
     private var pendingStep: CompanionEye.Look?
     /// A step sent as a turn: it becomes the instruction in force only once
@@ -829,9 +833,10 @@ final class CompanionSession: ObservableObject {
         let droppedStep = pendingStep != nil || guide.cancelRunningStep()
         pendingStep = nil
         if !userSpeaking, let clip = CompanionBridge.next() { audio.play(pcm16: clip) }
+        if let goal = call.goal, !goal.isEmpty { currentGoal = goal }
         let request = CompanionEye.Request(
             question: call.question ?? "",
-            goal: call.goal,
+            goal: currentGoal,
             nextStep: call.nextStep,
             pointsAtCursor: call.pointsAtCursor,
             history: lines,
@@ -845,7 +850,7 @@ final class CompanionSession: ObservableObject {
             let reading = await self.eye.look(request, adopting: nil)
             guard !Task.isCancelled, self.looks[call.id] != nil else { return }
             self.looks[call.id] = nil
-            self.answer(call, with: reading, issuedOn: issuedOn)
+            self.answer(call, with: reading, issuedOn: issuedOn, goal: request.goal)
             let gaveStep = !reading.superseded && (reading.look.kind == .nextStep || reading.look.kind == .done)
             if droppedStep, !gaveStep { self.guide.readNow() }
             self.refreshPhase()
@@ -853,7 +858,7 @@ final class CompanionSession: ObservableObject {
         refreshPhase()
     }
 
-    private func answer(_ call: LiveToolCall, with reading: CompanionEye.Reading, issuedOn: LiveSocket?) {
+    private func answer(_ call: LiveToolCall, with reading: CompanionEye.Reading, issuedOn: LiveSocket?, goal: String?) {
         guard let socket, socket === issuedOn else {
             // The connection that asked is gone; the one now has never heard
             // of this call. The mark would point at an answer nobody gives —
@@ -885,7 +890,8 @@ final class CompanionSession: ObservableObject {
         }
         socket.send(LiveWire.toolResponse(id: call.id, name: call.name, output: look.toolOutput))
         serverTurnOpen = true
-        follow(look, goal: call.goal ?? call.question)
+        // With no goal ever stated, the question is the best there is.
+        follow(look, goal: goal ?? call.question)
     }
 
     /// What a look told the user. A step becomes the instruction the next one
@@ -911,6 +917,7 @@ final class CompanionSession: ObservableObject {
             }
         case .done:
             guide.stop()
+            currentGoal = nil
         default:
             break
         }

@@ -53,7 +53,8 @@ final class CompanionEye {
         let elapsedMs: Int
 
         /// The text sent back to the voice model, exactly three lines:
-        /// 言うこと: <message or なし>\n種類: <次の一歩|答え|完了|相談|画面の説明|失敗>\n印: <出した（「label」）|出した|なし>
+        /// 言うこと: <message or なし>\n種類: <次の一歩|答え|完了|相談|画面の説明|失敗>\n目印: <出した（「label」）|出した|なし>
+        /// (「目印」, not 「印」: the voice misread 印 aloud, build 20.)
         ///
         /// Only `message` is offered as something to say. Observations and
         /// candidate names stay out, so the names the voice may speak are the
@@ -70,7 +71,7 @@ final class CompanionEye {
             return [
                 "言うこと: \(say.isEmpty ? "なし" : say)",
                 "種類: \(kind.word)",
-                "印: \(mark)",
+                "目印: \(mark)",
             ].joined(separator: "\n")
         }
 

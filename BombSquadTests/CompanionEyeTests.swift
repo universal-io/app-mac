@@ -29,7 +29,7 @@ final class CompanionEyeTests: XCTestCase {
         )
         XCTAssertEqual(
             look.toolOutput,
-            "言うこと: 左のメニューの「レポート」を押してください。\n種類: 次の一歩\n印: 出した（「レポート」）"
+            "言うこと: 左のメニューの「レポート」を押してください。\n種類: 次の一歩\n目印: 出した（「レポート」）"
         )
     }
 
@@ -40,7 +40,7 @@ final class CompanionEyeTests: XCTestCase {
             kind: .answer, message: "これは期間の選択欄です。", markedLabel: nil,
             marked: true, skillName: nil, elapsedMs: 3_900
         )
-        XCTAssertEqual(look.toolOutput, "言うこと: これは期間の選択欄です。\n種類: 答え\n印: 出した")
+        XCTAssertEqual(look.toolOutput, "言うこと: これは期間の選択欄です。\n種類: 答え\n目印: 出した")
     }
 
     func testNoMarkSaysNone() {
@@ -48,11 +48,11 @@ final class CompanionEyeTests: XCTestCase {
             kind: .consult, message: "ログインが必要です。続けますか？", markedLabel: nil,
             marked: false, skillName: nil, elapsedMs: 5_000
         )
-        XCTAssertEqual(look.toolOutput, "言うこと: ログインが必要です。続けますか？\n種類: 相談\n印: なし")
+        XCTAssertEqual(look.toolOutput, "言うこと: ログインが必要です。続けますか？\n種類: 相談\n目印: なし")
     }
 
     func testAFailureHasNothingToSay() {
-        XCTAssertEqual(Look.failure(elapsedMs: 15_000).toolOutput, "言うこと: なし\n種類: 失敗\n印: なし")
+        XCTAssertEqual(Look.failure(elapsedMs: 15_000).toolOutput, "言うこと: なし\n種類: 失敗\n目印: なし")
     }
 
     func testEveryKindHasItsWord() {
@@ -74,7 +74,7 @@ final class CompanionEyeTests: XCTestCase {
             marked: true, skillName: nil, elapsedMs: 0
         )
         let lines = look.toolOutput.components(separatedBy: "\n")
-        XCTAssertEqual(lines, ["言うこと: 一行目 二行目", "種類: 次の一歩", "印: 出した（「保存して 閉じる」）"])
+        XCTAssertEqual(lines, ["言うこと: 一行目 二行目", "種類: 次の一歩", "目印: 出した（「保存して 閉じる」）"])
     }
 
     // MARK: - What kind of answer

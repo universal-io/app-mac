@@ -106,11 +106,11 @@ final class CompanionTurnTakerTests: XCTestCase {
         // the turn it opened ends, and it opens no other.
         var taker = CompanionTurnTaker()
         let room = feed(&taker, levelDb: -60, seconds: 2, from: 0)
-        let music = feed(&taker, levelDb: -45, seconds: 20, from: room.end)
+        let music = feed(&taker, levelDb: -40, seconds: 20, from: room.end)
         guard let stop = music.events.firstIndex(of: .stopped(.silence)) else { return XCTFail("no stop") }
         XCTAssertLessThan(Double(stop) * block, 15)
         XCTAssertFalse(music.events.suffix(from: stop + 1).contains { if case .started = $0 { return true } else { return false } })
-        XCTAssertEqual(taker.floorDb ?? 0, -45, accuracy: 1)
+        XCTAssertEqual(taker.floorDb ?? 0, -40, accuracy: 1)
     }
 
     func testDigitalSilenceIsNotTheRoom() {
@@ -158,6 +158,21 @@ final class CompanionTurnTakerTests: XCTestCase {
         guard case .started(let overVoice, _)? = over.started else { return XCTFail("no start") }
         XCTAssertTrue(overVoice)
         XCTAssertTrue(taker.utterance.overVoice)
+    }
+
+    func testClicksAreNotAVoiceEvenWhenTheEchoIsGone() {
+        // Build 20: echo cancelled to about −86 dBFS, the room at −76, clicks
+        // averaging −60 with peaks of −50. None of it is a person.
+        var taker = CompanionTurnTaker()
+        let room = feed(&taker, levelDb: -76, seconds: 1, from: 0)
+        var now = feed(&taker, levelDb: -86, seconds: 2, from: room.end, voice: .playing).end
+        for _ in 0..<4 {
+            let click = feed(&taker, levelDb: -50, seconds: 0.3, from: now, voice: .playing)
+            XCTAssertNil(click.started)
+            now = feed(&taker, levelDb: -86, seconds: 0.3, from: click.end, voice: .playing).end
+        }
+        let idleClick = feed(&taker, levelDb: -50, seconds: 0.4, from: now, voice: .ended(at: now - 5))
+        XCTAssertNil(idleClick.started)
     }
 
     func testNothingCountsOverTheVoiceBeforeItsEchoIsKnown() {

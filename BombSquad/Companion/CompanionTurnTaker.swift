@@ -32,12 +32,18 @@ struct CompanionTurnTaker {
         var floorWindow: TimeInterval = 3
         /// Above the floor by this much, nothing playing, is a voice…
         var startMarginDb: Float = 10
-        /// …and never below this, however quiet the room.
-        var startMinimumDb: Float = -50
+        /// …and never below this, however quiet the room. Build 20 on the
+        /// owner's Mac: the user's turns averaged −30 dBFS, mouse and keyboard
+        /// clicks −60 (peaks −50), and −50 let clicks in.
+        var startMinimumDb: Float = -44
         /// Over the companion's voice: above the floor by this much…
         var overFloorMarginDb: Float = 15
-        /// …and above what its echo has been by this much.
+        /// …and above what its echo has been by this much…
         var overEchoMarginDb: Float = 10
+        /// …and never below this. Echo cancelled down to −100 dBFS (build 20)
+        /// put the line at floor + 15 = −61, and clicks over the voice became
+        /// turns that the model answered with 「はい」.
+        var overMinimumDb: Float = -42
         /// Echo heard before a voice over it can count at all.
         var echoLearning: TimeInterval = 0.5
         var echoTimeConstant: TimeInterval = 2
@@ -129,7 +135,11 @@ struct CompanionTurnTaker {
             return max(settings.startMinimumDb, floor + settings.startMarginDb)
         }
         guard let echoPower, echoHeard >= settings.echoLearning else { return nil }
-        return max(floor + settings.overFloorMarginDb, Self.decibels(echoPower) + settings.overEchoMarginDb)
+        return max(
+            settings.overMinimumDb,
+            floor + settings.overFloorMarginDb,
+            Self.decibels(echoPower) + settings.overEchoMarginDb
+        )
     }
 
     mutating func process(levelDb: Float, duration: TimeInterval, now: TimeInterval, voice: Voice) -> Event {
