@@ -238,6 +238,8 @@ struct CompanionView: View {
         }
         if let failure = session.failureMessage {
             rows.append(.error(failure))
+        } else if let notice = session.notice {
+            rows.append(.note(notice))
         } else if session.phase == .looking {
             rows.append(.waiting("画面を確認しています"))
         } else if rows.isEmpty {

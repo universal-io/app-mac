@@ -43,6 +43,11 @@ final class CompanionSession: ObservableObject {
     @Published private(set) var cancelsEcho = true
     /// The Skill the last look applied (master plan R18 決定2: shown, never silent).
     @Published private(set) var skillName: String?
+    /// What the user should know when something did not happen: no answer
+    /// came, their words were lost, the eye needs a permission. Shown in the
+    /// window until the next answer arrives. Nothing the user does may end in
+    /// silence (owner, 2026-10-09; R11 「どの操作も無音で終わらない」).
+    @Published private(set) var notice: String?
 
     /// The voice of the POC sessions the owner rated well (2026-10-08 logs).
     static let voice = "Zephyr"
@@ -153,6 +158,18 @@ final class CompanionSession: ObservableObject {
     /// A turn the model answers with silence brings no turnComplete (probed
     /// on 3.1 Flash Live); this takes the floor back after `silentTurnLimit`.
     private var turnWatchdog: Task<Void, Never>?
+    /// The answer turn now with the model, to show in writing if the model
+    /// lets it go by in silence.
+    private var answerInFlight: CompanionEye.Look?
+    /// When the server last sent anything at all.
+    private var lastServerEventAt = Date.distantPast
+    /// Watches a finished user turn for any sign of the server.
+    private var replyWatch: Task<Void, Never>?
+    /// Nothing at all from the server this long after the user stopped —
+    /// not a transcript, not a word — means the connection is not answering
+    /// (2026-10-09 22:18: 3.1 Flash Live failed on audio for twenty minutes and
+    /// the window said 「聞き取っています」 throughout).
+    private static let replyLimit: Duration = .seconds(12)
     private static let silentTurnLimit: Duration = .seconds(8)
     /// What a look_closely call is answered with at once (Gateway
     /// `LiveLook` "async"): the voice says one line and keeps talking while
@@ -531,6 +548,10 @@ final class CompanionSession: ObservableObject {
         uplink.replace(nil)
         self.socket = nil
         serverTurnOpen = false
+        // 田中さん's answer was on its way out with this connection.
+        if answerInFlight != nil {
+            if replyMeasured { answerInFlight = nil } else { showUnspokenAnswer() }
+        }
         interruptedTurnPending = false
         handOverBy = nil
         reconnect()
@@ -539,6 +560,7 @@ final class CompanionSession: ObservableObject {
     // MARK: - Server events
 
     private func handle(_ event: LiveEvent) {
+        lastServerEventAt = Date()
         switch event {
         case .setupComplete:
             break
@@ -602,6 +624,7 @@ final class CompanionSession: ObservableObject {
     }
 
     private func play(_ pcm: Data) {
+        notice = nil
         if !replyMeasured, let since = turnEndedAt {
             Diagnostics.record("companion.replied", details: [
                 ("ms", .ms(Self.ms(since: since))),
@@ -617,6 +640,7 @@ final class CompanionSession: ObservableObject {
     private func heard(_ text: String) {
         transcript.append(text, from: .user)
         guard CompanionTranscript.hasWords(text) else { return }
+        notice = nil
         heardThisTurn = true
         appendLine(.user, text)
         if talkOverPending || resumedEarly { confirmTalkOver() }
@@ -697,6 +721,9 @@ final class CompanionSession: ObservableObject {
         serverTurnOpen = false
         turnWatchdog?.cancel()
         turnWatchdog = nil
+        if answerInFlight != nil {
+            if replyMeasured { answerInFlight = nil } else { showUnspokenAnswer() }
+        }
         let step = stepInFlight
         stepInFlight = nil
         if interruptedTurnPending {
@@ -718,6 +745,10 @@ final class CompanionSession: ObservableObject {
                 socket.send(LiveWire.turn(CompanionGreeting.start))
                 serverTurnOpen = true
                 return
+            }
+            if !greetingSpoke {
+                // Silent twice: the user is not left waiting for a hello.
+                notice = "あいさつの声が届きませんでした。そのまま話しかけてください。"
             }
         }
         // The turn the user ended without words is over: its answer, if any,
@@ -775,6 +806,7 @@ final class CompanionSession: ObservableObject {
                 // it; nothing is held for one, and a voice paused for it goes on.
                 if overVoice { audio.resumeVoice() }
                 Diagnostics.record("companion.turnUndelivered")
+                notice = "つなぎ直している間なので、いまのお話は届いていません。少し待ってから、もう一度話しかけてください。"
                 refreshPhase()
                 return
             }
@@ -798,11 +830,13 @@ final class CompanionSession: ObservableObject {
             userSpeaking = false
             turnEndedAt = Date()
             replyMeasured = false
+            watchForReply(since: turnEndedAt ?? Date())
             if lastStartDelivered, !lastEndDelivered, reply == .awaitingWords, !heardThisTurn {
                 // The connection that heard the start is gone and no other
                 // heard the end: no answer is coming for this turn.
                 settleLostTurn()
                 Diagnostics.record("companion.turnLost")
+                notice = "接続が途切れて、いまのお話は届きませんでした。もう一度話しかけてください。"
             } else if reply == .open {
                 // Held only because the user was talking (a greeting).
                 releaseHeld()
@@ -909,6 +943,14 @@ final class CompanionSession: ObservableObject {
             Diagnostics.record("companion.answerDropped", details: [("superseded", .flag(true))])
             return
         }
+        // Asking again will not help these; the user has to act.
+        if reading.look.kind == .failure {
+            if !ScreenCapturePermission.isGranted {
+                notice = "田中さんが画面を読むには、画面収録の許可が要ります。システム設定 › プライバシーとセキュリティ › 画面収録 で Universal I/O をオンにしてください。"
+            } else if GatewayVisionClient.make() == nil {
+                notice = "田中さんが画面を読むには、ログインが要ります。メニューバーの Universal I/O からログインしてください。"
+            }
+        }
         pendingAnswer = (reading.look, goal)
         trySendStep()
     }
@@ -965,6 +1007,7 @@ final class CompanionSession: ObservableObject {
             trace?.record("answer", ["text": answer.look.toolOutput])
             socket.send(LiveWire.turn("（田中さんから）\n" + answer.look.toolOutput))
             openTurn()
+            answerInFlight = answer.look
             Diagnostics.record("companion.answerSpoken", details: [("kind", .code(answer.look.kind))])
             follow(answer.look, goal: answer.goal)
             return
@@ -977,6 +1020,36 @@ final class CompanionSession: ObservableObject {
         stepInFlight = step
         if step.kind == .done { guide.stop() }
         Diagnostics.record("companion.stepSpoken", details: [("done", .flag(step.kind == .done))])
+    }
+
+    /// The user finished a turn: something from the server must follow. When
+    /// nothing at all does, the user hears why and the connection is opened
+    /// again (closing it reconnects with the resumption handle).
+    private func watchForReply(since ended: Date) {
+        replyWatch?.cancel()
+        guard socket != nil, !isReconnecting else { return }
+        replyWatch = Task { [weak self] in
+            try? await Task.sleep(for: Self.replyLimit)
+            guard let self, !Task.isCancelled, !self.isStopped, !self.userSpeaking,
+                  !self.isReconnecting, self.lastServerEventAt < ended
+            else { return }
+            Diagnostics.record("companion.noReply")
+            self.trace?.record("noReply")
+            self.notice = "応答がありません。つなぎ直しています。少し待ってから、もう一度話しかけてください。"
+            self.socket?.close()
+        }
+    }
+
+    /// The model let 田中さん's answer go by without a word: it still reaches
+    /// the user, in writing.
+    private func showUnspokenAnswer() {
+        guard let answer = answerInFlight else { return }
+        answerInFlight = nil
+        guard !answer.message.isEmpty else { return }
+        transcript.endTurn()
+        transcript.append("（田中さんより）" + answer.message, from: .companion)
+        transcript.endTurn()
+        Diagnostics.record("companion.answerUnspoken")
     }
 
     /// A turn went to the model, which now owes an answer. One it answers
@@ -994,6 +1067,7 @@ final class CompanionSession: ObservableObject {
             else { return }
             self.serverTurnOpen = false
             self.stepInFlight = nil
+            self.showUnspokenAnswer()
             self.trace?.record("turnSilent")
             Diagnostics.record("companion.turnSilent")
             self.trySendStep()
@@ -1111,6 +1185,8 @@ final class CompanionSession: ObservableObject {
         isStopped = true
         turnWatchdog?.cancel()
         turnWatchdog = nil
+        replyWatch?.cancel()
+        replyWatch = nil
         trace?.record("ended")
         trace?.close()
         receiveTask?.cancel()
