@@ -1,6 +1,6 @@
 # ドキュメント索引
 
-最終更新: 2026-10-08 ／ ステータス: 現行
+最終更新: 2026-10-09 ／ ステータス: 現行
 
 文書の追加・整理や正本の所在確認に使う索引です。作業に必要な行の参照先だけ読みます。実装の正は現行コード、製品計画の正は
 `universal-io-master-plan.md` です。
@@ -20,6 +20,7 @@
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
 | [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9、Selection Extension改修（R10）、将来のAX直接入力研究の正本 |
 | [ga4-complete-skill-plan.md](ga4-complete-skill-plan.md) | R8 M6: GA4を1本目の「完全サポート」Skillにする実証実験。用事一覧・器の論点・実測記録 |
+| [voice-companion-cases.md](voice-companion-cases.md) | R18 声の相棒の事例集（企画の段1）。実際の会話で誰が答えてどう外したか、失敗の型、記録の取り方 |
 
 ## 他リポジトリにある正本
 
