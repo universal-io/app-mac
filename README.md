@@ -17,12 +17,12 @@ Universal I/O は、入力・受信・画面理解をひとつの操作体系に
 下の表はあくまで現時点のスナップショットで、食い違った場合は常に`ai-routing.ts`が正しく、
 READMEの方を直します。モデル名を判断材料にする作業では、この表ではなくコードを読んでください。
 
-現時点（2026-08-04）の構成:
+現時点（2026-10-09）の構成:
 
 | 機能 | 一次モデル | 二次モデル |
 |---|---|---|
 | Composeレビュー | OpenAI `gpt-5.6-luna` | Groq `openai/gpt-oss-120b` |
-| Vision / Copilot | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
+| Vision / Copilot（声の相棒の目も同じ） | OpenAI `gpt-6-luna` | OpenAI `gpt-5.4-mini` |
 | 先回り文案 | OpenAI `gpt-5.6-luna` | OpenAI `gpt-5.4-mini` |
 | 音声入力 | Groq `whisper-large-v3-turbo` | OpenAI `whisper-1` |
 
