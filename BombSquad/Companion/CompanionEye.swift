@@ -152,6 +152,8 @@ final class CompanionEye {
     private let overlay: CompanionMarkOverlay
     private let screenshots = ScreenshotCaptureService()
     private var newestLook = 0
+    /// DEBUG: where each read's request and answer are kept (nil in release).
+    var trace: CompanionTrace?
     private var workers: [Int: Task<Void, Never>] = [:]
     private var followed: Followed?
     private var followTimer: Timer?
@@ -305,6 +307,7 @@ final class CompanionEye {
                     )
                 }
             }
+            let traceNumber = trace?.nextLook() ?? 0
             let response = try await client.understand(
                 attachment: capture,
                 question: plan.question,
@@ -316,7 +319,10 @@ final class CompanionEye {
                 guidanceContext: plan.guidance,
                 // The voice speaks Japanese whatever the Mac's language is;
                 // Vision otherwise follows the device (AppSettings).
-                language: .japanese
+                language: .japanese,
+                wire: trace.map { trace in
+                    { request, response in trace.saveLook(traceNumber, request: request, response: response) }
+                }
             )
             try Task.checkCancellation()
             let isNewest = number == newestLook && !isTornDown
@@ -352,6 +358,17 @@ final class CompanionEye {
                 ("pointer", .flag(pointer != nil)),
                 ("superseded", .flag(!isNewest)),
                 ("truncated", .code(AXTruncationCode(snapshot.diagnostics.truncatedReason))),
+            ])
+            trace?.record("read", [
+                "n": traceNumber,
+                "question": plan.question ?? "",
+                "guided": plan.guidance != nil,
+                "kind": "\(look.kind)",
+                "said": look.message,
+                "marked": look.markedLabel ?? "",
+                "candidates": snapshot.axCandidates.count,
+                "ms": look.elapsedMs,
+                "superseded": !isNewest,
             ])
             return Reading(look: look, superseded: !isNewest)
         } catch {

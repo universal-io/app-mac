@@ -114,7 +114,8 @@ struct GatewayVisionClient {
         selection: VisionSelectionContext? = nil,
         pointer: VisionPointer? = nil,
         guidanceContext: ScreenGuidanceContext? = nil,
-        language: OutputLanguage
+        language: OutputLanguage,
+        wire: ((_ request: Data, _ response: Data) -> Void)? = nil
     ) async throws -> VisionResponse {
         let encoded = try await Self.encodedImage(for: attachment, pointer: pointer)
         // What actually went over the wire. Image tokens grow with area and are
@@ -149,6 +150,7 @@ struct GatewayVisionClient {
             body: body,
             timeout: OperationDeadline.visionRequest
         )
+        if let wire, let sent = try? JSONSerialization.data(withJSONObject: body) { wire(sent, data) }
         return try Self.decode(try GatewayClient.rootObject(data), expectedCaptureID: attachment.id)
     }
 

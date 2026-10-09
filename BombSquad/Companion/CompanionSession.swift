@@ -68,6 +68,8 @@ final class CompanionSession: ObservableObject {
     private let uplink = LiveUplink()
     private let marks = CompanionMarkOverlay()
     private lazy var eye = CompanionEye(overlay: marks)
+    /// DEBUG: the conversation in words, for reading a session back (nil in release).
+    private var trace: CompanionTrace?
     private lazy var guide = CompanionGuide(eye: eye)
     /// The window's frame, so the guide does not take clicks on it for steps.
     var panelFrame: () -> NSRect? = { nil }
@@ -183,6 +185,8 @@ final class CompanionSession: ObservableObject {
 
     func start() {
         Diagnostics.record("companion.started")
+        trace = CompanionTrace.start()
+        eye.trace = trace
         identityTask = VisionObservationCaptureService.identityTask(
             preferredPID: targetApp?.processIdentifier
         )
@@ -482,6 +486,7 @@ final class CompanionSession: ObservableObject {
         // The greeting answers this turn, not one of the user's: it waits for
         // no words — unless the user is already talking to this connection.
         if !(userSpeaking && lastStartDelivered) { reply = .open }
+        trace?.record("greeting")
         socket.send(LiveWire.turn(CompanionGreeting.start))
         serverTurnOpen = true
         turnEndedAt = Date()
@@ -527,14 +532,18 @@ final class CompanionSession: ObservableObject {
         case .setupComplete:
             break
         case .interrupted:
+            trace?.record("interrupted")
             interrupted()
         case .audio(let pcm):
             receive(pcm)
         case .heard(let text):
+            trace?.record("user", ["text": text])
             heard(text)
         case .said(let text):
+            trace?.record("companion", ["text": text])
             said(text)
         case .turnComplete:
+            trace?.record("turnComplete")
             turnComplete()
         case .toolCall(let call):
             look(call)
@@ -744,6 +753,7 @@ final class CompanionSession: ObservableObject {
     private func userTurn(_ turn: CompanionAudio.UserTurn) {
         switch turn {
         case .started(let overVoice):
+            trace?.record("userStarted", ["overVoice": overVoice])
             userSpeaking = true
             heardThisTurn = false
             turnCursor = NSEvent.mouseLocation
@@ -771,6 +781,7 @@ final class CompanionSession: ObservableObject {
             transcript.endTurn()
             refreshVisibleList(force: false)
         case .stopped:
+            trace?.record("userStopped")
             userSpeaking = false
             turnEndedAt = Date()
             replyMeasured = false
@@ -816,6 +827,12 @@ final class CompanionSession: ObservableObject {
             ("nextStep", .flag(call.nextStep)),
             ("cursor", .flag(call.pointsAtCursor)),
             ("heard", .flag(heardThisTurn)),
+        ])
+        trace?.record("look", [
+            "question": call.question ?? "",
+            "goal": call.goal ?? "",
+            "nextStep": call.nextStep,
+            "cursor": call.pointsAtCursor,
         ])
         // The model acted on the user's turn: that is as good as words. A
         // voice paused for it was paused for a person, and its answer must not
@@ -867,6 +884,7 @@ final class CompanionSession: ObservableObject {
             Diagnostics.record("companion.lookOrphaned")
             return
         }
+        trace?.record("told", ["output": reading.look.toolOutput, "superseded": reading.superseded])
         if reading.superseded {
             // A newer look is the one being answered; this one only goes into
             // the context, or its answer would cut in and contradict.
@@ -940,6 +958,7 @@ final class CompanionSession: ObservableObject {
         pendingStep = nil
         // A turn interrupts whatever the model is generating; the guards above
         // make sure it owes nothing.
+        trace?.record("step", ["text": step.toolOutput])
         socket.send(LiveWire.turn("（次の一歩）\n" + step.toolOutput))
         serverTurnOpen = true
         stepInFlight = step
@@ -982,6 +1001,7 @@ final class CompanionSession: ObservableObject {
             let body = list.split(separator: "\n").dropFirst().joined(separator: "\n")
             guard body != self.lastVisibleListText else { return }
             self.lastVisibleListText = body
+            self.trace?.record("note", ["text": list])
             self.socket?.send(LiveWire.note(list))
         }
     }
@@ -1056,6 +1076,8 @@ final class CompanionSession: ObservableObject {
 
     private func tearDown() {
         isStopped = true
+        trace?.record("ended")
+        trace?.close()
         receiveTask?.cancel()
         receiveTask = nil
         uplink.replace(nil)
