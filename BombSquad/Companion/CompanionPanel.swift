@@ -19,6 +19,13 @@ final class CompanionPanelController {
     private var panel: CompanionPanel?
     private var host: NSHostingView<CompanionView>?
     private var reflow: Timer?
+    /// The height this class last gave the window. Measured against this,
+    /// never against the window's own frame: with the hosting view as the
+    /// window's content, AppKit resized the window to the view's size keeping
+    /// the top edge, this class put the point back keeping the bottom edge, and
+    /// the window crept up the screen a point every tenth of a second (build
+    /// 23 on the device).
+    private var placedHeight: CGFloat = 0
 
     /// The window's frame on screen, while it is shown.
     var frame: NSRect? { panel?.frame }
@@ -35,17 +42,24 @@ final class CompanionPanelController {
         // The SwiftUI view's own ideal size, kept current as the content
         // changes — the measurement Vision's and Compose's bubbles use.
         host.sizingOptions = [.intrinsicContentSize]
-        host.frame = NSRect(x: 0, y: 0, width: Self.width, height: 1)
-        panel.contentView = host
+        // Inside a plain view, as Vision's bubble is: the window's size is this
+        // class's alone to set, and AppKit does not follow the hosting view's
+        // size on its own.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 1))
+        container.addSubview(host)
+        panel.contentView = container
+        let height = Self.height(of: host)
         panel.setFrame(
             NSRect(
                 x: bounds.maxX - Self.margin - Self.width,
                 y: bounds.minY + Self.margin,
                 width: Self.width,
-                height: Self.height(of: host)
+                height: height
             ),
             display: false
         )
+        host.frame = NSRect(x: 0, y: 0, width: Self.width, height: height)
+        placedHeight = height
         panel.orderFrontRegardless()
         self.panel = panel
         self.host = host
@@ -62,6 +76,7 @@ final class CompanionPanelController {
         panel?.orderOut(nil)
         panel = nil
         host = nil
+        placedHeight = 0
     }
 
     /// The conversation grew or shrank. The window keeps its bottom edge —
@@ -70,10 +85,13 @@ final class CompanionPanelController {
     private func followContent() {
         guard let panel, let host, panel.isVisible else { return }
         let height = Self.height(of: host)
-        guard abs(height - panel.frame.height) > 0.5 else { return }
+        guard abs(height - placedHeight) > 0.5 else { return }
         var frame = panel.frame
         frame.size.height = height
         panel.setFrame(frame, display: true)
+        panel.invalidateShadow()
+        host.frame = NSRect(x: 0, y: 0, width: frame.width, height: height)
+        placedHeight = height
     }
 
     /// The taller of the two answers AppKit will give, plus a point for the
@@ -115,6 +133,8 @@ struct CompanionView: View {
     /// The screen's visible height, for how tall the conversation may grow.
     let visibleHeight: CGFloat
     let onClose: () -> Void
+    /// The copy button's tick, shown for a moment after a copy.
+    @State private var copied = false
 
     /// The thread's own size, as in Vision's bubble.
     private static let fontSize: CGFloat = 13
@@ -154,6 +174,15 @@ struct CompanionView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
+                // Selection stops at the edge of one message (each is its own
+                // text), so the whole conversation is one click away instead.
+                Button(action: copyConversation) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderless)
+                .disabled(session.transcript.lines.isEmpty)
+                .help("会話をすべてコピー")
                 Button(action: session.toggleMute) {
                     Image(systemName: session.isMuted ? "mic.slash.fill" : "mic.fill")
                         .frame(width: 18, height: 18)
@@ -215,6 +244,20 @@ struct CompanionView: View {
             rows.append(.hint("話しかけてください"))
         }
         return rows
+    }
+
+    /// Who said what, in order, as plain text for the clipboard.
+    private func copyConversation() {
+        let text = session.transcript.lines
+            .map { "\($0.speaker == .user ? "あなた" : "山田"): \($0.text)" }
+            .joined(separator: "\n\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copied = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
+        }
     }
 
     /// A line's number as the row's identity, stable while its text grows.
