@@ -147,6 +147,17 @@ final class CompanionSession: ObservableObject {
     private var currentGoal: String?
     private var lines: [CompanionEye.Line] = []
     private var pendingStep: CompanionEye.Look?
+    /// 田中さん's answer to a look, waiting for a quiet moment to go to the
+    /// voice as a turn of its own: the look itself was answered at once.
+    private var pendingAnswer: (look: CompanionEye.Look, goal: String?)?
+    /// A turn the model answers with silence brings no turnComplete (probed
+    /// on 3.1 Flash Live); this takes the floor back after `silentTurnLimit`.
+    private var turnWatchdog: Task<Void, Never>?
+    private static let silentTurnLimit: Duration = .seconds(8)
+    /// What a look_closely call is answered with at once (Gateway
+    /// `LiveLook` "async"): the voice says one line and keeps talking while
+    /// 田中さん reads; the answer follows as a 「（田中さんから）」 turn.
+    static let lookAcknowledgement = "田中さんが確認中です。結果が届くまで、画面について推測で答えないでください。"
     /// A step sent as a turn: it becomes the instruction in force only once
     /// that turn completes uninterrupted, i.e. the user heard it.
     private var stepInFlight: CompanionEye.Look?
@@ -684,6 +695,8 @@ final class CompanionSession: ObservableObject {
     private func turnComplete() {
         // Whatever the server owed has come (or was cut off).
         serverTurnOpen = false
+        turnWatchdog?.cancel()
+        turnWatchdog = nil
         let step = stepInFlight
         stepInFlight = nil
         if interruptedTurnPending {
@@ -849,7 +862,17 @@ final class CompanionSession: ObservableObject {
         // look turns out to answer something else, the step is read again.
         let droppedStep = pendingStep != nil || guide.cancelRunningStep()
         pendingStep = nil
-        if !userSpeaking, let clip = CompanionBridge.next() { audio.play(pcm16: clip) }
+        // An answer still waiting was asked for before this question.
+        if pendingAnswer != nil {
+            pendingAnswer = nil
+            trace?.record("answerDropped", ["reason": "newerLook"])
+            Diagnostics.record("companion.answerDropped", details: [("superseded", .flag(true))])
+        }
+        // Answered at once: 3.1 Flash Live says nothing until a tool response,
+        // and the owner wants the companion to keep talking while 田中さん
+        // reads. The answer goes to the voice later, as a turn (`answerLater`).
+        socket?.send(LiveWire.toolResponse(id: call.id, name: call.name, output: Self.lookAcknowledgement))
+        serverTurnOpen = true
         if let goal = call.goal, !goal.isEmpty { currentGoal = goal }
         let request = CompanionEye.Request(
             question: call.question ?? "",
@@ -861,13 +884,13 @@ final class CompanionSession: ObservableObject {
             displayID: displayID,
             cursor: turnCursor
         )
-        let issuedOn = socket
         looks[call.id] = Task { [weak self] in
             guard let self else { return }
             let reading = await self.eye.look(request, adopting: nil)
             guard !Task.isCancelled, self.looks[call.id] != nil else { return }
             self.looks[call.id] = nil
-            self.answer(call, with: reading, issuedOn: issuedOn, goal: request.goal)
+            // With no goal ever stated, the question is the best there is.
+            self.answerLater(reading, goal: request.goal ?? call.question)
             let gaveStep = !reading.superseded && (reading.look.kind == .nextStep || reading.look.kind == .done)
             if droppedStep, !gaveStep { self.guide.readNow() }
             self.refreshPhase()
@@ -875,41 +898,19 @@ final class CompanionSession: ObservableObject {
         refreshPhase()
     }
 
-    private func answer(_ call: LiveToolCall, with reading: CompanionEye.Reading, issuedOn: LiveSocket?, goal: String?) {
-        guard let socket, socket === issuedOn else {
-            // The connection that asked is gone; the one now has never heard
-            // of this call. The mark would point at an answer nobody gives —
-            // if this look drew it (a superseded one drew nothing).
-            if !reading.superseded { eye.clearMarks() }
-            Diagnostics.record("companion.lookOrphaned")
-            return
-        }
+    /// 田中さん has read the screen. The look was answered at once, so this
+    /// goes to the voice as a turn of its own at the next quiet moment — on
+    /// whichever connection is open by then.
+    private func answerLater(_ reading: CompanionEye.Reading, goal: String?) {
         trace?.record("told", ["output": reading.look.toolOutput, "superseded": reading.superseded])
-        if reading.superseded {
-            // A newer look is the one being answered; this one only goes into
-            // the context, or its answer would cut in and contradict.
-            socket.send(LiveWire.toolResponse(
-                id: call.id, name: call.name, output: reading.look.toolOutput, scheduling: .silent
-            ))
+        // A newer look is the one being answered: an answer to the older
+        // question would contradict it (3.1 relayed such stale answers 6 of 6).
+        guard !reading.superseded else {
+            Diagnostics.record("companion.answerDropped", details: [("superseded", .flag(true))])
             return
         }
-        let look = reading.look
-        // Whatever is held belongs to a turn without words (a cough during
-        // the look), which this answer interrupts; the answer itself is the
-        // user's and plays.
-        if talkOverPending || resumedEarly { confirmTalkOver() }
-        heldAudio.removeAll()
-        heldFrames = 0
-        prunePendingSaid()
-        heardThisTurn = true
-        if !userSpeaking, reply == .awaitingWords {
-            reply = .open
-            cancelNoWordsGrace()
-        }
-        socket.send(LiveWire.toolResponse(id: call.id, name: call.name, output: look.toolOutput))
-        serverTurnOpen = true
-        // With no goal ever stated, the question is the best there is.
-        follow(look, goal: goal ?? call.question)
+        pendingAnswer = (reading.look, goal)
+        trySendStep()
     }
 
     /// What a look told the user. A step becomes the instruction the next one
@@ -950,22 +951,54 @@ final class CompanionSession: ObservableObject {
         trySendStep()
     }
 
+    /// 田中さん's answer or the guide's next step, whichever waits, goes to
+    /// the voice as a turn — the answer first, since the user asked for it.
     private func trySendStep() {
-        guard let step = pendingStep, let socket, !isReconnecting,
+        guard pendingAnswer != nil || pendingStep != nil, let socket, !isReconnecting,
               !userSpeaking, !voiceAudible, !talkOverPending, !serverTurnOpen,
               reply == .open, looks.isEmpty
         else { return }
-        pendingStep = nil
         // A turn interrupts whatever the model is generating; the guards above
         // make sure it owes nothing.
+        if let answer = pendingAnswer {
+            pendingAnswer = nil
+            trace?.record("answer", ["text": answer.look.toolOutput])
+            socket.send(LiveWire.turn("（田中さんから）\n" + answer.look.toolOutput))
+            openTurn()
+            Diagnostics.record("companion.answerSpoken", details: [("kind", .code(answer.look.kind))])
+            follow(answer.look, goal: answer.goal)
+            return
+        }
+        guard let step = pendingStep else { return }
+        pendingStep = nil
         trace?.record("step", ["text": step.toolOutput])
         socket.send(LiveWire.turn("（次の一歩）\n" + step.toolOutput))
-        serverTurnOpen = true
+        openTurn()
         stepInFlight = step
-        turnEndedAt = Date()
-        replyMeasured = false
         if step.kind == .done { guide.stop() }
         Diagnostics.record("companion.stepSpoken", details: [("done", .flag(step.kind == .done))])
+    }
+
+    /// A turn went to the model, which now owes an answer. One it answers
+    /// with silence never completes (probed on 3.1), and every later answer
+    /// and step would wait behind it: the floor comes back after a while.
+    private func openTurn() {
+        serverTurnOpen = true
+        turnEndedAt = Date()
+        replyMeasured = false
+        turnWatchdog?.cancel()
+        turnWatchdog = Task { [weak self] in
+            try? await Task.sleep(for: Self.silentTurnLimit)
+            guard let self, !Task.isCancelled, !self.isStopped,
+                  self.serverTurnOpen, !self.replyMeasured, !self.voiceAudible
+            else { return }
+            self.serverTurnOpen = false
+            self.stepInFlight = nil
+            self.trace?.record("turnSilent")
+            Diagnostics.record("companion.turnSilent")
+            self.trySendStep()
+            self.refreshPhase()
+        }
     }
 
     /// The step's turn completed: the user heard it, and it is the
@@ -1076,6 +1109,8 @@ final class CompanionSession: ObservableObject {
 
     private func tearDown() {
         isStopped = true
+        turnWatchdog?.cancel()
+        turnWatchdog = nil
         trace?.record("ended")
         trace?.close()
         receiveTask?.cancel()
