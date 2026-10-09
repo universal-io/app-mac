@@ -1,16 +1,24 @@
 import AppKit
 import SwiftUI
 
-/// R18: the companion's small window (決定2). Bottom-right of the working
-/// screen, above ordinary windows, and never taking focus from the app the
-/// user is working in — the conversation happens beside the work, not in
-/// front of it.
+/// R18: the companion's window (決定2). Bottom-right of the working screen,
+/// above ordinary windows, and never brought to the front of the user's app on
+/// its own — the conversation happens beside the work, not in front of it.
+///
+/// It is a bubble like Vision's and Compose's (owner, 2026-10-09): the same
+/// thread, the same width, text that can be selected and copied, and a height
+/// that follows the conversation until it scrolls. A fixed two-line strip made
+/// the companion's answers useless whenever the answer was the point — 「これ
+/// 英語でなんて言えば」 gave a sentence the user could neither read in full nor
+/// copy into Slack.
 @MainActor
 final class CompanionPanelController {
-    static let width: CGFloat = 320
+    static var width: CGFloat { VisionPointingOverlay.bubbleWidth }
     private static let margin: CGFloat = 24
 
     private var panel: CompanionPanel?
+    private var host: NSHostingView<CompanionView>?
+    private var reflow: Timer?
 
     /// The window's frame on screen, while it is shown.
     var frame: NSRect? { panel?.frame }
@@ -18,30 +26,66 @@ final class CompanionPanelController {
     func show(_ session: CompanionSession, on screen: NSScreen?, onClose: @escaping () -> Void) {
         close()
         let panel = CompanionPanel()
-        let host = NSHostingView(rootView: CompanionView(session: session, onClose: onClose))
-        let size = host.fittingSize
-        panel.contentView = host
         let bounds = (screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        let host = NSHostingView(rootView: CompanionView(
+            session: session,
+            visibleHeight: bounds.height,
+            onClose: onClose
+        ))
+        // The SwiftUI view's own ideal size, kept current as the content
+        // changes — the measurement Vision's and Compose's bubbles use.
+        host.sizingOptions = [.intrinsicContentSize]
+        host.frame = NSRect(x: 0, y: 0, width: Self.width, height: 1)
+        panel.contentView = host
         panel.setFrame(
             NSRect(
                 x: bounds.maxX - Self.margin - Self.width,
                 y: bounds.minY + Self.margin,
                 width: Self.width,
-                height: size.height
+                height: Self.height(of: host)
             ),
             display: false
         )
         panel.orderFrontRegardless()
         self.panel = panel
+        self.host = host
+        // AppKit does not tell a window that a hosting view's content got
+        // taller. Same cadence as the other bubbles.
+        reflow = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.followContent() }
+        }
     }
 
     func close() {
+        reflow?.invalidate()
+        reflow = nil
         panel?.orderOut(nil)
         panel = nil
+        host = nil
+    }
+
+    /// The conversation grew or shrank. The window keeps its bottom edge —
+    /// the corner it sits in, or wherever the user dragged it — and grows up,
+    /// away from the Dock, like a chat whose newest line is at the bottom.
+    private func followContent() {
+        guard let panel, let host, panel.isVisible else { return }
+        let height = Self.height(of: host)
+        guard abs(height - panel.frame.height) > 0.5 else { return }
+        var frame = panel.frame
+        frame.size.height = height
+        panel.setFrame(frame, display: true)
+    }
+
+    /// The taller of the two answers AppKit will give, plus a point for the
+    /// final line's descender — the other bubbles' measurement.
+    private static func height(of host: NSView) -> CGFloat {
+        max(host.intrinsicContentSize.height, host.fittingSize.height) + 1
     }
 }
 
-/// Non-activating, so a click on mute or close leaves the user's app in front.
+/// Non-activating: a click leaves the user's app the active one. It can
+/// become key, because copying what was selected (⌘C) needs the keyboard, and
+/// it does so only when clicked — showing it never takes the keyboard away.
 final class CompanionPanel: NSPanel {
     init() {
         super.init(
@@ -59,20 +103,36 @@ final class CompanionPanel: NSPanel {
         hasShadow = true
         isMovableByWindowBackground = true
         isReleasedWhenClosed = false
-        becomesKeyOnlyIfNeeded = true
+        becomesKeyOnlyIfNeeded = false
     }
 
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
 struct CompanionView: View {
     @ObservedObject var session: CompanionSession
+    /// The screen's visible height, for how tall the conversation may grow.
+    let visibleHeight: CGFloat
     let onClose: () -> Void
 
-    /// Fixed so the window never grows or shrinks under the user's eye:
-    /// two lines of conversation, each at most two lines, the newest words kept.
-    private static let conversationHeight: CGFloat = 76
+    /// The thread's own size, as in Vision's bubble.
+    private static let fontSize: CGFloat = 13
+    private static let threadEnd = "thread-end"
+
+    /// Everything that is not the conversation: the header row (50), the
+    /// window's padding and the gap (34), and the margins kept from the
+    /// screen's edges (48), rounded up — wrong low would put the header above
+    /// the menu bar.
+    private static let chromeHeight: CGFloat = 140
+
+    /// As much of the screen as is left, two thirds at most, on whole lines —
+    /// Vision's rule (`VisionBubbleView.answerHeightBudget`), with this
+    /// window's own chrome.
+    private var threadHeight: CGFloat {
+        let budget = min(visibleHeight * 2 / 3, visibleHeight - Self.chromeHeight)
+        return VisionBubbleView.answerHeight(within: budget)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -87,7 +147,7 @@ struct CompanionView: View {
                         .lineLimit(1)
                     // The knowledge the eye applied is always visible
                     // (master plan R18 決定2; no silent injection). The line
-                    // is always there so the window keeps its size.
+                    // is always there so the header keeps its size.
                     Text(session.skillName.map { "Skill: \($0)" } ?? " ")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -114,40 +174,52 @@ struct CompanionView: View {
         .bubbleChrome()
     }
 
+    /// Plain while it fits, scrolling once it does not, with the newest line
+    /// kept in view — the newest line is where the words are arriving.
     private var conversation: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let failure = session.failureMessage {
-                Text(failure)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-            } else if session.transcript.recent.isEmpty {
-                Text("話しかけてください")
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-            }
-            ForEach(session.transcript.recent) { line in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(line.speaker == .user ? "あなた" : "山田")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 34, alignment: .leading)
-                    Text(line.text)
-                        .font(.callout)
-                        .lineLimit(2)
-                        .truncationMode(.head)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+        ViewThatFits(in: .vertical) {
+            thread
+            ScrollViewReader { proxy in
+                ScrollView {
+                    thread
+                    Color.clear.frame(height: 1).id(Self.threadEnd)
+                }
+                .onAppear { proxy.scrollTo(Self.threadEnd, anchor: .bottom) }
+                .onChange(of: rows) {
+                    proxy.scrollTo(Self.threadEnd, anchor: .bottom)
                 }
             }
         }
-        .padding(8)
-        .frame(
-            maxWidth: .infinity,
-            minHeight: Self.conversationHeight,
-            maxHeight: Self.conversationHeight,
-            alignment: .topLeading
-        )
-        .background(BubbleSurface.reading, in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity, maxHeight: threadHeight, alignment: .topLeading)
+    }
+
+    private var thread: some View {
+        VisionThreadView(rows: rows, userAvatar: nil, fontSize: Self.fontSize)
+    }
+
+    /// The conversation in the other bubbles' rows: the user on the right,
+    /// the companion on the left, selectable both; then what is happening now.
+    private var rows: [VisionThreadRow] {
+        var rows: [VisionThreadRow] = session.transcript.lines.map { line in
+            let id = Self.rowID(line.id)
+            switch line.speaker {
+            case .user: return .user(id: id, text: line.text)
+            case .companion: return .assistant(id: id, text: line.text)
+            }
+        }
+        if let failure = session.failureMessage {
+            rows.append(.error(failure))
+        } else if session.phase == .looking {
+            rows.append(.waiting("画面を確認しています"))
+        } else if rows.isEmpty {
+            rows.append(.hint("話しかけてください"))
+        }
+        return rows
+    }
+
+    /// A line's number as the row's identity, stable while its text grows.
+    private static func rowID(_ number: Int) -> UUID {
+        UUID(uuidString: String(format: "00000000-0000-0000-0000-%012x", number)) ?? UUID()
     }
 }
 

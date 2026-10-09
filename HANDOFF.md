@@ -23,6 +23,8 @@
   **CLI 163セッションの結果（2026-10-09）**: 挨拶だけでなく返事の頭ならどこでも起きる（田中さんの答えの中継も。オーナーも実機で確認）。初回挨拶 49/91、中継「左側の…」24/40 が正常で、**「左側」が「右側」に聞こえた例が3件**。本番の persona を1行にする、または言語の行と例文を英語にすると 10/10。3.1-flash-live-preview と 2.5 native audio も 10/10。thinking を切ると悪化（音声が消える）、開始の遅延・WHEN_IDLE・v1alpha・声・ja-JP は効かない。似た報告は forum にあり Google 調査中（discuss.ai.google.dev/t/187351 ほか）。persona の二分探索（途中）: 挨拶は例文を消すと直るが、それは頭が「山田です」に変わるため。中継「左側の…」の化けはどの節を消しても残る＝persona が原因とは言えない。**3.1-flash-live-preview は本番の persona と setup のまま 挨拶・中継・次の一歩・雑談 すべて 9/9、返事までの時間も同等（約0.67秒）、本番で使う機能はすべて通る**（トークンのロック、クライアントのターン、NON_BLOCKING、再開、圧縮、映像、Zephyr）。切り替えるかはオーナーが耳で比べて決める（`voiceprobe/r3/compare_models.sh`）。**第3ラウンドの結論（各 n=10）**: 3.8 で率を動かすのは返事の頭に来る語だけ。persona の例文を消し、中継の頭に「では、」を置くと挨拶・中継とも 10/10（ただし化けやすい頭を避けるだけの回避策）。persona も tools も無い最小の setup でも「左側」→「右側」が出る（1/10）、outputTranscription が返らない回も 8/20＝3.8-live の不具合。3.1-flash-live-preview は persona そのままで4種とも 10/10。Google への報告の下書きは未作成（最小 setup で再現手順を書ける）。録音: scratchpad の `voiceprobe/r2/listen.sh`
 - **田中さんのモデルは gpt-6-luna**（Gateway `56f0c5a`、本番の Vision も同じ route）。effort は none のまま。
   上げるかどうかは段0の記録を別の effort で読み直して決める（オーナー: 効くなら medium でよい）
+- **会話担当は gemini-3.1-flash-live-preview**（Gateway `c99eb0a`、2026-10-09）。オーナーの判断:「雰囲気は 3.8 が良いが、正確な 3.1 で」
+- **build 23 の右下の窓はバブルと同じ作り**（オーナー要望）: Vision と同じスレッド表示・同じ幅、文字の選択とコピー（窓はクリックした時だけキーになる）、会話に合わせて上へ伸び、画面の2/3を超えるとスクロールして最新を見せる。会話は200行まで保持。実機未確認
 - **build 23 の記録**（DEBUG のみ）: `/tmp/universal-io-companion-sessions/<時刻>/conversation.jsonl` に双方の文字起こし・
   田中さんへの依頼と答え・送ったメモ／一歩、`look-N-request.json`（スクリーンショット込みの /ai/vision 本文）と
   `-response.json`。build 22 の声の録音は `/tmp/universal-io-companion-audio/`

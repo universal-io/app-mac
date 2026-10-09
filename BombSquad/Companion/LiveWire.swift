@@ -225,8 +225,11 @@ enum LiveEvent: Equatable {
     }
 }
 
-/// The conversation as the small window shows it: transcript pieces merged
-/// into lines, a line closing when the speaker changes or the turn ends.
+/// The conversation as the window shows it: transcript pieces merged into
+/// lines, a line closing when the speaker changes or the turn ends. The whole
+/// session is kept (up to `kept` lines), because the window scrolls back
+/// through it and the user copies from it — a sentence the companion said is
+/// often the thing they came for (「英語でなんて言えば」).
 struct CompanionTranscript: Equatable {
     enum Speaker: Equatable {
         case user
@@ -242,7 +245,7 @@ struct CompanionTranscript: Equatable {
 
     private(set) var lines: [Line] = []
     private var nextID = 0
-    private static let kept = 8
+    private static let kept = 200
 
     mutating func append(_ piece: String, from speaker: Speaker) {
         guard !piece.isEmpty else { return }
@@ -276,8 +279,6 @@ struct CompanionTranscript: Equatable {
     static func hasWords(_ text: String) -> Bool {
         text.unicodeScalars.contains { CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0) }
     }
-
-    var recent: [Line] { Array(lines.suffix(2)) }
 }
 
 /// Whether the screen changed enough to show the voice layer again: a 16×16

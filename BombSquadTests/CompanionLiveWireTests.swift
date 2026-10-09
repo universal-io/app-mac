@@ -140,7 +140,16 @@ final class CompanionLiveWireTests: XCTestCase {
         transcript.append("何か", from: .companion)
         XCTAssertEqual(transcript.lines.map(\.text), ["こんにちは", "どうも", "何か"])
         XCTAssertEqual(transcript.lines.map(\.isFinal), [true, true, false])
-        XCTAssertEqual(transcript.recent.map(\.text), ["どうも", "何か"])
+    }
+
+    func testTheWholeConversationIsKeptForScrollingBack() {
+        var transcript = CompanionTranscript()
+        for index in 0..<30 {
+            transcript.append("質問\(index)", from: .user)
+            transcript.append("答え\(index)", from: .companion)
+        }
+        XCTAssertEqual(transcript.lines.count, 60)
+        XCTAssertEqual(transcript.lines.first?.text, "質問0")
     }
 
     func testTheTurnBoundaryClosesTheLineEvenForTheSameSpeaker() {
