@@ -20,6 +20,7 @@
 | [v3-tool-fit-plan.md](v3-tool-fit-plan.md) | v3 ツール適合（Skills とユーザーファクト）の設計根拠 |
 | [focused-vision-plan.md](focused-vision-plan.md) | 完了したR9、Selection Extension改修（R10）、将来のAX直接入力研究の正本 |
 | [ga4-complete-skill-plan.md](ga4-complete-skill-plan.md) | R8 M6: GA4を1本目の「完全サポート」Skillにする実証実験。用事一覧・器の論点・実測記録 |
+| [voice-companion-plan.md](voice-companion-plan.md) | R18 声の相棒を「取り次ぐ山田」と「画面を読む田中さん」の2人チームにする企画。役割、決めたこと、提案、未決の論点、確かめ方 |
 | [voice-companion-cases.md](voice-companion-cases.md) | R18 声の相棒の事例集（企画の段1）。実際の会話で誰が答えてどう外したか、失敗の型、記録の取り方 |
 
 ## 他リポジトリにある正本
