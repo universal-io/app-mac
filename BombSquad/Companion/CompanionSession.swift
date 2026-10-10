@@ -42,8 +42,12 @@ final class CompanionSession: ObservableObject {
     /// office should not hear it at every summon.
     @Published private(set) var isMuted = !CompanionSession.remembered(CompanionSession.microphoneOnKey)
     @Published private(set) var isSpeakerOn = CompanionSession.remembered(CompanionSession.speakerOnKey)
-    /// The microphone, 0...1, for the window's meter.
-    @Published private(set) var inputLevel: Float = 0
+    /// The microphone, 0...1, for the window's meter. An object of its own,
+    /// observed by the meter alone: published on the session, it redrew the
+    /// whole window at the meter's rate, and each redraw put the typed field
+    /// back to the last committed text — the Japanese IME's uncommitted 「あ」
+    /// flashed and vanished at every key (build 33 on the device).
+    let meter = CompanionMeter()
     /// False when the audio could only start without echo cancellation.
     @Published private(set) var cancelsEcho = true
     /// The Skill the last look applied (master plan R18 決定2: shown, never silent).
@@ -1234,7 +1238,7 @@ final class CompanionSession: ObservableObject {
         let now = Date()
         guard now.timeIntervalSince(lastLevelPublish) >= Self.levelInterval else { return }
         lastLevelPublish = now
-        inputLevel = isMuted ? 0 : min(1, rms * 12)
+        meter.level = isMuted ? 0 : min(1, rms * 12)
     }
 
     private func fail(_ message: String) {
@@ -1274,4 +1278,11 @@ final class CompanionSession: ObservableObject {
     private static func ms(since date: Date) -> Int {
         Int(Date().timeIntervalSince(date) * 1_000)
     }
+}
+
+/// The microphone's level, apart from the session so that only the meter
+/// redraws at its rate.
+@MainActor
+final class CompanionMeter: ObservableObject {
+    @Published var level: Float = 0
 }

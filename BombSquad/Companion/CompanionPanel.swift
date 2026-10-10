@@ -336,7 +336,7 @@ struct CompanionView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            CompanionAvatar(phase: session.phase, inputLevel: session.inputLevel)
+            CompanionAvatar(phase: session.phase, meter: session.meter)
             VStack(alignment: .leading, spacing: 2) {
                 Text("山田")
                     .font(.headline)
@@ -469,8 +469,10 @@ struct CompanionView: View {
 /// reserved for "here, this" (`MarkStyle`) and is not lent to a state.
 private struct CompanionAvatar: View {
     let phase: CompanionSession.Phase
-    let inputLevel: Float
+    @ObservedObject var meter: CompanionMeter
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var inputLevel: Float { meter.level }
 
     var body: some View {
         TimelineView(.animation(paused: (phase != .speaking && phase != .looking) || reduceMotion)) { context in

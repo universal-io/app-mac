@@ -78,7 +78,13 @@ struct SendableTextEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = scroll.documentView as? SendingTextView else { return }
-        if textView.string != text {
+        // Never while the input method is composing: its uncommitted text is in
+        // the view and not yet in `text` (no textDidChange until it commits), so
+        // writing `text` back erased it. Any redraw during composition did it —
+        // in the companion's window, which redrew at the meter's rate, every
+        // key's 「あ」 flashed and vanished (build 33). Vision and Compose rarely
+        // redraw mid-composition, which is all that kept them working.
+        if textView.string != text, !textView.hasMarkedText() {
             textView.string = text
         }
         // Asynchronously, and only ever a value: a caller that stores this in
