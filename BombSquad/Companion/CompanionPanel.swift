@@ -34,6 +34,8 @@ final class CompanionPanelController {
     /// Where the window was before it zoomed: its bottom-left corner, which is
     /// the corner the height grows from.
     private var unzoomedOrigin: NSPoint?
+    /// A zoom is in motion; another press waits for it to land.
+    private var zooming = false
     /// The height this class last gave the window. Measured against this,
     /// never against the window's own frame: with the hosting view as the
     /// window's content, AppKit resized the window to the view's size keeping
@@ -63,6 +65,11 @@ final class CompanionPanelController {
         // class's alone to set, and AppKit does not follow the hosting view's
         // size on its own.
         let container = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 1))
+        // The view follows the window through a zoom, frame by frame: laid
+        // out for the final size from the first frame, it was clipped to the
+        // growing window and looked as if it stretched sideways first and
+        // then up (build 30 on the device).
+        host.autoresizingMask = [.width, .height]
         container.addSubview(host)
         panel.contentView = container
         let height = Self.height(of: host)
@@ -96,48 +103,56 @@ final class CompanionPanelController {
         placedHeight = 0
         layout.zoomed = nil
         unzoomedOrigin = nil
+        zooming = false
     }
 
-    /// The green button. Zooming keeps nothing of the small window but where
-    /// it was; coming back, the height is the conversation's again.
+    /// The expand button. Zooming keeps nothing of the small window but where
+    /// it was; coming back, the height is the conversation's again. The view
+    /// fills the window throughout (`layout.zoomed` is set for the whole
+    /// motion), and the window moves through its own animator rather than the
+    /// blocking `setFrame(_:display:animate:)`, which would hold the run loop
+    /// — and with it the companion's audio and socket — for the duration.
     private func toggleZoom() {
-        guard let panel, let host else { return }
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard let panel, let host, !zooming else { return }
+        let origin: NSPoint
+        let size: NSSize
+        let landed: () -> Void
         if layout.zoomed == nil {
             let bounds = (panel.screen ?? NSScreen.main)?.visibleFrame ?? panel.frame
-            let size = NSSize(
+            size = NSSize(
                 width: min(Self.zoomedWidth, bounds.width - Self.margin * 2),
                 height: bounds.height - Self.margin * 2
             )
+            origin = NSPoint(x: bounds.midX - size.width / 2, y: bounds.minY + Self.margin)
             unzoomedOrigin = panel.frame.origin
             layout.zoomed = size
-            place(NSRect(
-                x: bounds.midX - size.width / 2,
-                y: bounds.minY + Self.margin,
-                width: size.width,
-                height: size.height
-            ), animate: !reduceMotion)
+            landed = {}
         } else {
+            // The bubble's own height, measured with the view as a bubble,
+            // then the view fills the shrinking window down to that size.
             layout.zoomed = nil
-            // The view is a bubble again; its height is measured from it.
             host.layoutSubtreeIfNeeded()
-            let origin = unzoomedOrigin ?? panel.frame.origin
+            size = NSSize(width: Self.width, height: Self.height(of: host))
+            layout.zoomed = size
+            origin = unzoomedOrigin ?? panel.frame.origin
             unzoomedOrigin = nil
-            place(NSRect(
-                x: origin.x,
-                y: origin.y,
-                width: Self.width,
-                height: Self.height(of: host)
-            ), animate: !reduceMotion)
+            landed = { [weak self] in self?.layout.zoomed = nil }
         }
-    }
-
-    private func place(_ frame: NSRect, animate: Bool) {
-        guard let panel, let host else { return }
-        panel.setFrame(frame, display: true, animate: animate)
-        panel.invalidateShadow()
-        host.frame = NSRect(origin: .zero, size: frame.size)
-        placedHeight = frame.height
+        let frame = NSRect(origin: origin, size: size)
+        zooming = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.35
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            panel.setFrame(frame, display: true)
+            host.frame = NSRect(origin: .zero, size: frame.size)
+            panel.invalidateShadow()
+            placedHeight = frame.height
+            landed()
+            zooming = false
+        })
     }
 
     /// The conversation grew or shrank. The window keeps its bottom edge —
@@ -214,6 +229,12 @@ struct CompanionView: View {
 
     /// The strip the window controls sit in.
     private static let controlsHeight: CGFloat = 22
+    /// The glyphs' type size: × at 12 and the diagonal arrows at 10 both ink
+    /// 9.5pt square (measured, 2026-10-11); at the default 13 the arrows were
+    /// 12 against the ×'s 10 and the two read as different sizes.
+    private static let closeGlyph = Font.system(size: 12, weight: .medium)
+    private static let zoomGlyph = Font.system(size: 10, weight: .medium)
+    private static let sideGlyph = Font.system(size: 12, weight: .medium)
     /// Everything that is not the conversation: the controls strip (22), the
     /// header row (50), the window's padding and the gaps (44), and the
     /// margins kept from the screen's edges (48), rounded up — wrong low would
@@ -235,9 +256,13 @@ struct CompanionView: View {
             conversation
         }
         .padding(12)
+        // A bubble of its own size, or — zoomed, and while zooming — the
+        // window's size, whatever it is at the moment.
+        .frame(width: layout.zoomed == nil ? CompanionPanelController.width : nil)
         .frame(
-            width: layout.zoomed?.width ?? CompanionPanelController.width,
-            height: layout.zoomed?.height
+            maxWidth: layout.zoomed == nil ? nil : .infinity,
+            maxHeight: layout.zoomed == nil ? nil : .infinity,
+            alignment: .top
         )
         .bubbleChrome()
     }
@@ -248,6 +273,7 @@ struct CompanionView: View {
         HStack(spacing: 10) {
             Button(action: onClose) {
                 Image(systemName: "xmark")
+                    .font(Self.closeGlyph)
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.borderless)
@@ -256,6 +282,7 @@ struct CompanionView: View {
                 Image(systemName: layout.zoomed == nil
                     ? "arrow.up.left.and.arrow.down.right"
                     : "arrow.down.right.and.arrow.up.left")
+                    .font(Self.zoomGlyph)
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.borderless)
@@ -265,6 +292,7 @@ struct CompanionView: View {
             // text), so the whole conversation is one click away instead.
             Button(action: copyConversation) {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(Self.sideGlyph)
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.borderless)
@@ -272,6 +300,7 @@ struct CompanionView: View {
             .help("会話をすべてコピー")
             Button(action: session.toggleMute) {
                 Image(systemName: session.isMuted ? "mic.slash.fill" : "mic.fill")
+                    .font(Self.sideGlyph)
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.borderless)
