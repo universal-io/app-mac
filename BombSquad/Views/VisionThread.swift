@@ -39,6 +39,8 @@ enum VisionThreadRow: Identifiable, Equatable {
     case streaming(String)
     /// Nothing readable yet, and what the wait is for.
     case waiting(String)
+    /// The same wait, in the face and name of the voice that is working on it.
+    case voicedWaiting(String, ThreadVoice)
     /// Guidance's note that the screen did not change after the user acted.
     case note(String)
     /// An attempt that went wrong.
@@ -52,7 +54,7 @@ enum VisionThreadRow: Identifiable, Equatable {
         case .assistant(let id, _): return "assistant-\(id.uuidString)"
         case .voiced(let id, _, _, _): return "voiced-\(id.uuidString)"
         case .streaming: return "streaming"
-        case .waiting: return "waiting"
+        case .waiting, .voicedWaiting: return "waiting"
         case .note: return "note"
         case .error: return "error"
         case .hint: return "hint"
@@ -62,7 +64,7 @@ enum VisionThreadRow: Identifiable, Equatable {
     /// Whether the row sits on the product's side of the conversation.
     var isFromProduct: Bool {
         switch self {
-        case .assistant, .voiced, .streaming, .waiting: return true
+        case .assistant, .voiced, .streaming, .waiting, .voicedWaiting: return true
         case .user, .note, .error, .hint: return false
         }
     }
@@ -242,6 +244,18 @@ struct VisionThreadView: View {
                     .font(.system(size: fontSize))
                     .lineSpacing(lineSpacing)
                     .foregroundStyle(.secondary)
+            }
+        case .voicedWaiting(let text, let voice):
+            productRow(text: text, accessibility: "\(voice.name): \(text)", voice: voice) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(voice.name)
+                        .font(.system(size: fontSize - 2, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Label(text, systemImage: "eye")
+                        .font(.system(size: fontSize))
+                        .lineSpacing(lineSpacing)
+                        .foregroundStyle(.secondary)
+                }
             }
         case .note(let text):
             Label(text, systemImage: "info.circle")

@@ -182,8 +182,8 @@ final class CompanionSession: ObservableObject {
     private static let silentTurnLimit: Duration = .seconds(8)
     /// What a look_closely call is answered with at once (Gateway
     /// `LiveLook` "async"): the voice says one line and keeps talking while
-    /// 田中さん reads; the answer follows as a 「（田中さんから）」 turn.
-    static let lookAcknowledgement = "田中さんが確認中です。結果が届くまで、画面について推測で答えないでください。"
+    /// the researcher reads; the answer follows as a 「（リサーチャーから）」 turn.
+    static let lookAcknowledgement = "リサーチャーが確認中です。結果が届くまで、画面について推測で答えないでください。"
     /// A step sent as a turn: it becomes the instruction in force only once
     /// that turn completes uninterrupted, i.e. the user heard it.
     private var stepInFlight: CompanionEye.Look?
@@ -243,6 +243,9 @@ final class CompanionSession: ObservableObject {
         ])
         audio.setMuted(isMuted)
         audio.setSpeaker(on: isSpeakerOn)
+        // Level 1: the hello is in the window before anything has started.
+        transcript.append(CompanionGreeting.text, from: .companion)
+        transcript.endTurn()
         trace = CompanionTrace.start()
         eye.trace = trace
         identityTask = VisionObservationCaptureService.identityTask(
@@ -261,6 +264,10 @@ final class CompanionSession: ObservableObject {
             let client = tokenClient
             async let opened = Self.open(client: client, handle: nil)
             let audioStarted = startAudio()
+            // Heard as soon as there is a voice to hear it in — through the
+            // player, so echo cancellation knows it; the voice's own greeting
+            // queues behind it.
+            if audioStarted, let clip = CompanionGreeting.clip { audio.play(pcm16: clip) }
             do {
                 let socket = try await opened
                 guard audioStarted, !isStopped else {
@@ -1063,7 +1070,7 @@ final class CompanionSession: ObservableObject {
         if let answer = pendingAnswer {
             pendingAnswer = nil
             trace?.record("answer", ["text": answer.look.toolOutput])
-            socket.send(LiveWire.turn("（田中さんから）\n" + answer.look.toolOutput))
+            socket.send(LiveWire.turn("（リサーチャーから）\n" + answer.look.toolOutput))
             openTurn()
             showResearcher(answer.look.message)
             answerInFlight = answer.look

@@ -332,6 +332,16 @@ struct CompanionView: View {
         }
         .frame(height: Self.controlsHeight)
         .padding(.horizontal, -(Self.controlTarget - 18) / 2)
+        // The strip a Mac user reaches for to move a window. Its empty part,
+        // and the margin above it, start the window's own drag rather than
+        // relying on SwiftUI to call it background: on the owner's Mac the
+        // rest of the bubble moved the window and this strip did not (build 35),
+        // which a replica did not reproduce.
+        .background {
+            WindowDragArea()
+                .padding(.top, -12)
+                .padding(.horizontal, -12)
+        }
     }
 
     private var header: some View {
@@ -447,7 +457,8 @@ struct CompanionView: View {
         } else if let notice = session.notice {
             rows.append(.note(notice))
         } else if session.phase == .looking {
-            rows.append(.waiting("\(CompanionCast.researcher.name)が画面を確認しています"))
+            // The researcher comes in as the guide says it is calling them.
+            rows.append(.voicedWaiting("画面を確認しています…", CompanionCast.researcher))
         } else if rows.isEmpty {
             rows.append(.hint(session.isMuted ? "下の欄に入力してください" : "話しかけるか、下の欄に入力してください"))
         }
@@ -521,4 +532,18 @@ private struct CompanionAvatar: View {
             .opacity(phase == .connecting || phase == .reconnecting ? 0.5 : 1)
         }
     }
+}
+
+/// A press here moves the window, as a title bar's does: the AppKit view under
+/// the strip hands the press to the window server's own drag.
+private struct WindowDragArea: NSViewRepresentable {
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+    }
+
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ nsView: DragView, context: Context) {}
 }

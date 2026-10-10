@@ -331,6 +331,34 @@ enum ScreenSignature {
 /// the same words: 「いま前面にあるアプリ」.
 enum CompanionGreeting {
     static let start = "（開始）"
+    /// Level 1 of the three (owner, 2026-10-10): said the moment the window
+    /// opens, with no model behind it, while the connection and the screen are
+    /// still being prepared; the voice then speaks to the screen. Shown at once
+    /// as the guide's first line; heard as soon as the audio is up.
+    static let text = "こんにちは、Universal I/O です。"
+    /// The same words in the voice's own voice (Zephyr on 3.1 Flash Live, read
+    /// once on 2026-10-11 and checked by Whisper: 「こんにちは、ユニバーサルアイ
+    /// オーです。」), 24 kHz mono PCM16 — the player's format. Nil if the
+    /// resource is missing; the line is still shown.
+    static let clip: Data? = {
+        guard let url = Bundle.main.url(forResource: "CompanionGreeting", withExtension: "wav"),
+              let file = try? Data(contentsOf: url)
+        else { return nil }
+        return wavSamples(file)
+    }()
+
+    /// The samples of a PCM WAV: the bytes of its "data" chunk.
+    static func wavSamples(_ file: Data) -> Data? {
+        var offset = 12
+        while offset + 8 <= file.count {
+            let id = String(decoding: file[offset..<offset + 4], as: UTF8.self)
+            let size = file[offset + 4..<offset + 8].withUnsafeBytes { Int($0.loadUnaligned(as: UInt32.self).littleEndian) }
+            let body = offset + 8
+            if id == "data" { return file.subdata(in: body..<min(body + size, file.count)) }
+            offset = body + size + (size & 1)
+        }
+        return nil
+    }
     private static let maxTitleCharacters = 200
 
     static func frontAppNote(appName: String, windowTitle: String?, host: String?) -> String {
@@ -349,9 +377,10 @@ enum CompanionGreeting {
 /// literals scattered through the views: the names are everyday words for now
 /// and provisional (owner, 2026-10-10), and specialists with skills of their
 /// own (「GA ガイド」) will stand in a role's place. Only the window's words
-/// come from here; what the voice calls itself and its colleague is the
-/// Gateway's prompt, and 「（田中さんから）」 is the protocol word that prompt
-/// expects, both still the old names until the Gateway changes with them.
+/// come from here. The voice does not name itself; what it calls its
+/// colleague is the Gateway's prompt, and 「リサーチャーが確認中です」 and
+/// 「（リサーチャーから）」 are the protocol words that prompt expects — they
+/// change together with it (Gateway, 2026-10-11).
 enum CompanionCast {
     static let guide = ThreadVoice(name: "ガイド", symbol: nil)
     static let researcher = ThreadVoice(name: "リサーチャー", symbol: "doc.text.magnifyingglass")
