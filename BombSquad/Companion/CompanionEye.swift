@@ -113,7 +113,7 @@ final class CompanionEye {
     /// be heard instead — without changing the prompt every other client gets.
     /// Guidance has no such field; its steps go out as the prompt writes them.
     nonisolated static let voiceNote =
-        "（この答えは音声で読み上げます。1〜2文で、ボタンやメニューの名前は画面の文言どおり「」で囲み、場所（左のメニュー、右上など）を添えてください。聞かれたものがこの画面に見えないときは「この画面には見当たりません。」で始め、見えているものから次に開く候補を1つだけ挙げてください。）"
+        "（この答えは音声で読み上げます。1〜2文で、ボタンやメニューの名前は画面の文言どおり「」で囲み、場所（左のメニュー、右上など）を添えてください。聞かれたものがこの画面に見えないときは「この画面には見当たりません。」で始め、この画面から開ける中にそれがある見込みの場所があれば1つだけ挙げてください。この画面や開いている設定の中には無いと分かるなら、そう言って、アプリのどこにあるかを1つ挙げてください（この設定を閉じる、でも構いません）。分からなければ「分かりません」と言ってください。）"
     nonisolated static let visibleListLimit = 60
     /// A label longer than this is body text, not a control's name; the voice
     /// model needs to know it is there, not to read it.
