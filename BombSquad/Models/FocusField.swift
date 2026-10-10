@@ -5,4 +5,5 @@ enum FocusField: Hashable {
     case draft
     case revision
     case navigator
+    case companion
 }

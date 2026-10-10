@@ -222,6 +222,10 @@ struct CompanionView: View {
     let onZoom: () -> Void
     /// The copy button's tick, shown for a moment after a copy.
     @State private var copied = false
+    /// What is being typed, and the field's state, as Vision's bubble keeps them.
+    @State private var draft = ""
+    @State private var focusedField: FocusField?
+    @State private var inputContentHeight: CGFloat = 0
 
     /// The thread's own size, as in Vision's bubble.
     private static let fontSize: CGFloat = 13
@@ -243,17 +247,23 @@ struct CompanionView: View {
     private static let zoomGlyph = Font.system(size: 10, weight: .medium)
     private static let sideGlyph = Font.system(size: 12, weight: .medium)
     /// Everything that is not the conversation: the controls strip (24), the
-    /// header row (50), the window's padding and the gaps (44), and the
-    /// margins kept from the screen's edges (48), rounded up — wrong low would
-    /// put the header above the menu bar.
-    private static let chromeHeight: CGFloat = 170
+    /// header row (50), the input at its smallest (34), the window's padding
+    /// and the gaps (54), and the margins kept from the screen's edges (48),
+    /// rounded up — wrong low would put the header above the menu bar.
+    private static let chromeHeight: CGFloat = 214
 
     /// As much of the screen as is left, two thirds at most, on whole lines —
     /// Vision's rule (`VisionBubbleView.answerHeightBudget`), with this
     /// window's own chrome.
     private var threadHeight: CGFloat {
-        let budget = min(visibleHeight * 2 / 3, visibleHeight - Self.chromeHeight)
+        // A taller input takes its lines from the conversation, not the screen.
+        let grownInput = max(0, inputHeight - VisionBubbleView.inputMinHeight)
+        let budget = min(visibleHeight * 2 / 3, visibleHeight - Self.chromeHeight - grownInput)
         return VisionBubbleView.answerHeight(within: budget)
+    }
+
+    private var inputHeight: CGFloat {
+        VisionBubbleView.inputHeight(content: inputContentHeight, within: visibleHeight * 2 / 3)
     }
 
     var body: some View {
@@ -261,6 +271,7 @@ struct CompanionView: View {
             controls
             header
             conversation
+            input
         }
         .padding(12)
         // A bubble of its own size, or — zoomed, and while zooming — the
@@ -297,25 +308,27 @@ struct CompanionView: View {
             .buttonStyle(.borderless)
             .help(layout.zoomed == nil ? "広げる" : "元の大きさに戻す")
             Spacer(minLength: 0)
-            // Selection stops at the edge of one message (each is its own
-            // text), so the whole conversation is one click away instead.
-            Button(action: copyConversation) {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(Self.sideGlyph)
-                    .frame(width: Self.controlTarget, height: Self.controlTarget)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.borderless)
-            .disabled(session.transcript.lines.isEmpty)
-            .help("会話をすべてコピー")
+            // The voice's two switches, and only those: text is always there.
+            // On is the ordinary glyph, off is grey and struck through — state,
+            // so not the product's purple (`MarkStyle`).
             Button(action: session.toggleMute) {
                 Image(systemName: session.isMuted ? "mic.slash.fill" : "mic.fill")
                     .font(Self.sideGlyph)
+                    .foregroundStyle(session.isMuted ? .secondary : .primary)
                     .frame(width: Self.controlTarget, height: Self.controlTarget)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
-            .help(session.isMuted ? "ミュートを解除" : "ミュート")
+            .help(session.isMuted ? "マイクをオンにする" : "マイクをオフにする（文字で話しかけられます）")
+            Button(action: session.toggleSpeaker) {
+                Image(systemName: session.isSpeakerOn ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                    .font(Self.sideGlyph)
+                    .foregroundStyle(session.isSpeakerOn ? .primary : .secondary)
+                    .frame(width: Self.controlTarget, height: Self.controlTarget)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(session.isSpeakerOn ? "読み上げをオフにする（文字だけで答えます）" : "読み上げをオンにする")
         }
         .frame(height: Self.controlsHeight)
         .padding(.horizontal, -(Self.controlTarget - 18) / 2)
@@ -340,7 +353,45 @@ struct CompanionView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
+            // Selection stops at the edge of one message (each is its own
+            // text), so the whole conversation is one click away instead.
+            Button(action: copyConversation) {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(Self.sideGlyph)
+                    .frame(width: Self.controlTarget, height: Self.controlTarget)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .disabled(session.transcript.lines.isEmpty)
+            .help("会話をすべてコピー")
         }
+    }
+
+    /// Text is always there: Enter sends, Shift+Enter breaks the line — Vision's
+    /// field, on Vision's surface. Typed while the companion talks, the words
+    /// are in the thread at once and go to it when it has finished.
+    private var input: some View {
+        SendableTextEditor(
+            text: $draft,
+            focusedField: $focusedField,
+            field: .companion,
+            onSend: sendDraft,
+            onContentHeightChange: { height in
+                // Compared before it is assigned, as in Vision's bubble: the
+                // editor reports on every update, and an unconditional write
+                // would restart the update it was reported from.
+                guard abs(height - inputContentHeight) > 0.5 else { return }
+                inputContentHeight = height
+            }
+        )
+        .frame(height: inputHeight)
+        .background(BubbleSurface.typing, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityLabel("相棒への入力")
+        .help("Enterで送信、Shift+Enterで改行")
+    }
+
+    private func sendDraft() {
+        if session.send(typed: draft) { draft = "" }
     }
 
     /// Plain while it fits, scrolling once it does not, with the newest line
@@ -388,7 +439,7 @@ struct CompanionView: View {
         } else if session.phase == .looking {
             rows.append(.waiting("画面を確認しています"))
         } else if rows.isEmpty {
-            rows.append(.hint("話しかけてください"))
+            rows.append(.hint(session.isMuted ? "下の欄に入力してください" : "話しかけるか、下の欄に入力してください"))
         }
         return rows
     }

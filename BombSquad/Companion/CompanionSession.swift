@@ -36,7 +36,12 @@ final class CompanionSession: ObservableObject {
 
     @Published private(set) var phase: Phase = .connecting
     @Published private(set) var transcript = CompanionTranscript()
-    @Published private(set) var isMuted = false
+    /// The microphone and the speaker are the only switches; text is always
+    /// there (owner, 2026-10-10). Both start on the first time, and after that
+    /// as the user last left them — someone who turned the speaker off at the
+    /// office should not hear it at every summon.
+    @Published private(set) var isMuted = !CompanionSession.remembered(CompanionSession.microphoneOnKey)
+    @Published private(set) var isSpeakerOn = CompanionSession.remembered(CompanionSession.speakerOnKey)
     /// The microphone, 0...1, for the window's meter.
     @Published private(set) var inputLevel: Float = 0
     /// False when the audio could only start without echo cancellation.
@@ -184,6 +189,18 @@ final class CompanionSession: ObservableObject {
     private var lastVisibleListPID: pid_t?
     private var lastVisibleListText: String?
 
+    private static let microphoneOnKey = "companion.microphoneOn"
+    private static let speakerOnKey = "companion.speakerOn"
+
+    private static func remembered(_ key: String) -> Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }
+
+    /// What the user typed and has not gone to the voice yet. It waits for
+    /// the floor as 田中さん's answer does, so it never cuts the companion off
+    /// mid-sentence; it is in the thread from the moment it is sent.
+    private var pendingTyped: [String] = []
+
     init?(targetApp: NSRunningApplication?, displayID: CGDirectDisplayID?) {
         guard let tokenClient = CompanionTokenClient.make() else { return nil }
         self.tokenClient = tokenClient
@@ -195,11 +212,11 @@ final class CompanionSession: ObservableObject {
         switch phase {
         case .connecting: return "つないでいます…"
         case .listening:
-            if isMuted { return "ミュート中" }
-            return cancelsEcho ? "聞いています" : "聞いています・ヘッドホン推奨"
+            if isMuted { return "マイクはオフです" }
+            return cancelsEcho || !isSpeakerOn ? "聞いています" : "聞いています・ヘッドホン推奨"
         case .hearing: return "聞き取っています"
         case .looking: return "画面を確認しています"
-        case .speaking: return "話しています"
+        case .speaking: return isSpeakerOn ? "話しています" : "答えています"
         case .reconnecting: return "つなぎ直しています…"
         case .failed: return "止まりました"
         }
@@ -212,7 +229,12 @@ final class CompanionSession: ObservableObject {
     }
 
     func start() {
-        Diagnostics.record("companion.started")
+        Diagnostics.record("companion.started", details: [
+            ("microphone", .flag(!isMuted)),
+            ("speaker", .flag(isSpeakerOn)),
+        ])
+        audio.setMuted(isMuted)
+        audio.setSpeaker(on: isSpeakerOn)
         trace = CompanionTrace.start()
         eye.trace = trace
         identityTask = VisionObservationCaptureService.identityTask(
@@ -265,8 +287,32 @@ final class CompanionSession: ObservableObject {
     func toggleMute() {
         isMuted.toggle()
         audio.setMuted(isMuted)
+        UserDefaults.standard.set(!isMuted, forKey: Self.microphoneOnKey)
         Diagnostics.record("companion.muted", details: [("on", .flag(isMuted))])
         refreshPhase()
+    }
+
+    func toggleSpeaker() {
+        isSpeakerOn.toggle()
+        audio.setSpeaker(on: isSpeakerOn)
+        UserDefaults.standard.set(isSpeakerOn, forKey: Self.speakerOnKey)
+        Diagnostics.record("companion.speaker", details: [("on", .flag(isSpeakerOn))])
+    }
+
+    /// Typed words: in the thread at once, to the voice as soon as it owes
+    /// nothing. False when there is nothing to send to — the words stay in the
+    /// field rather than vanish.
+    func send(typed raw: String) -> Bool {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isStopped, failureMessage == nil else { return false }
+        transcript.append(text, from: .user)
+        transcript.endTurn()
+        appendLine(.user, text)
+        notice = nil
+        pendingTyped.append(text)
+        Diagnostics.record("companion.typed", details: [("characters", .count(text.count))])
+        trySendStep()
+        return true
     }
 
     // MARK: - Start
@@ -996,6 +1042,7 @@ final class CompanionSession: ObservableObject {
     /// 田中さん's answer or the guide's next step, whichever waits, goes to
     /// the voice as a turn — the answer first, since the user asked for it.
     private func trySendStep() {
+        if trySendTyped() { return }
         guard pendingAnswer != nil || pendingStep != nil, let socket, !isReconnecting,
               !userSpeaking, !voiceAudible, !talkOverPending, !serverTurnOpen,
               reply == .open, looks.isEmpty
@@ -1020,6 +1067,24 @@ final class CompanionSession: ObservableObject {
         stepInFlight = step
         if step.kind == .done { guide.stop() }
         Diagnostics.record("companion.stepSpoken", details: [("done", .flag(step.kind == .done))])
+    }
+
+    /// The user's typed words go before an answer or a step: the floor is theirs
+    /// as soon as the voice owes nothing — even while the eye reads, as a spoken
+    /// turn may. A typed turn is watched as a spoken one is: when nothing at all
+    /// comes back, the user is told and the connection is opened again.
+    private func trySendTyped() -> Bool {
+        guard !pendingTyped.isEmpty, let socket, !isReconnecting,
+              !userSpeaking, !voiceAudible, !talkOverPending, !serverTurnOpen,
+              reply == .open
+        else { return false }
+        let text = pendingTyped.joined(separator: "\n")
+        pendingTyped.removeAll()
+        trace?.record("typed", ["text": text])
+        socket.send(LiveWire.turn(text))
+        openTurn()
+        watchForReply(since: turnEndedAt ?? Date())
+        return true
     }
 
     /// The user finished a turn: something from the server must follow. When

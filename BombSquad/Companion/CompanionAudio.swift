@@ -89,6 +89,9 @@ final class CompanionAudio: @unchecked Sendable {
     private let lock = NSLock()
     private var taker = CompanionTurnTaker()
     private var muted = false
+    /// The speaker is off: the voice still plays, at no volume, so the
+    /// transcript and the turns keep its pace; the room holds no voice.
+    private var speakerOff = false
     private var scheduled = 0
     /// Bumped by `flush()`: completions of thrown-away audio are ignored and
     /// the transcript drops what was never heard.
@@ -144,6 +147,18 @@ final class CompanionAudio: @unchecked Sendable {
         playedFrames = 0
         voicePaused = false
         lock.unlock()
+    }
+
+    /// Off, the voice keeps its course through the player at no volume, so the
+    /// transcript reveals at the voice's pace and the turns wait for it as
+    /// before (owner, 2026-10-10: "裏では喋らせて再生しないだけ"). The turn taker
+    /// is told the room is quiet, so the user can speak over it at once, as on
+    /// headphones. Takes effect mid-word.
+    func setSpeaker(on: Bool) {
+        lock.lock()
+        speakerOff = !on
+        lock.unlock()
+        player?.volume = on ? 1 : 0
     }
 
     /// Muted, the microphone sends silence and a turn in progress ends.
@@ -285,6 +300,10 @@ final class CompanionAudio: @unchecked Sendable {
         #endif
         self.engine = engine
         self.player = player
+        // A graph rebuilt after a device change keeps the speaker as it was.
+        lock.lock()
+        player.volume = speakerOff ? 0 : 1
+        lock.unlock()
         engine.prepare()
         try engine.start()
         player.play()
@@ -414,9 +433,11 @@ final class CompanionAudio: @unchecked Sendable {
         let now = Self.now()
 
         lock.lock()
-        let voice: CompanionTurnTaker.Voice = voicePaused
-            ? .paused
-            : (scheduled > 0 ? .playing : .ended(at: voiceEndedAt))
+        let voice: CompanionTurnTaker.Voice = speakerOff
+            ? .ended(at: -1_000)
+            : voicePaused
+                ? .paused
+                : (scheduled > 0 ? .playing : .ended(at: voiceEndedAt))
         var event: CompanionTurnTaker.Event = .none
         if muted {
             if taker.forceStop() { event = .stopped(.muted) }
