@@ -228,14 +228,21 @@ struct CompanionView: View {
     private static let threadEnd = "thread-end"
 
     /// The strip the window controls sit in.
-    private static let controlsHeight: CGFloat = 22
+    private static let controlsHeight: CGFloat = 24
+    /// Each control answers a click anywhere in a 24pt square, the size of a
+    /// toolbar button's target, while its glyph stays where an 18pt one put
+    /// it (the row is pulled out by the difference). At 18pt the collapse
+    /// button missed clicks on the owner's Mac (build 31); a replica took
+    /// every click, so the cause is not known, and the larger target is the
+    /// remedy that holds whatever it was.
+    private static let controlTarget: CGFloat = 24
     /// The glyphs' type size: × at 12 and the diagonal arrows at 10 both ink
     /// 9.5pt square (measured, 2026-10-11); at the default 13 the arrows were
     /// 12 against the ×'s 10 and the two read as different sizes.
     private static let closeGlyph = Font.system(size: 12, weight: .medium)
     private static let zoomGlyph = Font.system(size: 10, weight: .medium)
     private static let sideGlyph = Font.system(size: 12, weight: .medium)
-    /// Everything that is not the conversation: the controls strip (22), the
+    /// Everything that is not the conversation: the controls strip (24), the
     /// header row (50), the window's padding and the gaps (44), and the
     /// margins kept from the screen's edges (48), rounded up — wrong low would
     /// put the header above the menu bar.
@@ -270,11 +277,12 @@ struct CompanionView: View {
     /// The window's controls on the left, where the OS keeps a window's; the
     /// conversation's own on the right, on the same line.
     private var controls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 10 - (Self.controlTarget - 18)) {
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(Self.closeGlyph)
-                    .frame(width: 18, height: 18)
+                    .frame(width: Self.controlTarget, height: Self.controlTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help("終了（右Shift 2回でも終わります）")
@@ -283,7 +291,8 @@ struct CompanionView: View {
                     ? "arrow.up.left.and.arrow.down.right"
                     : "arrow.down.right.and.arrow.up.left")
                     .font(Self.zoomGlyph)
-                    .frame(width: 18, height: 18)
+                    .frame(width: Self.controlTarget, height: Self.controlTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help(layout.zoomed == nil ? "広げる" : "元の大きさに戻す")
@@ -293,7 +302,8 @@ struct CompanionView: View {
             Button(action: copyConversation) {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(Self.sideGlyph)
-                    .frame(width: 18, height: 18)
+                    .frame(width: Self.controlTarget, height: Self.controlTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .disabled(session.transcript.lines.isEmpty)
@@ -301,12 +311,14 @@ struct CompanionView: View {
             Button(action: session.toggleMute) {
                 Image(systemName: session.isMuted ? "mic.slash.fill" : "mic.fill")
                     .font(Self.sideGlyph)
-                    .frame(width: 18, height: 18)
+                    .frame(width: Self.controlTarget, height: Self.controlTarget)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
             .help(session.isMuted ? "ミュートを解除" : "ミュート")
         }
         .frame(height: Self.controlsHeight)
+        .padding(.horizontal, -(Self.controlTarget - 18) / 2)
     }
 
     private var header: some View {
