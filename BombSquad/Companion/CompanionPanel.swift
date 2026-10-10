@@ -12,11 +12,13 @@ import SwiftUI
 /// 英語でなんて言えば」 gave a sentence the user could neither read in full nor
 /// copy into Slack.
 ///
-/// Its frame is the OS's (owner, 2026-10-10): the real red and green buttons at
-/// the top left, light or dark as the system is. Green zooms rather than going
-/// full screen — up to the screen's height, about two and a half bubbles wide,
-/// in the middle, so a long conversation can be read as a whole — and green
-/// again puts it back where it was.
+/// Its two window controls are its own, at the top left where the OS keeps
+/// them (owner, 2026-10-11): × ends the companion, and the expand button zooms
+/// — up to the screen's height, about two and a half bubbles wide, in the
+/// middle, so a long conversation can be read as a whole — and, pressed again,
+/// puts the window back where it was. Builds 28–29 used the OS's own buttons;
+/// a window that cannot go to the Dock shows a disabled yellow between red
+/// and green, and green wears a + for zoom, and neither could be changed.
 @MainActor
 final class CompanionPanelController {
     static var width: CGFloat { VisionPointingOverlay.bubbleWidth }
@@ -46,22 +48,17 @@ final class CompanionPanelController {
     func show(_ session: CompanionSession, on screen: NSScreen?, onClose: @escaping () -> Void) {
         close()
         let panel = CompanionPanel()
-        panel.onClose = onClose
-        panel.onZoom = { [weak self] in self?.toggleZoom() }
         let bounds = (screen ?? NSScreen.main)?.visibleFrame ?? .zero
         let host = NSHostingView(rootView: CompanionView(
             session: session,
             layout: layout,
-            visibleHeight: bounds.height
+            visibleHeight: bounds.height,
+            onClose: onClose,
+            onZoom: { [weak self] in self?.toggleZoom() }
         ))
         // The SwiftUI view's own ideal size, kept current as the content
         // changes — the measurement Vision's and Compose's bubbles use.
         host.sizingOptions = [.intrinsicContentSize]
-        // The content runs under the title bar, and the title strip in it is
-        // where the buttons sit. Left to SwiftUI, the whole view moved down by
-        // the title bar's height and the OS's buttons hung over a see-through
-        // strip above the window (build 28 on the device).
-        host.safeAreaRegions = []
         // Inside a plain view, as Vision's bubble is: the window's size is this
         // class's alone to set, and AppKit does not follow the hosting view's
         // size on its own.
@@ -177,41 +174,20 @@ final class CompanionWindowLayout: ObservableObject {
 /// become key, because copying what was selected (⌘C) needs the keyboard, and
 /// it does so only when clicked — showing it never takes the keyboard away.
 ///
-/// Titled for the OS's own buttons, with the title bar see-through and the
-/// content under it. The window draws its own background, corners and edge, as
-/// Xcode's does (the owner's model, 2026-10-10) — not a card drawn inside a
-/// clear window. Resizable only because AppKit enables the green button for
-/// resizable windows: dragging an edge does nothing (`windowWillResize`), the
-/// size is the conversation's or the zoom's. Not miniaturizable, so the yellow
-/// shows disabled, as the OS shows it on any window that cannot go to the
-/// Dock; hiding it left a gap between red and green (build 28).
-final class CompanionPanel: NSPanel, NSWindowDelegate {
-    var onClose: () -> Void = {}
-    var onZoom: () -> Void = {}
-
-    /// The height of the title bar the content runs under, where the buttons
-    /// sit.
-    static let titlebarHeight: CGFloat = {
-        let content = NSRect(x: 0, y: 0, width: 100, height: 100)
-        let frame = NSWindow.frameRect(forContentRect: content, styleMask: [.titled, .closable])
-        return frame.height - content.height
-    }()
-
+final class CompanionPanel: NSPanel {
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: CompanionPanelController.width, height: 1),
-            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        titleVisibility = .hidden
-        titlebarAppearsTransparent = true
-        delegate = self
         isFloatingPanel = true
         level = .floating
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        backgroundColor = .windowBackgroundColor
+        isOpaque = false
+        backgroundColor = .clear
         hasShadow = true
         isMovableByWindowBackground = true
         isReleasedWhenClosed = false
@@ -220,16 +196,6 @@ final class CompanionPanel: NSPanel, NSWindowDelegate {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-
-    /// Red ends the companion, as the hotkey does — not just this window.
-    override func performClose(_ sender: Any?) { onClose() }
-    /// Green, and a double-click on the title bar.
-    override func zoom(_ sender: Any?) { onZoom() }
-    override func miniaturize(_ sender: Any?) {}
-
-    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        sender.frame.size
-    }
 }
 
 struct CompanionView: View {
@@ -237,6 +203,8 @@ struct CompanionView: View {
     @ObservedObject var layout: CompanionWindowLayout
     /// The screen's visible height, for how tall the conversation may grow.
     let visibleHeight: CGFloat
+    let onClose: () -> Void
+    let onZoom: () -> Void
     /// The copy button's tick, shown for a moment after a copy.
     @State private var copied = false
 
@@ -244,11 +212,13 @@ struct CompanionView: View {
     private static let fontSize: CGFloat = 13
     private static let threadEnd = "thread-end"
 
-    /// Everything that is not the conversation: the title bar, the header row
-    /// (50), the window's padding and the gap (22), and the margins kept from
-    /// the screen's edges (48), rounded up — wrong low would put the header
-    /// above the menu bar.
-    private static let chromeHeight: CGFloat = 128 + CompanionPanel.titlebarHeight
+    /// The strip the window controls sit in.
+    private static let controlsHeight: CGFloat = 22
+    /// Everything that is not the conversation: the controls strip (22), the
+    /// header row (50), the window's padding and the gaps (44), and the
+    /// margins kept from the screen's edges (48), rounded up — wrong low would
+    /// put the header above the menu bar.
+    private static let chromeHeight: CGFloat = 170
 
     /// As much of the screen as is left, two thirds at most, on whole lines —
     /// Vision's rule (`VisionBubbleView.answerHeightBudget`), with this
@@ -259,25 +229,37 @@ struct CompanionView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            titleBar
-            VStack(alignment: .leading, spacing: 10) {
-                header
-                conversation
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            controls
+            header
+            conversation
         }
-        .padding([.horizontal, .bottom], 12)
+        .padding(12)
         .frame(
             width: layout.zoomed?.width ?? CompanionPanelController.width,
             height: layout.zoomed?.height
         )
-        .ignoresSafeArea()
+        .bubbleChrome()
     }
 
-    /// The strip the OS's buttons sit in on the left; the conversation's own
-    /// controls on the right, on the same line.
-    private var titleBar: some View {
+    /// The window's controls on the left, where the OS keeps a window's; the
+    /// conversation's own on the right, on the same line.
+    private var controls: some View {
         HStack(spacing: 10) {
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.borderless)
+            .help("終了（右Shift 2回でも終わります）")
+            Button(action: onZoom) {
+                Image(systemName: layout.zoomed == nil
+                    ? "arrow.up.left.and.arrow.down.right"
+                    : "arrow.down.right.and.arrow.up.left")
+                    .frame(width: 18, height: 18)
+            }
+            .buttonStyle(.borderless)
+            .help(layout.zoomed == nil ? "広げる" : "元の大きさに戻す")
             Spacer(minLength: 0)
             // Selection stops at the edge of one message (each is its own
             // text), so the whole conversation is one click away instead.
@@ -295,7 +277,7 @@ struct CompanionView: View {
             .buttonStyle(.borderless)
             .help(session.isMuted ? "ミュートを解除" : "ミュート")
         }
-        .frame(height: CompanionPanel.titlebarHeight)
+        .frame(height: Self.controlsHeight)
     }
 
     private var header: some View {

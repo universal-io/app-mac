@@ -54,16 +54,37 @@ extension View {
 /// (`hasShadow`), never drawn in here: a view-drawn shadow needs the window to
 /// be larger than the card to hold it, and that margin swallows clicks meant
 /// for whatever is underneath.
+///
+/// The corner and the edge are the OS's own window's, measured on macOS 26.6
+/// (2026-10-11, a plain titled `NSWindow` captured and read pixel by pixel):
+/// a continuous curve reaching 24pt along each edge, which is the continuous
+/// style at 16; in the dark appearance a 1pt rim of white at about 0.18 with
+/// the top edge lit to about 0.32 — light from above — and in the light
+/// appearance no rim at all, the window's shadow alone marking its edge.
 struct BubbleChrome: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 16)
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
     }
 
     func body(content: Content) -> some View {
         content
             .background(shape.fill(Color(nsColor: .windowBackgroundColor)).allowsHitTesting(false))
-            .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 1).allowsHitTesting(false))
+            .overlay(rim.allowsHitTesting(false))
             .clipShape(shape)
+    }
+
+    @ViewBuilder private var rim: some View {
+        if colorScheme == .dark {
+            ZStack(alignment: .top) {
+                shape.strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                Rectangle()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(height: 1)
+                    .padding(.horizontal, 24)
+            }
+        }
     }
 }
 
