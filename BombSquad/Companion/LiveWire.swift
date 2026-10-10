@@ -233,7 +233,11 @@ enum LiveEvent: Equatable {
 struct CompanionTranscript: Equatable {
     enum Speaker: Equatable {
         case user
+        /// The voice — the guide.
         case companion
+        /// The eye's own words: an answer or a step as it wrote them, which
+        /// the guide reads aloud without its reading being shown again.
+        case researcher
     }
 
     struct Line: Equatable, Identifiable {
@@ -339,4 +343,16 @@ enum CompanionGreeting {
         let suffix = details.isEmpty ? "" : "（" + details.joined(separator: "、") + "）"
         return "いま前面にあるアプリ: \(appName)\(suffix)"
     }
+}
+
+/// Who speaks in the companion's window, by the names the user sees. Data, not
+/// literals scattered through the views: the names are everyday words for now
+/// and provisional (owner, 2026-10-10), and specialists with skills of their
+/// own (「GA ガイド」) will stand in a role's place. Only the window's words
+/// come from here; what the voice calls itself and its colleague is the
+/// Gateway's prompt, and 「（田中さんから）」 is the protocol word that prompt
+/// expects, both still the old names until the Gateway changes with them.
+enum CompanionCast {
+    static let guide = ThreadVoice(name: "ガイド", symbol: nil)
+    static let researcher = ThreadVoice(name: "リサーチャー", symbol: "doc.text.magnifyingglass")
 }

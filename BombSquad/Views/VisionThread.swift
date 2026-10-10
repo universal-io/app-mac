@@ -18,11 +18,23 @@ import SwiftUI
 /// Pure, so the rules can be pinned without a hosting view: what appears while
 /// an answer streams, while nothing has arrived, when something went wrong, and
 /// where guidance's honest note about an unchanged screen sits.
+/// One of several voices on the product's side, for a thread where more than
+/// one speaks (the companion's guide and researcher). A name the user reads,
+/// and a face: the app's icon when `symbol` is nil, otherwise the symbol in
+/// the same circle every face uses.
+struct ThreadVoice: Equatable {
+    let name: String
+    let symbol: String?
+}
+
 enum VisionThreadRow: Identifiable, Equatable {
     /// Something the user said — typed, or the short line a gesture stands for.
     case user(id: UUID, text: String)
     /// A validated answer.
     case assistant(id: UUID, text: String)
+    /// A message from one of several product voices. `named` puts the voice's
+    /// name over the message — on the first of a run, as group chats do.
+    case voiced(id: UUID, text: String, voice: ThreadVoice, named: Bool)
     /// The answer still being written. Same side as an answer; it becomes one.
     case streaming(String)
     /// Nothing readable yet, and what the wait is for.
@@ -38,6 +50,7 @@ enum VisionThreadRow: Identifiable, Equatable {
         switch self {
         case .user(let id, _): return "user-\(id.uuidString)"
         case .assistant(let id, _): return "assistant-\(id.uuidString)"
+        case .voiced(let id, _, _, _): return "voiced-\(id.uuidString)"
         case .streaming: return "streaming"
         case .waiting: return "waiting"
         case .note: return "note"
@@ -49,7 +62,7 @@ enum VisionThreadRow: Identifiable, Equatable {
     /// Whether the row sits on the product's side of the conversation.
     var isFromProduct: Bool {
         switch self {
-        case .assistant, .streaming, .waiting: return true
+        case .assistant, .voiced, .streaming, .waiting: return true
         case .user, .note, .error, .hint: return false
         }
     }
@@ -198,6 +211,21 @@ struct VisionThreadView: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        case .voiced(_, let text, let voice, let named):
+            productRow(text: text, accessibility: "\(voice.name): \(text)", voice: voice) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if named {
+                        Text(voice.name)
+                            .font(.system(size: fontSize - 2, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(text)
+                        .font(.system(size: fontSize))
+                        .lineSpacing(lineSpacing)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         case .streaming(let text):
             productRow(text: text, accessibility: "Universal I/O: \(text)") {
                 Text(text)
@@ -241,10 +269,15 @@ struct VisionThreadView: View {
     private func productRow<Content: View>(
         text: String,
         accessibility: String,
+        voice: ThreadVoice? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         HStack(alignment: .top, spacing: 8) {
-            ThreadAvatar.product(size: avatarSize)
+            if let symbol = voice?.symbol {
+                ThreadAvatar.symbol(symbol, size: avatarSize)
+            } else {
+                ThreadAvatar.product(size: avatarSize)
+            }
             content()
                 .padding(.horizontal, 10)
                 .padding(.vertical, Self.bubbleVerticalPadding)
@@ -276,6 +309,19 @@ enum ThreadAvatar {
             .frame(width: size, height: size)
             .clipShape(Circle())
             .accessibilityHidden(true)
+    }
+
+    /// A voice without a picture of its own: its symbol in the circle, drawn as
+    /// the user's placeholder is, so it is a face of the same kind.
+    static func symbol(_ name: String, size: CGFloat) -> some View {
+        ZStack {
+            Circle().fill(Color.primary.opacity(0.12))
+            Image(systemName: name)
+                .font(.system(size: size * 0.46, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 
     /// The user's picture where the account has one (Google sign-in supplies

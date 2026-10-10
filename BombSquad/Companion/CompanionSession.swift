@@ -187,6 +187,10 @@ final class CompanionSession: ObservableObject {
     /// A step sent as a turn: it becomes the instruction in force only once
     /// that turn completes uninterrupted, i.e. the user heard it.
     private var stepInFlight: CompanionEye.Look?
+    /// The voice is reading out what the researcher wrote, which is already in
+    /// the thread in the researcher's own words: the reading is heard and not
+    /// shown again. From the turn that carries it to that turn's end.
+    private var relaying = false
     private var visibleListTask: Task<Void, Never>?
     private var lastVisibleListAt = Date.distantPast
     private var lastVisibleListFrames = -1
@@ -598,6 +602,7 @@ final class CompanionSession: ObservableObject {
         uplink.replace(nil)
         self.socket = nil
         serverTurnOpen = false
+        relaying = false
         // 田中さん's answer was on its way out with this connection.
         if answerInFlight != nil {
             if replyMeasured { answerInFlight = nil } else { showUnspokenAnswer() }
@@ -731,6 +736,7 @@ final class CompanionSession: ObservableObject {
     }
 
     private func said(_ text: String) {
+        guard !relaying else { return }
         let mark = audio.frameMark()
         let frame = mark.frames + heldFrames
         // A piece that trails its audio, which has already been heard, is
@@ -769,6 +775,7 @@ final class CompanionSession: ObservableObject {
     private func turnComplete() {
         // Whatever the server owed has come (or was cut off).
         serverTurnOpen = false
+        relaying = false
         turnWatchdog?.cancel()
         turnWatchdog = nil
         if answerInFlight != nil {
@@ -996,9 +1003,9 @@ final class CompanionSession: ObservableObject {
         // Asking again will not help these; the user has to act.
         if reading.look.kind == .failure {
             if !ScreenCapturePermission.isGranted {
-                notice = "田中さんが画面を読むには、画面収録の許可が要ります。システム設定 › プライバシーとセキュリティ › 画面収録 で Universal I/O をオンにしてください。"
+                notice = "\(CompanionCast.researcher.name)が画面を読むには、画面収録の許可が要ります。システム設定 › プライバシーとセキュリティ › 画面収録 で Universal I/O をオンにしてください。"
             } else if GatewayVisionClient.make() == nil {
-                notice = "田中さんが画面を読むには、ログインが要ります。メニューバーの Universal I/O からログインしてください。"
+                notice = "\(CompanionCast.researcher.name)が画面を読むには、ログインが要ります。メニューバーの Universal I/O からログインしてください。"
             }
         }
         pendingAnswer = (reading.look, goal)
@@ -1058,6 +1065,7 @@ final class CompanionSession: ObservableObject {
             trace?.record("answer", ["text": answer.look.toolOutput])
             socket.send(LiveWire.turn("（田中さんから）\n" + answer.look.toolOutput))
             openTurn()
+            showResearcher(answer.look.message)
             answerInFlight = answer.look
             Diagnostics.record("companion.answerSpoken", details: [("kind", .code(answer.look.kind))])
             follow(answer.look, goal: answer.goal)
@@ -1068,6 +1076,7 @@ final class CompanionSession: ObservableObject {
         trace?.record("step", ["text": step.toolOutput])
         socket.send(LiveWire.turn("（次の一歩）\n" + step.toolOutput))
         openTurn()
+        showResearcher(step.message)
         stepInFlight = step
         if step.kind == .done { guide.stop() }
         Diagnostics.record("companion.stepSpoken", details: [("done", .flag(step.kind == .done))])
@@ -1109,16 +1118,25 @@ final class CompanionSession: ObservableObject {
         }
     }
 
-    /// The model let 田中さん's answer go by without a word: it still reaches
-    /// the user, in writing.
+    /// The model let 田中さん's answer go by without a word. It reached the
+    /// user anyway: the researcher's bubble went up when the answer went to the
+    /// voice. Only counted.
     private func showUnspokenAnswer() {
         guard let answer = answerInFlight else { return }
         answerInFlight = nil
         guard !answer.message.isEmpty else { return }
-        transcript.endTurn()
-        transcript.append("（田中さんより）" + answer.message, from: .companion)
-        transcript.endTurn()
         Diagnostics.record("companion.answerUnspoken")
+    }
+
+    /// The researcher's own words, as their own message, when the voice is
+    /// given them to read; the reading itself is not shown (`relaying`).
+    private func showResearcher(_ message: String) {
+        relaying = true
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        transcript.endTurn()
+        transcript.append(text, from: .researcher)
+        transcript.endTurn()
     }
 
     /// A turn went to the model, which now owes an answer. One it answers
@@ -1135,6 +1153,7 @@ final class CompanionSession: ObservableObject {
                   self.serverTurnOpen, !self.replyMeasured, !self.voiceAudible
             else { return }
             self.serverTurnOpen = false
+            self.relaying = false
             self.stepInFlight = nil
             self.showUnspokenAnswer()
             self.trace?.record("turnSilent")

@@ -338,7 +338,7 @@ struct CompanionView: View {
         HStack(spacing: 10) {
             CompanionAvatar(phase: session.phase, meter: session.meter)
             VStack(alignment: .leading, spacing: 2) {
-                Text("山田")
+                Text(CompanionCast.guide.name)
                     .font(.headline)
                 Text(session.statusText)
                     .font(.caption)
@@ -425,11 +425,21 @@ struct CompanionView: View {
     /// The conversation in the other bubbles' rows: the user on the right,
     /// the companion on the left, selectable both; then what is happening now.
     private var rows: [VisionThreadRow] {
-        var rows: [VisionThreadRow] = session.transcript.lines.map { line in
+        // Two voices on the product's side, told apart by face and, on the
+        // first of each run, by name (owner, 2026-10-10: one icon for both
+        // read as one person whose words did not match what was shown).
+        let lines = session.transcript.lines
+        var rows: [VisionThreadRow] = lines.indices.map { index in
+            let line = lines[index]
             let id = Self.rowID(line.id)
+            let named = index == 0 || lines[index - 1].speaker != line.speaker
             switch line.speaker {
-            case .user: return .user(id: id, text: line.text)
-            case .companion: return .assistant(id: id, text: line.text)
+            case .user:
+                return .user(id: id, text: line.text)
+            case .companion:
+                return .voiced(id: id, text: line.text, voice: CompanionCast.guide, named: named)
+            case .researcher:
+                return .voiced(id: id, text: line.text, voice: CompanionCast.researcher, named: named)
             }
         }
         if let failure = session.failureMessage {
@@ -437,17 +447,25 @@ struct CompanionView: View {
         } else if let notice = session.notice {
             rows.append(.note(notice))
         } else if session.phase == .looking {
-            rows.append(.waiting("画面を確認しています"))
+            rows.append(.waiting("\(CompanionCast.researcher.name)が画面を確認しています"))
         } else if rows.isEmpty {
             rows.append(.hint(session.isMuted ? "下の欄に入力してください" : "話しかけるか、下の欄に入力してください"))
         }
         return rows
     }
 
+    private static func name(of speaker: CompanionTranscript.Speaker) -> String {
+        switch speaker {
+        case .user: return "あなた"
+        case .companion: return CompanionCast.guide.name
+        case .researcher: return CompanionCast.researcher.name
+        }
+    }
+
     /// Who said what, in order, as plain text for the clipboard.
     private func copyConversation() {
         let text = session.transcript.lines
-            .map { "\($0.speaker == .user ? "あなた" : "山田"): \($0.text)" }
+            .map { "\(Self.name(of: $0.speaker)): \($0.text)" }
             .joined(separator: "\n\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
@@ -464,9 +482,10 @@ struct CompanionView: View {
     }
 }
 
-/// Presence without a face: a ring that follows the microphone while
-/// listening and breathes while speaking. Neutral on purpose — the purple is
-/// reserved for "here, this" (`MarkStyle`) and is not lent to a state.
+/// The guide's presence: its face (the app's icon, as in the thread) in a ring
+/// that follows the microphone while listening and breathes while speaking.
+/// The ring is neutral on purpose — the purple is reserved for "here, this"
+/// (`MarkStyle`) and is not lent to a state.
 private struct CompanionAvatar: View {
     let phase: CompanionSession.Phase
     @ObservedObject var meter: CompanionMeter
@@ -489,12 +508,14 @@ private struct CompanionAvatar: View {
                 Circle()
                     .stroke(Color.primary.opacity(phase == .speaking ? 0.35 : 0.2), lineWidth: 2)
                     .frame(width: 36 + reach * 2, height: 36 + reach * 2)
-                Circle()
-                    .fill(Color.primary.opacity(0.1))
+                // The guide's face in the thread, so the one listening here is
+                // the one speaking there; a person glyph was the user's own.
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFill()
                     .frame(width: 36, height: 36)
-                Image(systemName: "person.fill")
-                    .font(.system(size: 17))
-                    .foregroundStyle(.secondary)
+                    .clipShape(Circle())
             }
             .frame(width: 50, height: 50)
             .opacity(phase == .connecting || phase == .reconnecting ? 0.5 : 1)
