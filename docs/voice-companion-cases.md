@@ -17,11 +17,11 @@
 
 ## 記録の取り方
 
-- **build 23 以降（DEBUG）**: `/tmp/universal-io-companion-sessions/<時刻>/conversation.jsonl` に双方の文字起こし・田中さんへの依頼と答え・
+- **build 23 以降（DEBUG）**: `~/Library/Application Support/UniversalIO/CompanionSessions/<時刻>/conversation.jsonl`（build 27 から。それまでは `/tmp` で、再起動で消えた） に双方の文字起こし・田中さんへの依頼と答え・
   送ったメモと一歩。`look-N-request.json` は田中さんが読んだ画面（スクリーンショット込み）と依頼そのもの、`-response.json` が答え。
   同じ場面を別のモデルや別の考える時間（effort）で読み直せる
 - **build 22（DEBUG）**: 相棒の声だけの録音（`/tmp/universal-io-companion-audio/`）。文字起こしして unified log と突き合わせる。ユーザーの発言は返事から推測
-- `/tmp` は再起動で消える。事例にした場面は、ここへ要点を書き写してから捨てる
+- 記録は新しい30セッションだけ残る。事例にした場面は、ここへ要点を書き写す。**`/tmp` だった build 26 までの記録は 2026-10-10 の再起動で消えた**（After Effects の A1 も。読み直しの実験には新しい記録が要る）
 
 ## 物差し（1ターンごと）
 

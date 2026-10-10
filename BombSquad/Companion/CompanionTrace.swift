@@ -1,13 +1,17 @@
 import Foundation
 
 /// DEBUG only: one directory per companion session in
-/// /tmp/universal-io-companion-sessions, holding what the unified log never
+/// ~/Library/Application Support/UniversalIO/CompanionSessions, holding what the unified log never
 /// does — the words. `conversation.jsonl` has the user's and the companion's
 /// transcripts, the turns and notes the app sent, the looks the voice asked
 /// for and what it was told, in order and timed from the session's start.
 /// Each read of the screen (`look-N-request.json` / `-response.json`) keeps the
 /// body sent to /ai/vision, screenshot included, and what came back, so the
 /// same moment can be read again by another model or at another effort.
+///
+/// Not /tmp: a restart emptied it on 2026-10-10 and took the After Effects
+/// session the next experiment was to be run on. The newest `kept` sessions
+/// stay; older ones are removed when a session starts.
 ///
 /// Release builds compile no recording: `start()` returns nil and every
 /// method is empty.
@@ -32,10 +36,14 @@ final class CompanionTrace: @unchecked Sendable {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        let directory = URL(fileURLWithPath: "/tmp/universal-io-companion-sessions", isDirectory: true)
-            .appendingPathComponent(formatter.string(from: Date()), isDirectory: true)
-        let file = directory.appendingPathComponent("conversation.jsonl")
+        let file: URL
+        let directory: URL
         do {
+            let root = try AppSupport.directory().appendingPathComponent("CompanionSessions", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            prune(root)
+            directory = root.appendingPathComponent(formatter.string(from: Date()), isDirectory: true)
+            file = directory.appendingPathComponent("conversation.jsonl")
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: file.path, contents: nil)
             let handle = try FileHandle(forWritingTo: file)
@@ -49,6 +57,20 @@ final class CompanionTrace: @unchecked Sendable {
         return nil
         #endif
     }
+
+    #if DEBUG
+    private static let kept = 30
+
+    /// Session folders are named by their start time, so the oldest sort first.
+    private static func prune(_ root: URL) {
+        let sessions = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
+            .filter { !$0.hasPrefix(".") }
+            .sorted()
+        for name in sessions.dropLast(kept - 1) {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(name, isDirectory: true))
+        }
+    }
+    #endif
 
     /// One line of the conversation: `kind` and its fields, with the seconds
     /// since the session started.
