@@ -57,6 +57,11 @@ final class CompanionPanelController {
         // The SwiftUI view's own ideal size, kept current as the content
         // changes — the measurement Vision's and Compose's bubbles use.
         host.sizingOptions = [.intrinsicContentSize]
+        // The content runs under the title bar, and the title strip in it is
+        // where the buttons sit. Left to SwiftUI, the whole view moved down by
+        // the title bar's height and the OS's buttons hung over a see-through
+        // strip above the window (build 28 on the device).
+        host.safeAreaRegions = []
         // Inside a plain view, as Vision's bubble is: the window's size is this
         // class's alone to set, and AppKit does not follow the hosting view's
         // size on its own.
@@ -173,9 +178,13 @@ final class CompanionWindowLayout: ObservableObject {
 /// it does so only when clicked — showing it never takes the keyboard away.
 ///
 /// Titled for the OS's own buttons, with the title bar see-through and the
-/// content under it. Resizable only because AppKit enables the green button
-/// for resizable windows: dragging an edge does nothing (`windowWillResize`),
-/// the size is the conversation's or the zoom's.
+/// content under it. The window draws its own background, corners and edge, as
+/// Xcode's does (the owner's model, 2026-10-10) — not a card drawn inside a
+/// clear window. Resizable only because AppKit enables the green button for
+/// resizable windows: dragging an edge does nothing (`windowWillResize`), the
+/// size is the conversation's or the zoom's. Not miniaturizable, so the yellow
+/// shows disabled, as the OS shows it on any window that cannot go to the
+/// Dock; hiding it left a gap between red and green (build 28).
 final class CompanionPanel: NSPanel, NSWindowDelegate {
     var onClose: () -> Void = {}
     var onZoom: () -> Void = {}
@@ -197,15 +206,12 @@ final class CompanionPanel: NSPanel, NSWindowDelegate {
         )
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
-        // Putting a companion in the Dock has no meaning; the yellow goes.
-        standardWindowButton(.miniaturizeButton)?.isHidden = true
         delegate = self
         isFloatingPanel = true
         level = .floating
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        isOpaque = false
-        backgroundColor = .clear
+        backgroundColor = .windowBackgroundColor
         hasShadow = true
         isMovableByWindowBackground = true
         isReleasedWhenClosed = false
@@ -265,7 +271,7 @@ struct CompanionView: View {
             width: layout.zoomed?.width ?? CompanionPanelController.width,
             height: layout.zoomed?.height
         )
-        .bubbleChrome()
+        .ignoresSafeArea()
     }
 
     /// The strip the OS's buttons sit in on the left; the conversation's own
