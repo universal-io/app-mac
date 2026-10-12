@@ -41,8 +41,10 @@ final class VisionThreadRowsTests: XCTestCase {
             switch row {
             case .user(_, let t): return "user:\(t)"
             case .assistant(_, let t): return "assistant:\(t)"
+            case .voiced(_, let t, _, _): return "voiced:\(t)"
             case .streaming(let t): return "streaming:\(t)"
             case .waiting(let t): return "waiting:\(t)"
+            case .voicedWaiting(let t, _): return "waiting:\(t)"
             case .note(let t): return "note:\(t)"
             case .error(let t): return "error:\(t)"
             case .hint(let t): return "hint:\(t)"
