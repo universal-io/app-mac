@@ -197,6 +197,32 @@ final class CompanionSession: ObservableObject {
     private var lastVisibleListPID: pid_t?
     private var lastVisibleListText: String?
 
+    // The reflex (build 37, experiment): the ear's partial words, judged by a
+    // decision model; a look started on the verdict before the guide asks.
+    private let reflexArm = CompanionReflex.Arm.current
+    private lazy var reflex: CompanionReflex? = CompanionReflex()
+    private let ear = CompanionEar()
+    private var speculative: Speculative?
+    private var judging = false
+    private var lastJudgedWords = ""
+    private var lastJudgedAt = Date.distantPast
+    private var turnStartedAt = Date()
+    private var partialsThisTurn = 0
+
+    /// A look the reflex started. The guide's own call claims it if the
+    /// question is the same kind and the screen has not moved on.
+    private struct Speculative {
+        let question: String
+        let stage: String
+        let startedAt: Date
+        let frames: Int
+        let task: Task<CompanionEye.Reading, Never>
+    }
+
+    /// What the generic arm asks at the start of every turn, before a word.
+    private static let genericQuestion =
+        "この画面には何が表示されていますか。ユーザーが次に困りそうな点があれば1つ挙げてください。"
+
     private static let microphoneOnKey = "companion.microphoneOn"
     private static let speakerOnKey = "companion.speakerOn"
 
@@ -254,6 +280,10 @@ final class CompanionSession: ObservableObject {
         // The eye's route is cold until the first look; warming it costs no model call.
         Task { await GatewayAIWarmup.warm([.vision]) }
         wire()
+        Diagnostics.record("companion.reflexArm", details: [("arm", .code(reflexArm))])
+        if reflexArm == .aimed {
+            Task { [ear] in await ear.prepare() }
+        }
         Task { [weak self] in
             await self?.startScreen()
         }
@@ -372,6 +402,10 @@ final class CompanionSession: ObservableObject {
         }
         audio.onRestarted = { [weak self] plan in
             MainActor.assumeIsolated { self?.audioRestarted(plan) }
+        }
+        audio.onCaptured = { [ear] pcm in ear.feed(pcm) }
+        ear.onPartial = { [weak self] words in
+            MainActor.assumeIsolated { self?.heardPartial(words) }
         }
         screen.onFrame = { [weak self, uplink] jpeg in
             uplink.send(LiveWire.video(jpeg: jpeg))
@@ -705,6 +739,7 @@ final class CompanionSession: ObservableObject {
         notice = nil
         heardThisTurn = true
         appendLine(.user, text)
+        if let last = lines.last, last.role == .user { judge(last.text, stage: "final") }
         if talkOverPending || resumedEarly { confirmTalkOver() }
         if !userSpeaking, reply == .awaitingWords {
             reply = .open
@@ -889,8 +924,10 @@ final class CompanionSession: ObservableObject {
             if overVoice { talkOverPending = true }
             transcript.endTurn()
             refreshVisibleList(force: false)
+            beginReflexTurn()
         case .stopped:
             trace?.record("userStopped")
+            ear.end()
             userSpeaking = false
             turnEndedAt = Date()
             replyMeasured = false
@@ -982,9 +1019,25 @@ final class CompanionSession: ObservableObject {
             displayID: displayID,
             cursor: turnCursor
         )
+        let claimed = claimSpeculative(for: call)
         looks[call.id] = Task { [weak self] in
             guard let self else { return }
-            let reading = await self.eye.look(request, adopting: nil)
+            var reading: CompanionEye.Reading
+            if let claimed {
+                reading = await claimed.task.value
+                self.trace?.record("reflex.served", [
+                    "ms": Self.ms(since: claimed.startedAt),
+                    "kind": reading.look.kind.rawValue,
+                    "superseded": reading.superseded,
+                ])
+                // Something read the screen after the reflex did (a step, say):
+                // its answer would be dropped as stale, so read again.
+                if reading.superseded || reading.look.kind == .failure {
+                    reading = await self.eye.look(request, adopting: nil)
+                }
+            } else {
+                reading = await self.eye.look(request, adopting: nil)
+            }
             guard !Task.isCancelled, self.looks[call.id] != nil else { return }
             self.looks[call.id] = nil
             // With no goal ever stated, the question is the best there is.
@@ -1001,6 +1054,7 @@ final class CompanionSession: ObservableObject {
     /// whichever connection is open by then.
     private func answerLater(_ reading: CompanionEye.Reading, goal: String?) {
         trace?.record("told", ["output": reading.look.toolOutput, "superseded": reading.superseded])
+        judgeGrounding(of: reading)
         // A newer look is the one being answered: an answer to the older
         // question would contradict it (3.1 relayed such stale answers 6 of 6).
         guard !reading.superseded else {
@@ -1294,11 +1348,170 @@ final class CompanionSession: ObservableObject {
         screen.stop()
         identityTask?.cancel()
         visibleListTask?.cancel()
+        ear.cancel()
+        discardSpeculative(reason: "ended")
         for task in looks.values { task.cancel() }
         looks.removeAll()
         guide.stop()
         eye.clearMarks()
         eye.tearDown()
+    }
+
+    // MARK: - The reflex (build 37, experiment)
+
+    /// A turn has started: whatever the reflex held for the last one is
+    /// stale, and this one begins on the arm the session runs.
+    private func beginReflexTurn() {
+        turnStartedAt = Date()
+        partialsThisTurn = 0
+        lastJudgedWords = ""
+        discardSpeculative(reason: "newTurn")
+        switch reflexArm {
+        case .off:
+            break
+        case .generic:
+            startSpeculative(question: Self.genericQuestion, stage: "start")
+        case .aimed:
+            ear.begin()
+        }
+    }
+
+    /// The ear's words so far for this turn.
+    private func heardPartial(_ words: String) {
+        guard reflexArm == .aimed, !isStopped else { return }
+        partialsThisTurn += 1
+        trace?.record("partial", ["text": words, "ms": Self.ms(since: turnStartedAt), "n": partialsThisTurn])
+        judge(words, stage: "partial")
+    }
+
+    /// Asks the reflex whether these words need the screen. At most one
+    /// question in flight, none more often than every 0.8 s for partials,
+    /// and none once a look is under way.
+    private func judge(_ words: String, stage: String) {
+        guard reflexArm == .aimed, speculative == nil, looks.isEmpty, !judging, let reflex else { return }
+        let trimmed = words.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 4, trimmed != lastJudgedWords else { return }
+        guard stage == "final" || Date().timeIntervalSince(lastJudgedAt) >= 0.8 else { return }
+        judging = true
+        lastJudgedWords = trimmed
+        lastJudgedAt = Date()
+        let app = NSWorkspace.shared.frontmostApplication?.localizedName
+        let visible = lastVisibleListText
+        let turnAt = turnStartedAt
+        Task { [weak self] in
+            let verdict = await reflex.judgeUtterance(trimmed, app: app, visibleElements: visible)
+            guard let self else { return }
+            self.judging = false
+            guard let verdict else {
+                self.trace?.record("reflex", ["stage": stage, "text": trimmed, "failed": true])
+                return
+            }
+            self.trace?.record("reflex", [
+                "stage": stage,
+                "text": trimmed,
+                "kind": verdict.kind.rawValue,
+                "pScreen": verdict.pScreen,
+                "confidence": verdict.confidence,
+                "readType": verdict.readType.rawValue,
+                "aboutScreen": verdict.aboutScreen,
+                "ms": verdict.latencyMs,
+                "sinceTurnMs": Self.ms(since: turnAt),
+            ])
+            // Only for the turn the words belong to, and only while nobody
+            // else has started reading.
+            guard self.turnStartedAt == turnAt, verdict.fires, self.speculative == nil, self.looks.isEmpty else { return }
+            self.startSpeculative(question: trimmed, stage: stage)
+        }
+    }
+
+    /// The eye starts now, on the reflex's word, with what the session knows.
+    /// Silent: no bubble, no acknowledgement; the guide's own call claims it.
+    private func startSpeculative(question: String, stage: String) {
+        guard speculative == nil, !isStopped else { return }
+        let request = CompanionEye.Request(
+            question: question,
+            goal: currentGoal,
+            nextStep: false,
+            pointsAtCursor: false,
+            history: lines,
+            previousInstruction: lastInstruction,
+            displayID: displayID,
+            cursor: turnCursor
+        )
+        trace?.record("reflex.spec", [
+            "question": question,
+            "stage": stage,
+            "arm": reflexArm.rawValue,
+            "sinceTurnMs": Self.ms(since: turnStartedAt),
+        ])
+        Diagnostics.record("companion.reflexLook")
+        let task = Task { [weak self] () -> CompanionEye.Reading in
+            guard let self else { return CompanionEye.Reading(look: .failure(elapsedMs: 0), superseded: true) }
+            return await self.eye.look(request, adopting: nil)
+        }
+        speculative = Speculative(question: question, stage: stage, startedAt: Date(), frames: framesSeen, task: task)
+    }
+
+    /// The look the reflex started for this turn, if the guide's question can
+    /// be answered by it: not a step, not about the pointer, and the screen
+    /// has not moved on (at most one changed frame since it started).
+    private func claimSpeculative(for call: LiveToolCall) -> Speculative? {
+        guard let spec = speculative else { return nil }
+        speculative = nil
+        let frames = framesSeen - spec.frames
+        guard !call.nextStep, !call.pointsAtCursor, frames <= 1 else {
+            trace?.record("reflex.unused", [
+                "reason": call.nextStep ? "step" : call.pointsAtCursor ? "cursor" : "screenChanged",
+                "frames": frames,
+                "stage": spec.stage,
+                "ageMs": Self.ms(since: spec.startedAt),
+            ])
+            spec.task.cancel()
+            return nil
+        }
+        let headStart = Self.ms(since: spec.startedAt)
+        trace?.record("reflex.hit", [
+            "stage": spec.stage,
+            "headStartMs": headStart,
+            "frames": frames,
+            "asked": spec.question,
+            "question": call.question ?? "",
+        ])
+        Diagnostics.record("companion.reflexHit", details: [("headStart", .ms(headStart))])
+        return spec
+    }
+
+    /// Nobody asked for the reflex's look: it is cancelled, and a mark it
+    /// drew comes down unless something newer has read the screen since.
+    private func discardSpeculative(reason: String) {
+        guard let spec = speculative else { return }
+        speculative = nil
+        trace?.record("reflex.unused", ["reason": reason, "stage": spec.stage, "ageMs": Self.ms(since: spec.startedAt)])
+        spec.task.cancel()
+        Task { [weak self] in
+            let reading = await spec.task.value
+            guard let self, reading.look.marked, !reading.superseded else { return }
+            self.eye.clearMarks()
+        }
+    }
+
+    /// Logged only: whether the controls the eye named are in the list the
+    /// app saw. Acting on it waits for a wording that tells content words
+    /// (「pod」) from controls.
+    private func judgeGrounding(of reading: CompanionEye.Reading) {
+        guard reflexArm != .off, let reflex, !reading.superseded, reading.look.kind != .failure,
+              !reading.look.message.isEmpty, let visible = lastVisibleListText, !visible.isEmpty
+        else { return }
+        let message = reading.look.message
+        Task { [weak self] in
+            guard let grounding = await reflex.judgeGrounding(answer: message, visibleElements: visible) else { return }
+            self?.trace?.record("reflex.grounding", [
+                "allPresent": grounding.allPresent,
+                "verdict": grounding.verdict,
+                "confidence": grounding.confidence,
+                "ms": grounding.latencyMs,
+            ])
+        }
     }
 
     private static func ms(since date: Date) -> Int {

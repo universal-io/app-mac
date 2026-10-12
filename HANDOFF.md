@@ -9,21 +9,31 @@
 
 ---
 
-## 声の相棒（R18、ブランチ `worktree-voice-companion`）— 次のセッションはここから
+## 声の相棒（R18、ブランチ `companion-reflex`）— 次のセッションはここから
 
-最終更新: 2026-10-11。企画と設計は [docs/voice-companion-plan.md](docs/voice-companion-plan.md)（「3つの役」「設計: 2人がそれぞれの声で話す」）、
+最終更新: 2026-10-13。企画と設計は [docs/voice-companion-plan.md](docs/voice-companion-plan.md)（「3つの役」「設計: 2人がそれぞれの声で話す」）、
 実際の会話で外した例は [docs/voice-companion-cases.md](docs/voice-companion-cases.md)、マスタープランは R18。経緯はコミットの本文にある。
 呼び名は 2026-10-11 に山田→**ガイド**、田中さん→**リサーチャー**（過去の記録は当時の名前のまま）。
 
-### 次のセッションがやること（オーナー、2026-10-11）
+### 次のセッションがやること（2026-10-13）
 
-1. **ゼロベースで検証する。** このセッションの文脈を引きずらず、build 36 を実機で使い、企画書の「設計: 2人がそれぞれの声で話す」を読んで、
-   おかしいところを指摘する。**セカンドオピニオンを取る**（企画書「セカンドオピニオンで見てほしいこと」）
-2. 設計で合意したら「実装前に確かめること」の3つ → build 37 から実装
-3. **声の選定は別プロジェクトで比較中**（全ての声とリアルタイムの性能）。ここでは検証しない。ガイドは男性・リサーチャーは女性と決まっているが、
-   具体の声が決まるまでガイドは Zephyr のまま。決まったら挨拶の録音（`BombSquad/Resources/CompanionGreeting.wav`）を録り直す
+**build 37 ＝ 反射の層（Jev）の実験**（企画書「反射の層（Jev）— build 37 の実験」）。ブランチ `companion-reflex`、
+切り戻しはタグ `companion-base-build36`（app-mac）と `gateway-base-companion-build36`（Gateway。`git revert fda6cf4`）。
 
-### いまの状態（build 36、オーナーの実機で動いている）
+1. **オーナーがやること（実機の前）**: Vercel の `universal-io-app-mac` プロジェクトの環境変数に `OPENROUTER_API_KEY` を足す
+   （値はこの Mac の `~/.secrets/openrouter-token`。Gateway は無いと 503 を返すだけ）。足したら再デプロイ（Redeploy）
+2. **実機**: `open /Users/kaya.matsumoto/projects/universal-io/app-mac/.claude/worktrees/voice-companion/BombSquad.xcodeproj` → Debug で実行。
+   初回の「音声認識」許可を出す。画面の質問と会話だけの質問を混ぜて 20 ターンほど使う
+3. **読む**: `python3 tools/companion_reflex_report.py 5`。見るのは「話し終わりから答えまでの待ち（反射あり／なし）」と「引き継がれた率」。
+   基準は build 36 の待ち中央値 7 秒
+4. 3 腕を比べるなら `defaults write com.universal-io.mac.dev companion.reflexArm -string off|generic|aimed`（Debug ビルド。公開版は `com.universal-io.mac`）（既定 aimed）で切り替えて同じ使い方を繰り返す
+5. 反射が効いたら、次は 2026-10-11 の検討の残り: Gemini 3.8 Live の再試験（非同期ツールで取り次ぎを消す）、配管の削り（話し始めの撮影・長辺 1920）、
+   推論レベルの読み直し。「2人がそれぞれの声で話す」は保留（企画書「決めたこと」2026-10-13）
+6. 声の選定は別プロジェクトで比較中。ここでは検証しない
+
+### いまの状態（build 36 まで実機で動いている。build 37 は反射を足したもので、実機未確認）
+
+- **反射（build 37、未確認）**: 耳（Apple Speech、端末内）→ 反射（`/ai/decide`、Jev）→ 投機的な読み → ガイドの look が引き継ぐ。記録は `partial` / `reflex` / `reflex.spec` / `reflex.hit` / `reflex.unused` / `reflex.served` / `reflex.grounding`
 
 - **耳と口**: スピーカーでも自分の声に答えない（声の上の線は最低 −36dB、声を通算3秒鳴らすまでは割り込み不可）。ターンはアプリが決める
 - **ガイドは `gemini-3.1-flash-live-preview`**（Gateway `c99eb0a`）。3.8 Live は返事の頭の声が化ける（約4割）ので替えた。新しいモデルが出たら試し直す

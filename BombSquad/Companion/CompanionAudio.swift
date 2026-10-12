@@ -57,6 +57,9 @@ final class CompanionAudio: @unchecked Sendable {
     var onPlayed: ((Int, Int) -> Void)?
     /// RMS of the microphone (0...1). Called on the audio thread.
     var onInputLevel: ((Float) -> Void)?
+    /// The 16 kHz mono PCM of the user's turn, pre-roll included — what the
+    /// uplink hears, for the ear (build 37). Called on the audio thread.
+    var onCaptured: ((Data) -> Void)?
     /// The graph was rebuilt after a device change: the plan it runs on now,
     /// or nil when it could not start again. Called on the main thread.
     var onRestarted: ((Plan?) -> Void)?
@@ -469,6 +472,8 @@ final class CompanionAudio: @unchecked Sendable {
             onUplink?(.start)
             for chunk in preRolled { onUplink?(.audio(chunk)) }
             onUplink?(.audio(pcm))
+            for chunk in preRolled { onCaptured?(chunk) }
+            onCaptured?(pcm)
             DispatchQueue.main.async { [weak self] in
                 if overVoice { self?.player?.pause() }
                 self?.onUserTurn?(.started(overVoice: overVoice))
@@ -482,6 +487,7 @@ final class CompanionAudio: @unchecked Sendable {
             ])
         case .stopped(let stop):
             if stop != .muted { onUplink?(.audio(pcm)) }
+            if stop != .muted { onCaptured?(pcm) }
             onUplink?(.end)
             DispatchQueue.main.async { [weak self] in
                 self?.onUserTurn?(.stopped(stop))
@@ -495,6 +501,7 @@ final class CompanionAudio: @unchecked Sendable {
             ])
         case .none:
             onUplink?(.audio(speaking ? pcm : Data(count: pcm.count)))
+            if speaking { onCaptured?(pcm) }
         }
     }
 
