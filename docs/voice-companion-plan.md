@@ -209,6 +209,9 @@ build 36 までは声が1つ（ガイドの Gemini Live）しかなく、リサ�
 | 反射（`CompanionReflex`） | 途中の言葉を Gateway `/ai/decide`（TypeSafe Jev、OpenRouter 経由）に渡し、「画面の質問か／読みの種類／画面を指しているか」を 1 往復で判定。答えが届いたら「名指しした部品が AX 一覧にあるか」も判定（**記録のみ**） | `BombSquad/Companion/CompanionReflex.swift`、api-gateway `lib/server/decide.ts` |
 | 投機的な読み（セッション） | p(画面)≥0.7 で `CompanionEye.look` を先に始める。ガイドの look が来たら、同じ種類の質問（一歩でも「これ」でもない）で画面が動いていなければ（変化フレーム 1 枚以内）**引き継ぐ**。来なければ次のターンで捨て、出した目印は下ろす | `CompanionSession` の「The reflex」節 |
 
+反射が発火した瞬間（話している途中なら話し終わり）に、アプリが録音の「確認しますね」（`CompanionBridge`）を流し、ガイドが後から言う
+同じ一言は道具の返事から 6 秒だけ音と字幕を捨てる（2026-10-14、実機で「話し終わり → 呼び出しの一言」まで 1.3〜2.1 秒の無音があった）。
+
 3 腕を `defaults` で切り替える（`companion.reflexArm`、既定 `aimed`）。`off`＝反射なし（build 36 と同じ）、
 `generic`＝話し始めに「この画面に何があるか」を判定なしで読む、`aimed`＝反射が判定してから読む。
 

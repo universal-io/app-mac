@@ -212,6 +212,19 @@ final class CompanionSession: ObservableObject {
     private var lastJudgedAt = Date.distantPast
     private var turnStartedAt = Date()
     private var partialsThisTurn = 0
+    /// The recorded 「確認しますね」 was played for this turn on the reflex's
+    /// word; the guide's own line for it is then dropped.
+    private var bridgedThisTurn = false
+    /// The reflex fired while the user was still talking: the clip waits for
+    /// the turn to end.
+    private var bridgePending = false
+    /// Until when the voice's audio and words are dropped: the guide's
+    /// 「それではリサーチャーを呼び出します」 after the clip already said it.
+    private var dropGuideUntil: Date?
+    /// How long the guide's line is dropped for after the tool response. The
+    /// line arrives within about two seconds; the eye's answer, which must
+    /// not be dropped, is sent by this app and clears the window itself.
+    private static let dropGuideWindow: TimeInterval = 6
 
     /// A look the reflex started. The guide's own call claims it if the
     /// question is the same kind and the screen has not moved on.
@@ -712,6 +725,10 @@ final class CompanionSession: ObservableObject {
 
     private func receive(_ pcm: Data) {
         if greetingPending { greetingSpoke = true }
+        if let until = dropGuideUntil {
+            if Date() < until { return }
+            dropGuideUntil = nil
+        }
         guard reply == .open, !userSpeaking else {
             // The first of an answer to a turn that has no words yet: the
             // words usually came first (measured), so this is likely a noise.
@@ -737,7 +754,8 @@ final class CompanionSession: ObservableObject {
 
     /// Words for the user's turn: what waited for them may play, and a voice
     /// paused for them is dropped — it was a person.
-    private func heard(_ text: String) {
+    private func heard(_ raw: String) {
+        let text = CompanionTranscript.tidy(raw)
         transcript.append(text, from: .user)
         guard CompanionTranscript.hasWords(text) else { return }
         notice = nil
@@ -783,6 +801,7 @@ final class CompanionSession: ObservableObject {
 
     private func said(_ text: String) {
         guard !relaying else { return }
+        if let until = dropGuideUntil, Date() < until { return }
         let mark = audio.frameMark()
         let frame = mark.frames + heldFrames
         // A piece that trails its audio, which has already been heard, is
@@ -933,6 +952,7 @@ final class CompanionSession: ObservableObject {
             trace?.record("userStopped")
             ear.end()
             userSpeaking = false
+            if bridgePending { playBridge() }
             turnEndedAt = Date()
             replyMeasured = false
             watchForReply(since: turnEndedAt ?? Date())
@@ -1012,6 +1032,10 @@ final class CompanionSession: ObservableObject {
         // reads. The answer goes to the voice later, as a turn (`answerLater`).
         socket?.send(LiveWire.toolResponse(id: call.id, name: call.name, output: Self.lookAcknowledgement))
         serverTurnOpen = true
+        if bridgedThisTurn {
+            dropGuideUntil = Date().addingTimeInterval(Self.dropGuideWindow)
+            trace?.record("reflex.dropAck")
+        }
         if let goal = call.goal, !goal.isEmpty { currentGoal = goal }
         let request = CompanionEye.Request(
             question: call.question ?? "",
@@ -1127,6 +1151,7 @@ final class CompanionSession: ObservableObject {
         // make sure it owes nothing.
         if let answer = pendingAnswer {
             pendingAnswer = nil
+            dropGuideUntil = nil
             trace?.record("answer", ["text": answer.look.toolOutput])
             socket.send(LiveWire.turn("（リサーチャーから）\n" + answer.look.toolOutput))
             openTurn()
@@ -1309,7 +1334,7 @@ final class CompanionSession: ObservableObject {
             phase = .hearing
         } else if voiceAudible, !talkOverPending {
             phase = .speaking
-        } else if !looks.isEmpty || guideReading {
+        } else if !looks.isEmpty || guideReading || (speculative != nil && bridgedThisTurn) {
             phase = .looking
         } else {
             phase = .listening
@@ -1369,6 +1394,9 @@ final class CompanionSession: ObservableObject {
         turnStartedAt = Date()
         partialsThisTurn = 0
         lastJudgedWords = ""
+        bridgedThisTurn = false
+        bridgePending = false
+        dropGuideUntil = nil
         discardSpeculative(reason: "newTurn")
         switch reflexArm {
         case .off:
@@ -1454,6 +1482,20 @@ final class CompanionSession: ObservableObject {
             return await self.eye.look(request, adopting: nil)
         }
         speculative = Speculative(question: question, stage: stage, startedAt: Date(), frames: framesSeen, task: task)
+        if userSpeaking { bridgePending = true } else { playBridge() }
+    }
+
+    /// 「確認しますね」 in the companion's recorded voice, the moment the
+    /// reflex is sure — not two seconds later when the guide gets round to
+    /// calling the eye (1.3–2.1 s after the user stopped, build 37 records).
+    /// The guide's own line for this turn is dropped (`dropGuideUntil`).
+    private func playBridge() {
+        bridgePending = false
+        guard !bridgedThisTurn, !isStopped, let clip = CompanionBridge.next() else { return }
+        bridgedThisTurn = true
+        trace?.record("reflex.bridge", ["sinceTurnMs": Self.ms(since: turnStartedAt)])
+        audio.play(pcm16: clip)
+        refreshPhase()
     }
 
     /// The look the reflex started for this turn, if the guide's question can

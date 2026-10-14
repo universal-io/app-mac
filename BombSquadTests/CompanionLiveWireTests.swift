@@ -277,4 +277,12 @@ final class CompanionLiveWireTests: XCTestCase {
             provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
         )
     }
+
+    func testTidyClosesJapaneseAndKeepsEnglishSpaces() {
+        XCTAssertEqual(CompanionTranscript.tidy("Xcode って 何 な ん でしょう？"), "Xcodeって何なんでしょう？")
+        XCTAssertEqual(CompanionTranscript.tidy("App Store と か テスト フライト"), "App Storeとかテストフライト")
+        XCTAssertEqual(CompanionTranscript.tidy("Signing & Capabilities を 開く"), "Signing & Capabilitiesを開く")
+        XCTAssertEqual(CompanionTranscript.tidy("「 ほ 」 から 始まる 5 文字"), "「ほ」から始まる5文字")
+        XCTAssertEqual(CompanionTranscript.tidy(""), "")
+    }
 }

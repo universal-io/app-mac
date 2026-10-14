@@ -278,6 +278,30 @@ struct CompanionTranscript: Equatable {
         lines[lines.count - 1].isFinal = true
     }
 
+    /// The input transcription arrives as space-separated tokens
+    /// (「Xcode って 何 な ん でしょう」, build 37 on the device). A space stays
+    /// only between two ASCII characters, so English keeps its words and
+    /// Japanese closes up; what is shown is what gets copied.
+    static func tidy(_ text: String) -> String {
+        let chars = Array(text)
+        var out = ""
+        out.reserveCapacity(chars.count)
+        for (index, char) in chars.enumerated() {
+            if char == " " {
+                let before = index > 0 ? chars[index - 1] : nil
+                let after = index + 1 < chars.count ? chars[index + 1] : nil
+                guard isASCIIInk(before), isASCIIInk(after) else { continue }
+            }
+            out.append(char)
+        }
+        return out
+    }
+
+    private static func isASCIIInk(_ char: Character?) -> Bool {
+        guard let char, char.isASCII else { return false }
+        return !char.isWhitespace
+    }
+
     /// Whether a transcript piece holds words at all: the server sends
     /// punctuation and spaces alone, and the no-words rule needs words.
     static func hasWords(_ text: String) -> Bool {
