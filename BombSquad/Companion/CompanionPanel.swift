@@ -211,6 +211,61 @@ final class CompanionPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    // MARK: - The strip moves the window
+
+    /// The strip at the top — the margin above the controls and the controls
+    /// row itself, less the four buttons — moves the window, as a title bar
+    /// does. Decided here, in the window, from the press's position: the
+    /// window sees every event before any view does, so nothing about how
+    /// SwiftUI routes hit-tests can take the press away. A view laid under the
+    /// strip for the same purpose never got the press on the owner's Mac
+    /// (builds 35–37) while a replica of it did, and the user, finding the one
+    /// place a Mac window is grabbed by not grabbing, concluded the window
+    /// could not be moved at all (owner, 2026-10-15).
+    ///
+    /// The band: the window's top padding (12) and the controls strip (24).
+    /// The buttons: two 24pt targets at each end, starting 9pt in (the row is
+    /// pulled out by 3pt), 4pt apart — 61pt from either edge, plus a little.
+    private static let bandHeight: CGFloat = 12 + 24
+    private static let bandMargin: CGFloat = 12
+    private static let bandButtonsInset: CGFloat = 64
+    /// Where in the window the press began, while a drag is on.
+    private var dragGrip: NSPoint?
+
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            if isOnBand(event) {
+                dragGrip = event.locationInWindow
+                Diagnostics.record("companion.bandDrag")
+                return
+            }
+        case .leftMouseDragged:
+            if let grip = dragGrip {
+                let mouse = NSEvent.mouseLocation
+                setFrameOrigin(NSPoint(x: mouse.x - grip.x, y: mouse.y - grip.y))
+                return
+            }
+        case .leftMouseUp:
+            if dragGrip != nil {
+                dragGrip = nil
+                return
+            }
+        default:
+            break
+        }
+        super.sendEvent(event)
+    }
+
+    private func isOnBand(_ event: NSEvent) -> Bool {
+        guard let content = contentView else { return false }
+        let point = content.convert(event.locationInWindow, from: nil)
+        let fromTop = content.bounds.height - point.y
+        guard fromTop >= 0, fromTop <= Self.bandHeight else { return false }
+        if fromTop <= Self.bandMargin { return true }
+        return point.x > Self.bandButtonsInset && point.x < content.bounds.width - Self.bandButtonsInset
+    }
 }
 
 struct CompanionView: View {
@@ -332,16 +387,8 @@ struct CompanionView: View {
         }
         .frame(height: Self.controlsHeight)
         .padding(.horizontal, -(Self.controlTarget - 18) / 2)
-        // The strip a Mac user reaches for to move a window. Its empty part,
-        // and the margin above it, start the window's own drag rather than
-        // relying on SwiftUI to call it background: on the owner's Mac the
-        // rest of the bubble moved the window and this strip did not (build 35),
-        // which a replica did not reproduce.
-        .background {
-            WindowDragArea()
-                .padding(.top, -12)
-                .padding(.horizontal, -12)
-        }
+        // Moving the window by this strip is the window's own doing
+        // (`CompanionPanel.sendEvent`); its geometry is written there.
     }
 
     private var header: some View {
@@ -534,16 +581,3 @@ private struct CompanionAvatar: View {
     }
 }
 
-/// A press here moves the window, as a title bar's does: the AppKit view under
-/// the strip hands the press to the window server's own drag.
-private struct WindowDragArea: NSViewRepresentable {
-    final class DragView: NSView {
-        override var mouseDownCanMoveWindow: Bool { true }
-        override func mouseDown(with event: NSEvent) {
-            window?.performDrag(with: event)
-        }
-    }
-
-    func makeNSView(context: Context) -> DragView { DragView() }
-    func updateNSView(_ nsView: DragView, context: Context) {}
-}
