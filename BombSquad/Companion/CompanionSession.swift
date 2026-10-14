@@ -183,7 +183,11 @@ final class CompanionSession: ObservableObject {
     /// What a look_closely call is answered with at once (Gateway
     /// `LiveLook` "async"): the voice says one line and keeps talking while
     /// the researcher reads; the answer follows as a 「（リサーチャーから）」 turn.
-    static let lookAcknowledgement = "リサーチャーが確認中です。結果が届くまで、画面について推測で答えないでください。"
+    /// A bare fact, no instruction: the voice read the instruction aloud at
+    /// every call (build 37, 2026-10-14 — 「結果が届くまで、画面のことは推測で
+    /// 答えません」after each 「呼び出します」). The rule not to guess about
+    /// the screen while waiting is in the persona already.
+    static let lookAcknowledgement = "リサーチャーが確認中です。"
     /// A step sent as a turn: it becomes the instruction in force only once
     /// that turn completes uninterrupted, i.e. the user heard it.
     private var stepInFlight: CompanionEye.Look?
