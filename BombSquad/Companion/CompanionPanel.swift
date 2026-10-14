@@ -50,6 +50,7 @@ final class CompanionPanelController {
     func show(_ session: CompanionSession, on screen: NSScreen?, onClose: @escaping () -> Void) {
         close()
         let panel = CompanionPanel()
+        panel.layout = layout
         let bounds = (screen ?? NSScreen.main)?.visibleFrame ?? .zero
         let host = NSHostingView(rootView: CompanionView(
             session: session,
@@ -85,6 +86,15 @@ final class CompanionPanelController {
         host.frame = NSRect(x: 0, y: 0, width: Self.width, height: height)
         placedHeight = height
         panel.orderFrontRegardless()
+        #if DEBUG
+        Diagnostics.record("companion.windowPlaced", details: [
+            ("w", .count(Int(panel.frame.width))),
+            ("h", .count(Int(panel.frame.height))),
+            ("hostH", .count(Int(host.frame.height))),
+            ("intrinsicH", .count(Int(host.intrinsicContentSize.height))),
+            ("fittingH", .count(Int(host.fittingSize.height))),
+        ])
+        #endif
         self.panel = panel
         self.host = host
         // AppKit does not tell a window that a hosting view's content got
@@ -183,6 +193,12 @@ final class CompanionPanelController {
 @MainActor
 final class CompanionWindowLayout: ObservableObject {
     @Published var zoomed: NSSize?
+    /// Where SwiftUI last laid out the controls strip and its four buttons,
+    /// in the hosting view's coordinates (origin top-left), for the panel's
+    /// band test. Not published: they change at every layout and nothing
+    /// draws from them.
+    var strip: CGRect = .null
+    var buttons: [Int: CGRect] = [:]
 }
 
 /// Non-activating: a click leaves the user's app the active one. It can
@@ -224,21 +240,22 @@ final class CompanionPanel: NSPanel {
     /// place a Mac window is grabbed by not grabbing, concluded the window
     /// could not be moved at all (owner, 2026-10-15).
     ///
-    /// The band: the window's top padding (12) and the controls strip (24).
-    /// The buttons: two 24pt targets at each end, starting 9pt in (the row is
-    /// pulled out by 3pt), 4pt apart — 61pt from either edge, plus a little.
-    private static let bandHeight: CGFloat = 12 + 24
-    private static let bandMargin: CGFloat = 12
-    private static let bandButtonsInset: CGFloat = 64
+    /// The band is the strip as the view laid it out — from the window's top
+    /// edge down to the strip's bottom, less the four buttons — never a
+    /// constant: a replica with the constants moved while the real window did
+    /// not, so what the window reasons from is what the view reports.
     /// Where in the window the press began, while a drag is on.
     private var dragGrip: NSPoint?
+    /// The view's own account of where the strip and the buttons are.
+    weak var layout: CompanionWindowLayout?
 
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
         case .leftMouseDown:
-            if isOnBand(event) {
+            let onBand = isOnBand(event)
+            recordPress(event, onBand: onBand)
+            if onBand {
                 dragGrip = event.locationInWindow
-                Diagnostics.record("companion.bandDrag")
                 return
             }
         case .leftMouseDragged:
@@ -262,9 +279,58 @@ final class CompanionPanel: NSPanel {
         guard let content = contentView else { return false }
         let point = content.convert(event.locationInWindow, from: nil)
         let fromTop = content.bounds.height - point.y
-        guard fromTop >= 0, fromTop <= Self.bandHeight else { return false }
-        if fromTop <= Self.bandMargin { return true }
-        return point.x > Self.bandButtonsInset && point.x < content.bounds.width - Self.bandButtonsInset
+        guard let layout, !layout.strip.isNull, fromTop >= 0, fromTop <= layout.strip.maxY else { return false }
+        let flipped = CGPoint(x: point.x, y: fromTop)
+        return !layout.buttons.values.contains { $0.insetBy(dx: -2, dy: -2).contains(flipped) }
+    }
+
+    /// Every press, in the unified log: where it landed in the window, what
+    /// the window and the strip measure, whether another window was on top
+    /// at that point, and which view the press would reach. For the owner's
+    /// Mac, where the strip could not be grabbed twice over (builds 35–37)
+    /// and no replica reproduced it.
+    private func recordPress(_ event: NSEvent, onBand: Bool) {
+        #if DEBUG
+        guard let content = contentView else { return }
+        let point = content.convert(event.locationInWindow, from: nil)
+        let mouse = NSEvent.mouseLocation
+        let top = NSWindow.windowNumber(at: mouse, belowWindowWithWindowNumber: 0)
+        let hit = content.hitTest(point).map { String(describing: type(of: $0)) } ?? "none"
+        Diagnostics.record("companion.press", details: [
+            ("x", .count(Int(point.x))),
+            ("fromTop", .count(Int(content.bounds.height - point.y))),
+            ("w", .count(Int(content.bounds.width))),
+            ("h", .count(Int(content.bounds.height))),
+            ("stripTop", .count(Int(layout?.strip.minY ?? -1))),
+            ("stripBottom", .count(Int(layout?.strip.maxY ?? -1))),
+            ("buttons", .count(layout?.buttons.count ?? 0)),
+            ("band", .flag(onBand)),
+            ("topmost", .flag(top == windowNumber)),
+            ("inFrame", .flag(frame.contains(mouse))),
+            ("hit", .code(PressHit(hit))),
+        ])
+        #endif
+    }
+
+    private struct PressHit: DiagnosticCode {
+        let diagnosticCode: String
+        init(_ name: String) { diagnosticCode = name }
+    }
+}
+
+/// Writes a view's laid-out frame (hosting-view coordinates, origin top-left)
+/// where the window can read it.
+private struct ReportFrame: ViewModifier {
+    let write: (CGRect) -> Void
+
+    func body(content: Content) -> some View {
+        content.background(
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { write(geometry.frame(in: .global)) }
+                    .onChange(of: geometry.frame(in: .global)) { _, frame in write(frame) }
+            }
+        )
     }
 }
 
@@ -352,6 +418,7 @@ struct CompanionView: View {
             }
             .buttonStyle(.borderless)
             .help("終了（右Shift 2回でも終わります）")
+            .modifier(ReportFrame { [layout] in layout.buttons[0] = $0 })
             Button(action: onZoom) {
                 Image(systemName: layout.zoomed == nil
                     ? "arrow.up.left.and.arrow.down.right"
@@ -362,6 +429,7 @@ struct CompanionView: View {
             }
             .buttonStyle(.borderless)
             .help(layout.zoomed == nil ? "広げる" : "元の大きさに戻す")
+            .modifier(ReportFrame { [layout] in layout.buttons[1] = $0 })
             Spacer(minLength: 0)
             // The voice's two switches, and only those: text is always there.
             // On is the ordinary glyph, off is grey and struck through — state,
@@ -375,6 +443,7 @@ struct CompanionView: View {
             }
             .buttonStyle(.borderless)
             .help(session.isMuted ? "マイクをオンにする" : "マイクをオフにする（文字で話しかけられます）")
+            .modifier(ReportFrame { [layout] in layout.buttons[2] = $0 })
             Button(action: session.toggleSpeaker) {
                 Image(systemName: session.isSpeakerOn ? "speaker.wave.2.fill" : "speaker.slash.fill")
                     .font(Self.sideGlyph)
@@ -384,8 +453,10 @@ struct CompanionView: View {
             }
             .buttonStyle(.borderless)
             .help(session.isSpeakerOn ? "読み上げをオフにする（文字だけで答えます）" : "読み上げをオンにする")
+            .modifier(ReportFrame { [layout] in layout.buttons[3] = $0 })
         }
         .frame(height: Self.controlsHeight)
+        .modifier(ReportFrame { [layout] in layout.strip = $0 })
         .padding(.horizontal, -(Self.controlTarget - 18) / 2)
         // Moving the window by this strip is the window's own doing
         // (`CompanionPanel.sendEvent`); its geometry is written there.
