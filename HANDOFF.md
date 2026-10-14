@@ -15,26 +15,29 @@
 実際の会話で外した例は [docs/voice-companion-cases.md](docs/voice-companion-cases.md)、マスタープランは R18。経緯はコミットの本文にある。
 呼び名は 2026-10-11 に山田→**ガイド**、田中さん→**リサーチャー**（過去の記録は当時の名前のまま）。
 
-### 次のセッションがやること（2026-10-13）
+### 次のセッションがやること（オーナー、2026-10-15）
 
-**build 37 ＝ 反射の層（Jev）の実験**（企画書「反射の層（Jev）— build 37 の実験」）。ブランチ `companion-reflex`、
-切り戻しはタグ `companion-base-build36`（app-mac）と `gateway-base-companion-build36`（Gateway。`git revert fda6cf4`）。
+**方向性は確定（オーナー）: この形で開発を続ける。次の主題はアクション。**
 
-1. ~~Vercel に `OPENROUTER_API_KEY` を足す~~ **済み（2026-10-14 22:23、オーナー）。** ただし 2026-10-14 22:33 の実機では反射が全部
-   `gateway.none`（ルート不在の 404）で空振りした: **Gateway の push `fda6cf4` を Vercel が拾っておらず、本番は `a5ee392` のまま**だった
-   （Redeploy も旧コミットの再デプロイ）。Vercel MCP の `create_deployment`（gitSource main）で `fda6cf4` を本番へ出した。
-   **Gateway を push したら、Vercel のデプロイ一覧で SHA を確かめる**（プロジェクトは `universal-io-api-gateway`）
-   **2 回目の実機（23:27）は 403**（門の不備、上記）。**3 回目（23:44）で反射が動いた**: 判定 6 回（往復中央値 0.74 秒）、投機的な読み 3 回、
-   3 回ともガイドが引き継ぎ（頭出し 0.2／3.4／2.8 秒）、「確認しますね」は話し終わりと同時。待ちは 8.5／3.7／11.6 秒（3 つ目は読み自体が 12.8 秒）。
-   オーナー「反応速度は速くなった」。残る課題は読みの長さ（Xcode は候補 90 件で 6〜13 秒）と、下の 2 件を直した build の実機確認
-2. **実機**: `open /Users/kaya.matsumoto/projects/universal-io/app-mac/.claude/worktrees/voice-companion/BombSquad.xcodeproj` → Debug で実行。
-   初回の「音声認識」許可を出す。画面の質問と会話だけの質問を混ぜて 20 ターンほど使う
-3. **読む**: `python3 tools/companion_reflex_report.py 5`。見るのは「話し終わりから答えまでの待ち（反射あり／なし）」と「引き継がれた率」。
-   基準は build 36 の待ち中央値 7 秒
-4. 3 腕を比べるなら `defaults write com.universal-io.mac.dev companion.reflexArm -string off|generic|aimed`（Debug ビルド。公開版は `com.universal-io.mac`）（既定 aimed）で切り替えて同じ使い方を繰り返す
-5. 反射が効いたら、次は 2026-10-11 の検討の残り: Gemini 3.8 Live の再試験（非同期ツールで取り次ぎを消す）、配管の削り（話し始めの撮影・長辺 1920）、
-   推論レベルの読み直し。「2人がそれぞれの声で話す」は保留（企画書「決めたこと」2026-10-13）
-6. 声の選定は別プロジェクトで比較中。ここでは検証しない
+1. **アクション。** リサーチャーが返信の文案を出したら、フォーカスの当たっている入力欄へそのまま流し込む。「ここを押せばよい」と出たら
+   「押しますか？ はい／いいえ」で押す。正本は [マスタープラン R16「道具が押す」](docs/universal-io-master-plan.md)（設計のみ、未着手）と、
+   Compose の「入力欄へ送る」（clipboard＋合成 ⌘V、[focused-vision-plan.md](docs/focused-vision-plan.md) の安全条件）。
+   **相棒は AppMode の外の独立セッション**（R18 決定5）なので、従来の経路（Vision/Compose）とまだ混ざっていない。流し込みと押下をどの経路に乗せるかは設計から
+2. **意図の解釈を根本から直す。** 2026-10-15 朝の Slack: 「増井さんのメッセージに返信して」に対し、ガイドは操作の案内として呼び、リサーチャーは
+   「Reply 欄に入力して返信できます」と手順を答えた。人がこの場面で手順を求めることは現実に無い（オーナー）。所在は 3 つ:
+   ガイドの指示文に「画面のメッセージへの返信・文案・要約」の扱いが無い／Gateway の vision prompt が how-to を guide mode に固定している
+   （`resolveVisionIntent`）／読みの依頼に付く「読み上げ用に 1〜2 文」の縛り（`CompanionEye.voiceNote`）が文案と相容れない。
+   今日の案（未実装）: 反射の `read_type` に「文案」を足し、文案の読みは別の依頼文（そのまま送れる本文を返す、案内はしない）で送り、
+   答えは読み上げず窓に出して、ガイドは「文案を出しました」とだけ言う（`種類: 文案`）。1 と一体で設計する
+3. その後: 読みの長さ（Xcode で 6〜13 秒。話し始めの撮影・画像の縮小）、Gemini 3.8 Live の再試験、「2人がそれぞれの声で話す」は保留のまま
+
+### 2026-10-14〜15 に分かったこと（実機）
+
+- **反射は動く。** 判定の往復 0.74 秒、投機的な読みは 3 回とも引き継がれ、「確認しますね」は話し終わりと同時。オーナー「反応速度は速くなった」。
+  短い言葉での誤発火（「アイコン」）と、クリック音の幻聴（「ほ」から始まる…）は 10-14 に直した（実機で「もろもろ治った」）
+- **帯のドラッグは解決**（10-15、`6746b5c`）。実機の `companion.press`: 帯の押下は `band=true topmost=true stripTop=12 stripBottom=36 buttons=4`、
+  本文は `SelectionTextField`、×は `SwiftUIAppKitButton`。帯の判定は SwiftUI が配置した矩形だけで行う。10-15 朝の「効かない」は、
+  その時点の実機ビルドが `5507ada` より前だった可能性がある（未確認）。押下の記録は DEBUG 限定で残す
 
 ### いまの状態（build 36 まで実機で動いている。build 37 は反射を足したもので、実機未確認）
 
