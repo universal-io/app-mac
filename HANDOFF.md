@@ -20,8 +20,10 @@
 **build 37 ＝ 反射の層（Jev）の実験**（企画書「反射の層（Jev）— build 37 の実験」）。ブランチ `companion-reflex`、
 切り戻しはタグ `companion-base-build36`（app-mac）と `gateway-base-companion-build36`（Gateway。`git revert fda6cf4`）。
 
-1. **オーナーがやること（実機の前）**: Vercel の `universal-io-app-mac` プロジェクトの環境変数に `OPENROUTER_API_KEY` を足す
-   （値はこの Mac の `~/.secrets/openrouter-token`。Gateway は無いと 503 を返すだけ）。足したら再デプロイ（Redeploy）
+1. ~~Vercel に `OPENROUTER_API_KEY` を足す~~ **済み（2026-10-14 22:23、オーナー）。** ただし 2026-10-14 22:33 の実機では反射が全部
+   `gateway.none`（ルート不在の 404）で空振りした: **Gateway の push `fda6cf4` を Vercel が拾っておらず、本番は `a5ee392` のまま**だった
+   （Redeploy も旧コミットの再デプロイ）。Vercel MCP の `create_deployment`（gitSource main）で `fda6cf4` を本番へ出した。
+   **Gateway を push したら、Vercel のデプロイ一覧で SHA を確かめる**（プロジェクトは `universal-io-api-gateway`）
 2. **実機**: `open /Users/kaya.matsumoto/projects/universal-io/app-mac/.claude/worktrees/voice-companion/BombSquad.xcodeproj` → Debug で実行。
    初回の「音声認識」許可を出す。画面の質問と会話だけの質問を混ぜて 20 ターンほど使う
 3. **読む**: `python3 tools/companion_reflex_report.py 5`。見るのは「話し終わりから答えまでの待ち（反射あり／なし）」と「引き継がれた率」。
@@ -33,7 +35,8 @@
 
 ### いまの状態（build 36 まで実機で動いている。build 37 は反射を足したもので、実機未確認）
 
-- **反射（build 37、未確認）**: 耳（Apple Speech、端末内）→ 反射（`/ai/decide`、Jev）→ 投機的な読み → ガイドの look が引き継ぐ。記録は `partial` / `reflex` / `reflex.spec` / `reflex.hit` / `reflex.unused` / `reflex.served` / `reflex.grounding`
+- **look の即返答は「リサーチャーが確認中です。」だけ**（`3427de4`）。2 文目の指示文をガイドが毎回読み上げていた（2026-10-14 の実機）
+- **反射（build 37、耳は実機で動いた。判定は Gateway 未配備で未確認）**: 耳（Apple Speech、端末内）→ 反射（`/ai/decide`、Jev）→ 投機的な読み → ガイドの look が引き継ぐ。記録は `partial` / `reflex` / `reflex.spec` / `reflex.hit` / `reflex.unused` / `reflex.served` / `reflex.grounding`
 
 - **耳と口**: スピーカーでも自分の声に答えない（声の上の線は最低 −36dB、声を通算3秒鳴らすまでは割り込み不可）。ターンはアプリが決める
 - **ガイドは `gemini-3.1-flash-live-preview`**（Gateway `c99eb0a`）。3.8 Live は返事の頭の声が化ける（約4割）ので替えた。新しいモデルが出たら試し直す
@@ -76,6 +79,9 @@
 - **CLI で Live を試す時**: IPv4 を指定、`python3 -u`、キーは api-gateway の `.env.local`。**回数と費用を先にオーナーへ伝える**
 - **声を STT で判定する時**: whisper に「直さず書け」と指示し、先頭に0.5秒の無音を足す
 - **Gateway の push は本番反映**（Vercel が main を見る。push から約50秒で status が success）。指示文の変更はアプリの合図の言葉と同時に
+- **Vercel が push を拾わないことがある**（2026-10-13 の `fda6cf4`。著者もブランチも普段どおり）。push 後はデプロイ一覧の `githubCommitSha` を見る。
+  拾われていなければ Vercel MCP の `create_deployment`（`gitSource: {type: github, org: universal-io, repo: api-gateway, ref: main}`、target production）。
+  ダッシュボードの Redeploy は**同じ旧コミット**を出し直すだけで、新しい push は拾わない
 - **実機の手順**（Xcode、Debug）: `open /Users/kaya.matsumoto/projects/universal-io/app-mac/.claude/worktrees/voice-companion/BombSquad.xcodeproj`。
   署名ビルドを作るたびに `project.yml` の build を上げる（いまは 36。`xcodegen generate` で反映）
 
