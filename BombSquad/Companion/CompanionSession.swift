@@ -225,6 +225,18 @@ final class CompanionSession: ObservableObject {
     /// line arrives within about two seconds; the eye's answer, which must
     /// not be dropped, is sent by this app and clears the window itself.
     private static let dropGuideWindow: TimeInterval = 6
+    /// The ear heard words in this turn (two or more letters in a partial).
+    private var earHeardWords = false
+    /// How loud the turn that just ended was.
+    private var lastTurnLoudness: CompanionAudio.Loudness?
+    /// A turn no louder than this over the floor, and no longer than this,
+    /// that the ear heard nothing in, is a noise whatever the server
+    /// transcribed: it made 「ほ」から始まる言葉を10個 out of a click (2026-10-14).
+    private static let noiseAboveFloorDb: Float = 25
+    private static let noiseMaxMs = 1_500
+    /// Partials shorter than this are not judged: 「アイコン」 alone sent the
+    /// eye after the wrong thing (2026-10-14).
+    private static let judgeMinPartial = 8
 
     /// A look the reflex started. The guide's own call claims it if the
     /// question is the same kind and the screen has not moved on.
@@ -756,6 +768,21 @@ final class CompanionSession: ObservableObject {
     /// paused for them is dropped — it was a person.
     private func heard(_ raw: String) {
         let text = CompanionTranscript.tidy(raw)
+        if isNoise(text) {
+            trace?.record("noise.rejected", [
+                "text": text,
+                "ms": lastTurnLoudness?.ms ?? -1,
+                "aboveFloorDb": Int((lastTurnLoudness?.meanAboveFloorDb ?? -120).rounded()),
+            ])
+            Diagnostics.record("companion.noiseRejected", details: [
+                ("ms", .ms(lastTurnLoudness?.ms ?? -1)),
+                ("aboveFloorDb", .count(Int((lastTurnLoudness?.meanAboveFloorDb ?? -120).rounded()))),
+            ])
+            // The answer stays held and goes with the next turn, as for a turn
+            // without words. Said, not spoken, in case it was a quiet person.
+            notice = "物音と判断して、返事を止めました。話しかけたのであれば、もう一度どうぞ。"
+            return
+        }
         transcript.append(text, from: .user)
         guard CompanionTranscript.hasWords(text) else { return }
         notice = nil
@@ -948,8 +975,9 @@ final class CompanionSession: ObservableObject {
             transcript.endTurn()
             refreshVisibleList(force: false)
             beginReflexTurn()
-        case .stopped:
-            trace?.record("userStopped")
+        case .stopped(_, let loudness):
+            trace?.record("userStopped", ["ms": loudness.ms, "aboveFloorDb": Int(loudness.meanAboveFloorDb.rounded())])
+            lastTurnLoudness = loudness
             ear.end()
             userSpeaking = false
             if bridgePending { playBridge() }
@@ -1114,6 +1142,9 @@ final class CompanionSession: ObservableObject {
             guard !look.message.isEmpty else { return }
             lastInstruction = look.message
             if let goal, !goal.isEmpty {
+                // The guide left the goal empty on two of three looks
+                // (2026-10-14); the eye reads the next turns with it from here.
+                if currentGoal == nil { currentGoal = goal }
                 guide.begin(
                     goal: goal,
                     previousInstruction: look.message,
@@ -1397,6 +1428,8 @@ final class CompanionSession: ObservableObject {
         bridgedThisTurn = false
         bridgePending = false
         dropGuideUntil = nil
+        earHeardWords = false
+        lastTurnLoudness = nil
         discardSpeculative(reason: "newTurn")
         switch reflexArm {
         case .off:
@@ -1412,6 +1445,7 @@ final class CompanionSession: ObservableObject {
     private func heardPartial(_ words: String) {
         guard reflexArm == .aimed, !isStopped else { return }
         partialsThisTurn += 1
+        if words.count >= 2, CompanionTranscript.hasWords(words) { earHeardWords = true }
         trace?.record("partial", ["text": words, "ms": Self.ms(since: turnStartedAt), "n": partialsThisTurn])
         judge(words, stage: "partial")
     }
@@ -1420,9 +1454,18 @@ final class CompanionSession: ObservableObject {
     /// question in flight, none more often than every 0.8 s for partials,
     /// and none once a look is under way.
     private func judge(_ words: String, stage: String) {
-        guard reflexArm == .aimed, speculative == nil, looks.isEmpty, !judging, let reflex else { return }
+        guard reflexArm == .aimed, looks.isEmpty else { return }
         let trimmed = words.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 4, trimmed != lastJudgedWords else { return }
+        // The words have grown well past what the eye was sent after: it
+        // reads again for the longer ones. The clip already played stays.
+        if let spec = speculative, trimmed.count >= 12, trimmed.count >= 2 * spec.question.count, trimmed != spec.question {
+            trace?.record("reflex.refined", ["from": spec.question, "to": trimmed, "stage": stage])
+            discardSpeculative(reason: "refined")
+            startSpeculative(question: trimmed, stage: stage)
+            return
+        }
+        guard speculative == nil, !judging, let reflex else { return }
+        guard trimmed.count >= (stage == "final" ? 4 : Self.judgeMinPartial), trimmed != lastJudgedWords else { return }
         guard stage == "final" || Date().timeIntervalSince(lastJudgedAt) >= 0.8 else { return }
         judging = true
         lastJudgedWords = trimmed
@@ -1483,6 +1526,15 @@ final class CompanionSession: ObservableObject {
         }
         speculative = Speculative(question: question, stage: stage, startedAt: Date(), frames: framesSeen, task: task)
         if userSpeaking { bridgePending = true } else { playBridge() }
+    }
+
+    /// A short, quiet turn the ear heard no words in: the server's transcript
+    /// of it is a guess, not a person. Only judged when the ear is listening.
+    private func isNoise(_ text: String) -> Bool {
+        guard reflexArm == .aimed, ear.availability == .onDevice, !earHeardWords, !userSpeaking,
+              let loudness = lastTurnLoudness
+        else { return false }
+        return loudness.ms <= Self.noiseMaxMs && loudness.meanAboveFloorDb < Self.noiseAboveFloorDb
     }
 
     /// 「確認しますね」 in the companion's recorded voice, the moment the

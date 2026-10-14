@@ -28,7 +28,7 @@ def turns(events):
             continue
         turn = {"start": events[i]["t"], "stop": None, "text": "", "partials": [],
                 "reflex": [], "spec": None, "hit": None, "unused": [], "look": None,
-                "answer": None, "served": None}
+                "answer": None, "served": None, "bridge": None, "noise": None}
         j = i + 1
         while j < len(events) and events[j].get("kind") != "userStarted":
             e = events[j]
@@ -43,6 +43,10 @@ def turns(events):
                 turn["reflex"].append(e)
             elif kind == "reflex.spec" and turn["spec"] is None:
                 turn["spec"] = e
+            elif kind == "reflex.bridge":
+                turn["bridge"] = e
+            elif kind == "noise.rejected":
+                turn["noise"] = e
             elif kind == "reflex.hit":
                 turn["hit"] = e
             elif kind == "reflex.unused":
@@ -95,6 +99,8 @@ def main():
     print(f"speculative looks {len(fired)}: fired at (s after turn start) median {median(fire_at)}; "
           f"claimed by the guide {len(hits)}, unused {len(fired) - len(hits)}")
     print(f"head start when claimed (s) median {median(head_start)}")
+    bridge_after_stop = [t["bridge"]["t"] - t["stop"] for t in all_turns if t.get("bridge") and t["stop"] is not None]
+    print(f"clip 「確認しますね」 after the user stopped (s) median {median(bridge_after_stop)} (n={len(bridge_after_stop)}); noises rejected {sum(1 for t in all_turns if t.get('noise'))}")
     print(f"wait after the user stopped until the answer (s): with reflex median {median(wait_hit)} (n={len(wait_hit)}), "
           f"without median {median(wait_plain)} (n={len(wait_plain)})")
     screen = [t for t in all_turns if t["look"]]

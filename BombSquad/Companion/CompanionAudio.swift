@@ -45,7 +45,16 @@ final class CompanionAudio: @unchecked Sendable {
         /// `overVoice`: the companion was talking; its voice is now paused
         /// until the session settles whether this was a person.
         case started(overVoice: Bool)
-        case stopped(CompanionTurnTaker.Stop)
+        case stopped(CompanionTurnTaker.Stop, Loudness)
+    }
+
+    /// How loud a turn was against the room, for telling a noise from a
+    /// voice: a mouse click that opened a turn ran 21 dB over the floor for
+    /// 0.8 s; words run 40–50 dB over it (build 37 records, 2026-10-14).
+    struct Loudness: Equatable {
+        let ms: Int
+        let meanAboveFloorDb: Float
+        let peakAboveFloorDb: Float
     }
 
     var onUplink: ((Uplink) -> Void)?
@@ -489,8 +498,13 @@ final class CompanionAudio: @unchecked Sendable {
             if stop != .muted { onUplink?(.audio(pcm)) }
             if stop != .muted { onCaptured?(pcm) }
             onUplink?(.end)
+            let loudness = Loudness(
+                ms: turnMs,
+                meanAboveFloorDb: utterance.meanDb - (floor ?? -120),
+                peakAboveFloorDb: utterance.peakDb - (floor ?? -120)
+            )
             DispatchQueue.main.async { [weak self] in
-                self?.onUserTurn?(.stopped(stop))
+                self?.onUserTurn?(.stopped(stop, loudness))
             }
             Diagnostics.record("companion.userStopped", details: [
                 ("stop", .code(stop)),
